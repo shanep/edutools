@@ -74,11 +74,17 @@ google_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+maintenance_app = typer.Typer(
+    help="🔧 Maintenance — SSH checks and instance recovery",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
 
 app.add_typer(canvas_app, name="canvas")
 app.add_typer(iam_app, name="iam")
 app.add_typer(ec2_app, name="ec2")
 app.add_typer(google_app, name="google")
+ec2_app.add_typer(maintenance_app, name="maintenance")
 
 
 def _check_config() -> tuple[bool, bool, bool]:
@@ -1170,7 +1176,7 @@ def ec2_check_cleanup(
     ))
 
 
-@ec2_app.command("check-ssh", rich_help_panel="Checks")
+@maintenance_app.command("check-ssh")
 def ec2_check_ssh(
     course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),
     log_file: str = typer.Option("ssh-failures.log", "--log", "-o", help="File to write unreachable instances"),
@@ -1242,29 +1248,25 @@ def ec2_check_ssh(
     console.print(Panel.fit(summary, title="SSH Check Summary"))
 
 
-@ec2_app.command("reboot-failed", rich_help_panel="Workflow")
+@maintenance_app.command("reboot-failed")
 def ec2_reboot_failed(
     log_file: str = typer.Option("ssh-failures.log", "--log", "-i", help="SSH failure log file from check-ssh"),
-    timeout: int = typer.Option(300, "--timeout", "-t", help="SSH timeout in seconds after reboot"),
+    timeout: int = typer.Option(300, "--timeout", "-t", help="Seconds to wait for each instance to come back online"),
 ):
-    """Reboot unreachable instances and update Google Docs with new IPs.
+    """Reboot unreachable instances and wait for them to come back online.
 
-    Reads the failure log produced by [cyan]ec2 check-ssh[/cyan], reboots
-    every listed instance, waits for SSH to come back, and updates the
-    connection-details Google Doc, SSH script, and manifest with the new
-    IP addresses.  Use [cyan]ec2 email-credentials[/cyan] afterwards to
-    notify students of the updated details.
+    Reads the failure log produced by [cyan]maintenance check-ssh[/cyan],
+    reboots all listed instances at once, then polls SSH on each until it
+    becomes reachable again (or the timeout is exceeded).
     """
     init()
     import json
-    from edutools.aws import (
-        INSTRUCTOR_KEY_FILENAME,
-        SSH_SCRIPT_FILENAME,
-        build_connection_doc,
-        reboot_failed_instances,
-    )
-    import edutools.google_helpers as google_helpers
-    from edutools.canvas import CanvasLMS
+    from edutools.aws import INSTRUCTOR_KEY_FILENAME, reboot_failed_instances
+
+    if not os.path.isfile(log_file):
+        console.print(f"[red]Log file not found:[/red] {log_file}")
+        console.print("[dim]Run 'maintenance check-ssh' first to generate the failure log.[/dim]")
+        raise typer.Exit(1)
 
     instructor_key_path = os.path.join(CONFIG_DIR, INSTRUCTOR_KEY_FILENAME)
     if not os.path.isfile(instructor_key_path):
@@ -1272,11 +1274,6 @@ def ec2_reboot_failed(
             f"[red]Instructor key not found:[/red] {instructor_key_path}\n"
             f"[dim]Place your EC2 instructor PEM key at the path above.[/dim]"
         )
-        raise typer.Exit(1)
-
-    if not os.path.isfile(log_file):
-        console.print(f"[red]Log file not found:[/red] {log_file}")
-        console.print("[dim]Run 'ec2 check-ssh' first to generate the failure log.[/dim]")
         raise typer.Exit(1)
 
     with open(log_file) as f:
@@ -1296,7 +1293,6 @@ def ec2_reboot_failed(
     ))
     console.print()
 
-    # Step 1: Reboot and verify SSH
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1316,137 +1312,34 @@ def ec2_reboot_failed(
         console.print("[yellow]No instances to process.[/yellow]")
         return
 
-    # Display reboot results
     table = Table(title="Reboot Results", show_header=True, header_style="bold magenta")
     table.add_column("Instance ID", style="cyan")
     table.add_column("Student")
-    table.add_column("Old IP", style="dim")
-    table.add_column("New IP", style="yellow")
+    table.add_column("Public IP")
     table.add_column("Status")
 
     for r in results:
-        if r["status"] == "ok":
-            status_display = "[green]✓ reachable[/green]"
+        status = r["status"]
+        if status == "online":
+            status_display = "[green]online[/green]"
         else:
-            status_display = f"[red]✗ {r['status']}[/red]"
+            status_display = f"[red]{status}[/red]"
         table.add_row(
-            r["instance_id"], r["student"] or "[dim]N/A[/dim]",
-            r["old_ip"], r["new_ip"], status_display,
+            r["instance_id"],
+            r["student"] or "[dim]N/A[/dim]",
+            r["public_ip"] or "[dim]N/A[/dim]",
+            status_display,
         )
 
     console.print(table)
     console.print()
 
-    # Step 2: Update Google Docs for instances that got new IPs
-    rebooted = [r for r in results if r["status"] == "ok" and r["new_ip"]]
-
-    if not rebooted:
-        console.print("[yellow]No instances recovered — skipping Google Drive updates.[/yellow]")
-        return
-
-    if not course_id:
-        console.print("[yellow]No course_id in log — skipping Google Drive updates.[/yellow]")
-        return
-
-    canvas = CanvasLMS()
-    course_info = canvas.get_course(course_id)
-    course_name = str(course_info["name"])
-
-    folders = google_helpers.find_files_by_name(
-        course_name, mime_type="application/vnd.google-apps.folder",
-    )
-    if not folders:
-        console.print(f"[red]No Drive folder found for '{course_name}'.[/red]")
-        raise typer.Exit(1)
-
-    folder_id = folders[0]["id"]
-    contents = google_helpers.list_folder_contents(folder_id)
-    student_folders = {
-        f["name"]: f["id"]
-        for f in contents
-        if f["mimeType"] == "application/vnd.google-apps.folder"
-    }
-
-    # Also update the manifest
-    manifest_files = [f for f in contents if f["name"] == "manifest.json"]
-    manifest_entries: list[dict[str, str]] = []
-    if manifest_files:
-        manifest_json = google_helpers.download_text_file(manifest_files[0]["id"])
-        manifest_entries = json.loads(manifest_json)
-
-    ip_updates = {r["student"]: r["new_ip"] for r in rebooted}
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Updating Google Drive...", total=len(rebooted))
-
-        for idx, r in enumerate(rebooted, 1):
-            student = r["student"]
-            new_ip = r["new_ip"]
-            iid = r["instance_id"]
-
-            progress.update(task, completed=idx, description=f"[cyan]Updating docs for {student}...")
-
-            subfolder_name = f"VM Access - {student}"
-            subfolder_id = student_folders.get(subfolder_name)
-            if not subfolder_id:
-                console.print(f"[yellow]Subfolder not found for {student} — skipping Drive update.[/yellow]")
-                continue
-
-            # Delete old doc and script, create new ones with updated IP
-            sub_contents = google_helpers.list_folder_contents(subfolder_id)
-
-            for item in sub_contents:
-                if item["name"].startswith("Connection Details") or item["name"] == SSH_SCRIPT_FILENAME:
-                    google_helpers.delete_file(item["id"])
-
-            doc_text = build_connection_doc(
-                username=student, public_ip=new_ip, instance_id=iid,
-            )
-            google_helpers.create_doc_with_content(
-                f"Connection Details - {student}", doc_text, folder_id=subfolder_id,
-            )
-
-            # Re-create SSH script — we need the student's private key from the existing script
-            # Since we can't recover the private key, just update the connection doc
-            # The SSH script contains the embedded key so we update the IP in it
-            script_items = [i for i in sub_contents if i["name"] == SSH_SCRIPT_FILENAME]
-            if script_items:
-                old_script = google_helpers.download_text_file(script_items[0]["id"])
-                new_script = old_script.replace(r["old_ip"], new_ip)
-                google_helpers.upload_text_file(SSH_SCRIPT_FILENAME, new_script, subfolder_id)
-
-    # Update manifest with new IPs
-    if manifest_entries:
-        for entry in manifest_entries:
-            username = entry.get("username", "")
-            if username in ip_updates:
-                entry["public_ip"] = ip_updates[username]
-        if manifest_files:
-            google_helpers.delete_file(manifest_files[0]["id"])
-        google_helpers.upload_text_file(
-            "manifest.json", json.dumps(manifest_entries, indent=2), folder_id,
-        )
-
-    console.print(f"\n[green]Google Drive updated for {len(rebooted)} student(s).[/green]")
-
-    # Summary
-    ok = sum(1 for r in results if r["status"] == "ok")
-    failed = len(results) - ok
-    console.print()
-    console.print(Panel.fit(
-        f"[green]✓ Recovered:[/green] {ok} | [red]✗ Still failed:[/red] {failed}",
-        title="Reboot Summary",
-    ))
-    if ok:
-        console.print(
-            "\n[dim]Run 'ec2 email-credentials' to notify students of the updated connection details.[/dim]"
-        )
+    online = sum(1 for r in results if r["status"] == "online")
+    failed = len(results) - online
+    summary = f"[green]✓ Online:[/green] {online}"
+    if failed:
+        summary += f" | [red]✗ Unreachable:[/red] {failed}"
+    console.print(Panel.fit(summary, title="Reboot Summary"))
 
 
 @ec2_app.command("check-email", rich_help_panel="Checks")
