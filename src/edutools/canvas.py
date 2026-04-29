@@ -19,6 +19,8 @@ class CanvasLMS():
         self.endpoint = os.getenv("CANVAS_ENDPOINT", "https://boisestatecanvas.instructure.com")
         self.headers = {"Authorization": f"Bearer {token}"}
 
+    _TIMEOUT = 30  # seconds
+
     def _get_paginated(self, url_path: str, params: dict[str, str | int]) -> list[dict[str, object]]:
         """Fetch all pages of a paginated Canvas API endpoint."""
         url: str | None = self.endpoint + url_path
@@ -26,7 +28,7 @@ class CanvasLMS():
         all_results: list[dict[str, object]] = []
 
         while url is not None:
-            response = requests.get(url, params=params, headers=self.headers)
+            response = requests.get(url, params=params, headers=self.headers, timeout=self._TIMEOUT)
             if not response.ok:
                 raise RuntimeError(f"Canvas API error {response.status_code}: {response.text}")
             all_results.extend(response.json())
@@ -42,7 +44,7 @@ class CanvasLMS():
 
     def _get_single(self, url_path: str, params: dict[str, str | int]) -> dict[str, object]:
         """Fetch a single Canvas API resource (no pagination)."""
-        response = requests.get(self.endpoint + url_path, params=params, headers=self.headers)
+        response = requests.get(self.endpoint + url_path, params=params, headers=self.headers, timeout=self._TIMEOUT)
         if not response.ok:
             raise RuntimeError(f"Canvas API error {response.status_code}: {response.text}")
         result: dict[str, object] = response.json()
@@ -87,3 +89,11 @@ class CanvasLMS():
 
     def get_assignment(self, course_id: str, assignment_id: str) -> dict[str, object]:
         return self._get_single(f"/api/v1/courses/{course_id}/assignments/{assignment_id}/", {})
+
+    def get_ungraded_submissions(self, course_id: str) -> list[dict[str, object]]:
+        """Return all submissions whose grade is unset (the '-' in the Canvas gradebook)."""
+        submissions = self._get_paginated(
+            f"/api/v1/courses/{course_id}/students/submissions",
+            {"student_ids[]": "all"},
+        )
+        return [s for s in submissions if s.get("grade") is None]

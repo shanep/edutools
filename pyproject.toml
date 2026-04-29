@@ -4,7 +4,6 @@ build-backend = "uv_build"
 
 [project.scripts]
 edutools = "edutools.cli:app"
-edutools-gui = "edutools.gui:main"
 
 [project]
 name = "edutools"

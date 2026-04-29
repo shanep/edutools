@@ -247,7 +247,7 @@ def check_credentials():
 
     # --- Google Docs / Drive ---
     try:
-        from edutools.google_helpers import _get_oauth_path
+        from edutools.google import _get_oauth_path
         _get_oauth_path()
         oauth_found = True
     except (Exception, SystemExit):
@@ -258,7 +258,7 @@ def check_credentials():
         _skip("Gmail", "Requires Google OAuth (see Google Docs above)")
     else:
         try:
-            from edutools.google_helpers import _get_credentials
+            from edutools.google import _get_credentials
             with console.status("[bold green]Testing Google Docs...", spinner="dots"):
                 _get_credentials()
             _ok("Google Docs", "OAuth token valid")
@@ -266,7 +266,7 @@ def check_credentials():
             _fail("Google Docs", "OAuth authentication failed", str(e))
 
         try:
-            from edutools.google_helpers import _get_gmail_credentials
+            from edutools.google import _get_gmail_credentials
             with console.status("[bold green]Testing Gmail...", spinner="dots"):
                 _get_gmail_credentials()
             _ok("Gmail", "OAuth token valid")
@@ -426,6 +426,46 @@ def list_submissions(
     console.print(f"\n[dim]Total: {len(submissions)} submissions[/dim]")
 
 
+@canvas_app.command("ungraded")
+def list_ungraded(
+    course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),
+):
+    """Show all submissions with no grade set (displayed as '-' in Canvas)."""
+    init()
+    from edutools.canvas import CanvasLMS
+
+    if course_id is None:
+        course_id = _select_course()
+
+    canvas = CanvasLMS()
+    with console.status("[bold green]Fetching assignments...", spinner="dots"):
+        assignments = canvas.get_assignments(course_id)
+    assignment_names = {str(a["id"]): str(a["name"]) for a in assignments}
+
+    with console.status("[bold green]Fetching submissions...", spinner="dots"):
+        ungraded = canvas.get_ungraded_submissions(course_id)
+
+    if not ungraded:
+        console.print("[green]All submissions have been graded.[/green]")
+        return
+
+    table = Table(
+        title=f"Ungraded Submissions — Course {course_id}",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Assignment ID", style="cyan", justify="right")
+    table.add_column("Assignment Name", style="green")
+    table.add_column("User ID", style="cyan", justify="right")
+
+    for sub in ungraded:
+        aid = str(sub.get("assignment_id"))
+        table.add_row(aid, assignment_names.get(aid, ""), str(sub.get("user_id")))
+
+    console.print(table)
+    console.print(f"\n[dim]Total ungraded: {len(ungraded)}[/dim]")
+
+
 # ============================================================================
 # IAM Commands
 # ============================================================================
@@ -544,7 +584,7 @@ def email_credentials(
     init()
     import os
     from edutools.iam import IAMProvisioner
-    from edutools.google_helpers import send_email
+    from edutools.google import send_email
 
     if not os.path.exists(csv_file):
         console.print(f"[red]File not found: {csv_file}[/red]")
@@ -824,7 +864,7 @@ def _display_iam_results(results: list, success_status: str, title: str, show_pa
 
 def _select_launch_template() -> str:
     """Fetch AWS Launch Templates and prompt the user to select one."""
-    from edutools.aws import EC2Provisioner
+    from edutools.ec2 import EC2Provisioner
 
     with console.status("[bold green]Fetching launch templates...", spinner="dots"):
         ec2 = EC2Provisioner()
@@ -860,9 +900,9 @@ def launch_vms(
     """
     init()
     import json
-    from edutools.aws import SSH_SCRIPT_FILENAME, launch_student_vms, build_connection_doc, build_ssh_script
+    from edutools.ec2 import SSH_SCRIPT_FILENAME, launch_student_vms, build_connection_doc, build_ssh_script
     from edutools.canvas import CanvasLMS
-    import edutools.google_helpers as google_helpers
+    import edutools.google as google_helpers
 
     if course_id is None:
         course_id = _select_course()
@@ -870,7 +910,7 @@ def launch_vms(
     if launch_template is None:
         launch_template = _select_launch_template()
 
-    from edutools.aws import INSTRUCTOR_KEY_FILENAME
+    from edutools.ec2 import INSTRUCTOR_KEY_FILENAME
 
     instructor_key = os.path.join(CONFIG_DIR, INSTRUCTOR_KEY_FILENAME)
     if not os.path.exists(instructor_key):
@@ -1033,7 +1073,7 @@ def ec2_check_launch(
     to terminate.
     """
     init()
-    from edutools.aws import INSTRUCTOR_KEY_FILENAME, check_ec2_launch
+    from edutools.ec2 import INSTRUCTOR_KEY_FILENAME, check_ec2_launch
 
     if launch_template is None:
         launch_template = _select_launch_template()
@@ -1107,7 +1147,7 @@ def ec2_check_cleanup(
 ):
     """Terminate test instances from [cyan]check-launch[/cyan]."""
     init()
-    from edutools.aws import EC2Provisioner, cleanup_check_instances
+    from edutools.ec2 import EC2Provisioner, cleanup_check_instances
 
     ec2 = EC2Provisioner()
     resp = ec2.ec2.describe_instances(
@@ -1189,7 +1229,7 @@ def ec2_check_ssh(
     cannot be reached are logged to a file for further action.
     """
     init()
-    from edutools.aws import INSTRUCTOR_KEY_FILENAME, check_ssh_access
+    from edutools.ec2 import INSTRUCTOR_KEY_FILENAME, check_ssh_access
 
     if course_id is None:
         course_id = _select_course()
@@ -1354,9 +1394,9 @@ def ec2_check_email():
     """
     init()
     import json
-    from edutools.aws import SSH_SCRIPT_FILENAME, build_connection_doc, build_ssh_script
-    import edutools.google_helpers as google_helpers
-    from edutools.google_helpers import send_email
+    from edutools.ec2 import SSH_SCRIPT_FILENAME, build_connection_doc, build_ssh_script
+    import edutools.google as google_helpers
+    from edutools.google import send_email
 
     test_email = "shanepanter@u.boisestate.edu"
     test_course = "edutools-check-CS-101"
@@ -1524,7 +1564,7 @@ def share_keys(
     init()
     import json
     from edutools.canvas import CanvasLMS
-    import edutools.google_helpers as google_helpers
+    import edutools.google as google_helpers
 
     if course_id is None:
         course_id = _select_course()
@@ -1643,8 +1683,8 @@ def ec2_email_credentials(
     init()
     import json
     from edutools.canvas import CanvasLMS
-    import edutools.google_helpers as google_helpers
-    from edutools.google_helpers import send_email
+    import edutools.google as google_helpers
+    from edutools.google import send_email
 
     if course_id is None:
         course_id = _select_course()
@@ -1798,14 +1838,14 @@ def _run_all_check(
     and a real EC2 instance.
     """
     import json
-    from edutools.aws import (
+    from edutools.ec2 import (
         INSTRUCTOR_KEY_FILENAME,
         SSH_SCRIPT_FILENAME,
         build_connection_doc,
         build_ssh_script,
         check_ec2_launch,
     )
-    import edutools.google_helpers as google_helpers
+    import edutools.google as google_helpers
 
     if launch_template is None:
         launch_template = _select_launch_template()
@@ -2118,7 +2158,7 @@ def terminate_vms(
 ):
     """Terminate all EC2 instances for a course."""
     init()
-    from edutools.aws import EC2Provisioner, terminate_student_vms
+    from edutools.ec2 import EC2Provisioner, terminate_student_vms
 
     if course_id is None:
         course_id = _select_course()
@@ -2211,7 +2251,7 @@ def create_doc(
 ):
     """Create a new Google Doc."""
     init()
-    import edutools.google_helpers as google_helpers
+    import edutools.google as google_helpers
 
     with console.status("[bold green]Creating Google Doc...", spinner="dots"):
         doc_id = google_helpers.create_doc(title, folder_id)
@@ -2238,7 +2278,7 @@ def google_check(
     shares with a test email.  Use [cyan]google check-cleanup[/cyan] to remove afterwards.
     """
     init()
-    import edutools.google_helpers as google_helpers
+    import edutools.google as google_helpers
 
     console.print(Panel.fit(
         "[bold green]Google API Check[/bold green]\n"
@@ -2324,7 +2364,7 @@ def google_check_cleanup(
 ):
     """Delete test folders from [cyan]google check[/cyan] and [cyan]ec2 check-email[/cyan]."""
     init()
-    import edutools.google_helpers as google_helpers
+    import edutools.google as google_helpers
 
     folders = google_helpers.find_files_by_name(
         "edutools-google-check",

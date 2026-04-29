@@ -578,7 +578,7 @@ def provision_and_email_students(
     Returns:
         List of dicts with: email, username, password, status, email_sent
     """
-    from edutools.google_helpers import send_email
+    from edutools.google import send_email
 
     canvas = CanvasLMS()
     iam = IAMProvisioner()
