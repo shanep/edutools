@@ -1,4 +1,5 @@
 import os
+import re
 import tomllib
 import typer
 import csv
@@ -8,6 +9,8 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich import print as rprint
+
+from edutools import full_version
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "edutools")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.toml")
@@ -528,6 +531,346 @@ def _select_assignment(course_id: str) -> str:
         raise typer.Exit(1)
 
     return str(assignments[choice - 1]["id"])
+
+
+@canvas_app.command("push")
+def push_course(
+    repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),
+    course_id: str = typer.Option(..., "--course", help="Canvas course ID"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Render everything, write nothing"),
+    publish: bool = typer.Option(False, "--publish", help="Make objects student-visible (default: unpublished)"),
+    only: Optional[list[str]] = typer.Option(None, "--only", help="Limit to: pages, assignments, discussions, quizzes, files, modules, syllabus, rubrics"),
+    verify: bool = typer.Option(True, "--verify/--no-verify", help="Read everything back from Canvas afterwards"),
+    preview: Optional[str] = typer.Option(None, "--preview", help="Write the rendered HTML to a directory and open nothing else"),
+):
+    """Publish a course repository to Canvas.
+
+    Two passes: create or update every object, then rewrite relative links now
+    that ids exist. Everything is created UNPUBLISHED unless --publish is given.
+    """
+    from pathlib import Path
+
+    from edutools.publish import PublishError
+    from edutools.publisher import Publisher
+
+    init()
+    repo_path = Path(repo).expanduser()
+
+    canvas = None
+    if not dry_run:
+        from edutools.canvas import CanvasLMS
+
+        canvas = CanvasLMS()
+
+    try:
+        publisher = Publisher(
+            repo_path, course_id, canvas, publish=publish, dry_run=dry_run, report=console.print
+        )
+        plans = publisher.plan()
+    except (PublishError, ValueError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(1)
+
+    wanted = set(only or [])
+    kind_group = {
+        "page": "pages", "assignment": "assignments", "discussion": "discussions",
+        "quiz": "quizzes", "file": "files", "syllabus": "syllabus",
+    }
+    selected = [p for p in plans if not wanted or kind_group.get(p.kind) in wanted]
+
+    totals = {"created": 0, "updated": 0, "skipped": 0}
+    problems: list[str] = []
+
+    label = "Rendering" if dry_run else "Publishing"
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  BarColumn(), TaskProgressColumn(), console=console) as progress:
+        task = progress.add_task(f"{label} {len(selected)} objects", total=len(selected))
+        for item in selected:
+            progress.update(task, description=f"{label} {item.key}")
+            try:
+                outcome = publisher.create_or_update(item)
+                totals["created"] += outcome.created
+                totals["updated"] += outcome.updated
+                totals["skipped"] += outcome.skipped
+                problems.extend(outcome.errors)
+            except (PublishError, RuntimeError) as error:
+                problems.append(f"{item.key}: {error}")
+            progress.advance(task)
+
+        if not dry_run:
+            task = progress.add_task("Rewriting links", total=len(selected))
+            for item in selected:
+                unresolved = publisher.rewrite(item)
+                problems.extend(f"{item.key}: unresolved link {u}" for u in unresolved)
+                progress.advance(task)
+
+    if publisher.dropped_css:
+        console.print(
+            f"[yellow]⚠ {len(publisher.dropped_css)} CSS properties are not on Canvas's "
+            f"allowlist and were dropped:[/yellow] {', '.join(sorted(publisher.dropped_css))}"
+        )
+        problems.append("canvas.css contains properties Canvas will not store")
+
+    if not wanted or "modules" in wanted:
+        outcome = publisher.push_modules()
+        totals["created"] += outcome.created
+        totals["updated"] += outcome.updated
+        problems.extend(outcome.errors)
+
+    if "rubrics" in wanted:
+        outcome = publisher.push_rubrics()
+        totals["created"] += outcome.created
+        problems.extend(outcome.errors)
+
+    table = Table(title="📤 Canvas push", show_header=True, header_style="bold magenta")
+    table.add_column("Outcome", style="cyan")
+    table.add_column("Count", justify="right")
+    for name, count in totals.items():
+        table.add_row(name, str(count))
+    console.print(table)
+
+    if problems:
+        console.print(f"\n[red]{len(problems)} problem(s):[/red]")
+        for problem in problems[:40]:
+            console.print(f"  [red]•[/red] {problem}")
+        raise typer.Exit(1)
+
+    if preview:
+        preview_dir = Path(preview).expanduser()
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        written = 0
+        for key, html in publisher.rendered.items():
+            name = key.replace("/", "__").replace(".md", ".html")
+            (preview_dir / name).write_text(
+                "<!doctype html><meta charset=utf-8>"
+                "<div style='max-width:900px;margin:40px auto;font-family:system-ui'>"
+                f"<h1>{key}</h1>{html}</div>",
+                encoding="utf-8",
+            )
+            written += 1
+        console.print(f"[green]✓[/green] wrote {written} preview pages to {preview_dir}")
+
+    if dry_run:
+        console.print("\n[green]✓[/green] dry run: nothing was written to Canvas.")
+        return
+
+    console.print(
+        f"\n[green]✓[/green] pushed to course {course_id} "
+        f"({'published' if publish else '[bold]unpublished[/bold]'})"
+    )
+    if verify:
+        verify_course(repo, course_id)
+
+
+@canvas_app.command("verify")
+def verify_course(
+    repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),
+    course_id: str = typer.Option(..., "--course", help="Canvas course ID"),
+):
+    """Read every published object back from Canvas and prove it arrived intact.
+
+    Catches what a 200 response does not: silent sanitiser stripping, partial
+    quiz writes, files stuck pending, and drift from someone editing in the
+    Canvas UI.
+    """
+    from pathlib import Path
+
+    from edutools.canvas import CanvasLMS
+    from edutools.publisher import Publisher
+    from edutools.verify import (
+        Failure,
+        check_body,
+        check_file,
+        check_gradebook_total,
+        check_identity,
+        check_links,
+        check_quiz_questions,
+        known_link_targets,
+        summarise,
+    )
+
+    init()
+    repo_path = Path(repo).expanduser()
+    canvas = CanvasLMS()
+    publisher = Publisher(repo_path, course_id, canvas)
+    plans = {p.key: p for p in publisher.plan()}
+    manifest = publisher.manifest
+
+    if not manifest.entries:
+        console.print("[yellow]Nothing in the manifest for this course — push first.[/yellow]")
+        raise typer.Exit(1)
+
+    failures: list[Failure] = []
+    known = known_link_targets(manifest, course_id)
+
+    def resolves(link: str) -> bool:
+        return canvas.exists("/api/v1" + link)
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  BarColumn(), TaskProgressColumn(), console=console) as progress:
+        task = progress.add_task("Verifying", total=len(manifest.entries))
+        for key, entry in sorted(manifest.entries.items()):
+            progress.update(task, description=f"Verifying {key}")
+            plan = plans.get(key)
+            try:
+                if entry.kind == "page":
+                    stored = canvas.get_page(course_id, entry.page_url)
+                    body = str(stored.get("body") or "")
+                elif entry.kind == "assignment":
+                    stored = canvas.get_assignment_full(course_id, entry.canvas_id)
+                    body = str(stored.get("description") or "")
+                elif entry.kind == "discussion":
+                    stored = canvas.get_discussion(course_id, entry.canvas_id)
+                    body = str(stored.get("message") or "")
+                elif entry.kind == "quiz":
+                    stored = canvas.get_quiz(course_id, entry.canvas_id)
+                    body = str(stored.get("description") or "")
+                elif entry.kind == "file":
+                    stored = canvas.get_file(entry.canvas_id)
+                    body = ""
+                else:
+                    progress.advance(task)
+                    continue
+            except RuntimeError:
+                failures.extend(check_identity(key, entry, None))
+                progress.advance(task)
+                continue
+
+            failures.extend(check_identity(key, entry, stored))
+
+            if entry.kind == "file" and plan and plan.source:
+                failures.extend(check_file(key, plan.source.stat().st_size, stored))
+            elif plan and plan.source:
+                try:
+                    intended = publisher.rendered.get(key)
+                    if intended is None:
+                        _, intended = publisher.render(plan.source)
+                        rewritten, _ = __import__(
+                            "edutools.publish", fromlist=["rewrite_links"]
+                        ).rewrite_links(intended, plan.source, publisher.repo, manifest, course_id)
+                        intended = rewritten
+                    failures.extend(check_body(key, intended, body))
+                    failures.extend(check_links(key, body, course_id, known, resolves))
+                except Exception as error:  # noqa: BLE001 - report, do not abort the sweep
+                    failures.append(Failure(key, "render", str(error)))
+
+            if entry.kind == "quiz" and plan and plan.source:
+                from edutools.publish import parse_quiz
+
+                expected = len(parse_quiz(plan.source))
+                questions = canvas.list_quiz_questions(course_id, entry.canvas_id)
+                failures.extend(check_quiz_questions(key, expected, questions))
+
+            progress.advance(task)
+
+    assignments = canvas.list_json(f"/api/v1/courses/{course_id}/assignments")
+    published_assignments = [a for a in assignments if a.get("published")]
+    if published_assignments:
+        failures.extend(check_gradebook_total(published_assignments, 1000.0))
+
+    if not failures:
+        console.print(
+            f"\n[green]✓ all {len(manifest.entries)} objects verified against Canvas[/green]"
+        )
+        return
+
+    table = Table(title="❌ Verification failures", show_header=True, header_style="bold red")
+    table.add_column("Object", style="cyan", no_wrap=False)
+    table.add_column("Check", style="yellow")
+    table.add_column("Detail", no_wrap=False)
+    for failure in failures[:60]:
+        table.add_row(failure.key, failure.check, failure.detail)
+    console.print(table)
+    console.print(f"\n[red]{len(failures)} failure(s):[/red] {summarise(failures)}")
+    raise typer.Exit(1)
+
+
+@canvas_app.command("dates")
+def course_dates(
+    repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),
+    show: bool = typer.Option(False, "--show", help="Print the generated schedule and exit"),
+    shift: Optional[str] = typer.Option(None, "--shift", help="Shift the whole term, e.g. '7d' or '-3d'"),
+):
+    """Generate every due / available-from / until date for a course.
+
+    Reads the term skeleton and per-type date policies from <repo>/canvas.toml and
+    derives the three Canvas date fields for every gradable item. --show needs no
+    Canvas token: it prints the whole semester so it can be reviewed before anything
+    is written.
+    """
+    from pathlib import Path
+
+    from edutools.dates import (
+        DateConfigError,
+        compute,
+        cross_check_syllabus,
+        load_config,
+        validate,
+    )
+
+    repo_path = Path(repo).expanduser()
+    try:
+        config = load_config(repo_path)
+        items = compute(repo_path, config)
+    except DateConfigError as error:
+        console.print(f"[red]Date configuration error:[/red] {error}")
+        raise typer.Exit(1)
+
+    if shift:
+        match = re.fullmatch(r"(-?\d+)d", shift.strip())
+        if not match:
+            console.print(f"[red]Bad --shift value {shift!r}; expected something like '7d' or '-3d'.[/red]")
+            raise typer.Exit(1)
+        days = int(match.group(1))
+        items = [item.shifted(days) for item in items]
+        console.print(f"[yellow]Showing the term shifted by {days:+d} days.[/yellow]\n")
+
+    table = Table(
+        title=f"🗓  {config.term.weeks}-week schedule — {len(items)} gradable items",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Item", style="green", no_wrap=False)
+    table.add_column("Type", style="cyan")
+    table.add_column("Wk", justify="right")
+    table.add_column("Pts", justify="right", style="dim")
+    table.add_column("Available from")
+    table.add_column("Due", style="bold")
+    table.add_column("Until")
+
+    for item in items:
+        table.add_row(
+            item.title,
+            item.kind,
+            str(item.week) if item.week is not None else "—",
+            f"{item.points:g}",
+            item.unlock_at.strftime("%b %d %H:%M"),
+            item.due_at.strftime("%b %d %H:%M"),
+            item.lock_at.strftime("%b %d %H:%M"),
+        )
+    console.print(table)
+
+    problems = validate(items, config.term)
+    syllabus = repo_path / "syllabus.md"
+    if syllabus.exists():
+        problems += cross_check_syllabus(syllabus, config.term)
+
+    if problems:
+        console.print(f"\n[red]{len(problems)} problem(s):[/red]")
+        for problem in problems:
+            console.print(f"  [red]•[/red] {problem}")
+        raise typer.Exit(1)
+
+    total = sum(item.points for item in items)
+    console.print(
+        f"\n[green]✓[/green] {len(items)} items · [bold]{total:g} points[/bold] · "
+        f"dates consistent with the syllabus schedule"
+    )
+    if not show:
+        console.print(
+            "[dim]--show only prints. Writing dates to Canvas arrives with "
+            "'canvas push'.[/dim]"
+        )
 
 
 @iam_app.command("provision", rich_help_panel="Workflow")
@@ -1301,7 +1644,7 @@ def ec2_reboot_failed(
     """
     init()
     import json
-    from edutools.aws import INSTRUCTOR_KEY_FILENAME, reboot_failed_instances
+    from edutools.ec2 import INSTRUCTOR_KEY_FILENAME, reboot_failed_instances
 
     if not os.path.isfile(log_file):
         console.print(f"[red]Log file not found:[/red] {log_file}")
@@ -2425,8 +2768,25 @@ def google_check_cleanup(
 # Main Entry Point
 # ============================================================================
 
+def _version_callback(value: bool) -> None:
+    """Print the version and exit when --version is passed."""
+    if value:
+        console.print(f"edutools [cyan]{full_version()}[/cyan]")
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context):
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show the edutools version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+):
     """
     🎓 [bold green]Edu Tools[/bold green] - Educational Technology CLI
 
