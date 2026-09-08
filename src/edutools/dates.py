@@ -96,6 +96,21 @@ class Policy:
 
 
 @dataclass(frozen=True)
+class Group:
+    """One Canvas assignment group, and which item kinds belong in it.
+
+    Weights live here rather than on the per-kind date policy because Canvas
+    weights a group, not a kind, and because a group can carry weight with no
+    repository item in it at all: a course whose exams are hand built quizzes
+    still needs an "Exams" group worth 50% of the grade.
+    """
+
+    name: str
+    weight: float | None = None
+    kinds: tuple[ItemKind, ...] = ()
+
+
+@dataclass(frozen=True)
 class ItemDates:
     """The three Canvas date fields for one gradable item."""
 
@@ -217,6 +232,19 @@ class DateConfig:
     policies: dict[str, Policy]
     overrides: dict[str, dict[str, object]]
     layout: Layout = DEFAULT_LAYOUT
+    groups: tuple[Group, ...] = ()
+
+    def group_for(self, kind: str) -> Group | None:
+        """The assignment group an item of this kind belongs in, if any."""
+        for group in self.groups:
+            if kind in group.kinds:
+                return group
+        return None
+
+    @property
+    def total_weight(self) -> float:
+        """The declared weights added up, for a course that weights by group."""
+        return sum(group.weight for group in self.groups if group.weight is not None)
 
 
 def _as_date(value: object, field: str) -> dt.date:
@@ -276,8 +304,69 @@ def load_config(repo: Path) -> DateConfig:
         str(k): dict(v) for k, v in overrides_raw.items() if isinstance(v, dict)
     }
     return DateConfig(
-        term=term, policies=policies, overrides=overrides, layout=load_layout(raw)
+        term=term, policies=policies, overrides=overrides,
+        layout=load_layout(raw), groups=load_groups(raw),
     )
+
+
+def load_groups(raw: dict[str, object]) -> tuple[Group, ...]:
+    """Read the optional [[group]] blocks, in the order they are declared.
+
+    An absent section returns nothing, and a push then leaves the course's
+    assignment groups and its weighting setting exactly as they are. File order
+    becomes the Canvas position, so the gradebook reads the way the syllabus does.
+    """
+    section = raw.get("group")
+    if section is None:
+        return ()
+    if not isinstance(section, list):
+        raise DateConfigError("canvas.toml [[group]] must be a list of tables")
+
+    groups: list[Group] = []
+    names: set[str] = set()
+    claimed: dict[str, str] = {}
+    for entry in section:
+        if not isinstance(entry, dict):
+            raise DateConfigError(f"each [[group]] must be a table, got {entry!r}")
+
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise DateConfigError(f"[[group]] name must be a non-empty string, got {name!r}")
+        if name in names:
+            raise DateConfigError(f"[[group]] {name!r} is declared twice")
+        names.add(name)
+
+        weight = entry.get("weight")
+        if weight is not None and (isinstance(weight, bool) or not isinstance(weight, (int, float))):
+            raise DateConfigError(f"[[group]] {name!r} weight must be a number, got {weight!r}")
+
+        kinds_raw = entry.get("kinds", [])
+        if not isinstance(kinds_raw, list):
+            raise DateConfigError(f"[[group]] {name!r} kinds must be a list of item kinds")
+        kinds: list[ItemKind] = []
+        for kind in kinds_raw:
+            if kind not in get_args(ItemKind):
+                raise DateConfigError(
+                    f"[[group]] {name!r} kind {kind!r} is not a known item kind "
+                    f"({', '.join(get_args(ItemKind))})"
+                )
+            # Canvas files an assignment under exactly one group, so two groups
+            # claiming the same kind is a configuration bug rather than a merge.
+            if kind in claimed:
+                raise DateConfigError(
+                    f"item kind {kind!r} is claimed by both {claimed[str(kind)]!r} and {name!r}"
+                )
+            claimed[str(kind)] = name
+            kinds.append(cast(ItemKind, kind))
+
+        groups.append(
+            Group(
+                name=name,
+                weight=float(weight) if weight is not None else None,
+                kinds=tuple(kinds),
+            )
+        )
+    return tuple(groups)
 
 
 def _glob_list(raw: dict[str, object], key: str, default: tuple[str, ...]) -> tuple[str, ...]:

@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from edutools.canvas import CanvasLMS
-from edutools.dates import ItemDates, compute, load_config
+from edutools.canvas import CanvasLMS, as_number
+from edutools.dates import Group, ItemDates, compute, load_config
 from edutools.publish import (
     Entry,
     canvas_path,
@@ -55,6 +55,10 @@ class Plan:
     source: Path | None = None
     points: float | None = None
     dates: ItemDates | None = None
+    # The repo kind this came from ("lab", "project", ...), which is what an
+    # assignment group is declared against. `kind` above has already been
+    # flattened to what Canvas calls the object.
+    item_kind: str | None = None
     extra: dict[str, str] = field(default_factory=dict)
 
 
@@ -70,6 +74,13 @@ def _slug(title: str) -> str:
     import re
 
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
+def _group_differs(stored: dict[str, object], group: Group, position: int) -> bool:
+    """True if Canvas's copy of this group does not match what the repo declares."""
+    if group.weight is not None and as_number(stored.get("group_weight")) != group.weight:
+        return True
+    return int(as_number(stored.get("position"))) != position
 
 
 class Publisher:
@@ -98,6 +109,9 @@ class Publisher:
         self.css = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
         self.rendered: dict[str, str] = {}
         self.protected: set[str] = set()
+        # Canvas assignment group name -> id, filled in by sync_groups().
+        self.groups: dict[str, str] = {}
+        self._groups_synced = False
         self.dropped_css: set[str] = set()
 
     # -- rendering ------------------------------------------------------
@@ -157,6 +171,7 @@ class Publisher:
                         source=path,
                         points=item.points if item else None,
                         dates=item,
+                        item_kind=kind,
                     )
                 )
 
@@ -214,6 +229,63 @@ class Publisher:
         stored = canvas.get_json(f"/api/v1{canvas_path(entry, self.course_id)}")
         return bool(stored.get("published"))
 
+    # -- assignment groups ----------------------------------------------
+
+    def sync_groups(self) -> Result:
+        """Create or update the course's assignment groups from [[group]].
+
+        Memoised, because the CLI calls it up front so the counts are reported
+        and a single-item push reaches it lazily through _group_fields.
+        """
+        result = Result()
+        if self._groups_synced or not self.config.groups:
+            return result
+        self._groups_synced = True
+
+        if self.dry_run:
+            for group in self.config.groups:
+                weight = f" ({group.weight:g}%)" if group.weight is not None else ""
+                kinds = f" <- {', '.join(group.kinds)}" if group.kinds else ""
+                self.report(f"[dim]group {group.name}{weight}{kinds}[/dim]")
+                result.skipped += 1
+            return result
+
+        canvas = self._client()
+        existing = {
+            str(stored.get("name", "")): stored
+            for stored in canvas.list_assignment_groups(self.course_id)
+        }
+        for position, group in enumerate(self.config.groups, start=1):
+            fields = {"name": group.name, "position": str(position)}
+            if group.weight is not None:
+                fields["group_weight"] = f"{group.weight:g}"
+            stored = existing.get(group.name)
+            if stored is None:
+                created = canvas.create_assignment_group(self.course_id, fields)
+                self.groups[group.name] = str(created["id"])
+                result.created += 1
+                continue
+            self.groups[group.name] = str(stored.get("id", ""))
+            if _group_differs(stored, group, position):
+                canvas.update_assignment_group(self.course_id, self.groups[group.name], fields)
+                result.updated += 1
+            else:
+                result.skipped += 1
+
+        # Weights are inert until the course itself is set to weight by group.
+        if any(group.weight is not None for group in self.config.groups):
+            canvas.set_group_weighting(self.course_id, True)
+        return result
+
+    def _group_fields(self, prefix: str, item: Plan) -> dict[str, str]:
+        """The assignment group field for this item, or nothing if none applies."""
+        group = self.config.group_for(item.item_kind) if item.item_kind else None
+        if group is None:
+            return {}
+        self.sync_groups()
+        group_id = self.groups.get(group.name)
+        return {f"{prefix}[assignment_group_id]": group_id} if group_id else {}
+
     # -- pass one -------------------------------------------------------
 
     def create_or_update(self, item: Plan) -> Result:
@@ -262,6 +334,7 @@ class Publisher:
                 "assignment[description]": html,
                 "assignment[points_possible]": f"{item.points or 0:g}",
                 "assignment[submission_types][]": "online_text_entry",
+                **self._group_fields("assignment", item),
                 **self._date_fields("assignment", item.dates),
             }
             if existing and canvas.exists(
@@ -282,6 +355,7 @@ class Publisher:
                 "title": title,
                 "message": html,
                 "assignment[points_possible]": f"{item.points or 0:g}",
+                **self._group_fields("assignment", item),
                 **self._date_fields("assignment", item.dates),
             }
             if existing and canvas.exists(
@@ -312,6 +386,7 @@ class Publisher:
                 "quiz[published]": "false",
                 "quiz[allowed_attempts]": "1",
                 "quiz[scoring_policy]": "keep_highest",
+                **self._group_fields("quiz", item),
                 **self._date_fields("quiz", item.dates),
             }
             was_live = False

@@ -98,6 +98,7 @@ edutools courses --all           # include concluded and unpublished courses
 edutools courses --json          # raw JSON instead of a table
 
 edutools assignments 12345
+edutools groups 12345            # assignment groups, their weights, and their size
 edutools students 12345
 edutools submissions 12345 67890
 edutools ungraded 12345
@@ -168,7 +169,7 @@ By default a course repo looks like this, and a repo shaped this way needs no
 `[layout]` section at all:
 
 ```
-canvas.toml            term skeleton, date policies, module layout
+canvas.toml            term skeleton, date policies, assignment groups, module layout
 syllabus.md            becomes the Canvas syllabus
 objectives.md          published as a page
 resources.md           published as a page
@@ -217,6 +218,44 @@ literal text:
 
 Ordinary lowercase HTML is left alone, and an include written inline in prose,
 rather than alone on its own line, stays as text so it can be documented.
+
+### Assignment groups
+
+Canvas files every assignment, quiz and graded discussion under an assignment
+group, and a course that weights by group computes the final grade from those
+weights. Declare them in order with `[[group]]`:
+
+```toml
+[[group]]
+name   = "Exams"
+weight = 50
+
+[[group]]
+name   = "In Class Activities"
+weight = 40
+kinds  = ["lab", "discussion"]
+
+[[group]]
+name   = "Projects"
+weight = 10
+kinds  = ["project"]
+```
+
+`kinds` are the same item kinds `[layout.gradable]` uses, and each kind belongs to
+at most one group. A group with no `kinds` is still created, which is how a course
+whose exams are hand built quizzes gets an "Exams" group worth half the grade with
+nothing in the repository to put in it.
+
+`push` creates the missing groups, corrects a weight or a position that has drifted,
+and files each item into its group as it goes. Declaration order becomes the order
+Canvas shows, so the gradebook reads the way the syllabus does. As soon as any group
+declares a `weight`, the course itself is set to weight the final grade by group,
+because Canvas stores weights and ignores them until that is on. A repo with no
+`[[group]]` blocks leaves the course's groups and its weighting setting untouched.
+
+Weights are not required to add to 100. A course with an extra credit group on top
+of a full 100% is a normal thing to want, so nothing here objects to it; run
+`edutools groups <course>` to see the sum Canvas is working from.
 
 ### Point totals
 
