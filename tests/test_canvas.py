@@ -100,7 +100,7 @@ class TestCanvasLMSGetAssignments:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            assignments = canvas.get_assignments(123)
+            assignments = canvas.get_assignments("123")
 
             assert len(assignments) == 2
             assert assignments[0]["id"] == 1
@@ -113,7 +113,7 @@ class TestCanvasLMSGetAssignments:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            assignments = canvas.get_assignments(123)
+            assignments = canvas.get_assignments("123")
             assert assignments == []
 
     @patch("edutools.canvas.requests.get")
@@ -124,7 +124,7 @@ class TestCanvasLMSGetAssignments:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
             with pytest.raises(RuntimeError, match="Canvas API error 404"):
-                canvas.get_assignments(123)
+                canvas.get_assignments("123")
 
 
 class TestCanvasLMSGetStudents:
@@ -139,7 +139,7 @@ class TestCanvasLMSGetStudents:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            students = canvas.get_students(123)
+            students = canvas.get_students("123")
 
             assert len(students) == 2
             assert students[0]["id"] == 1
@@ -152,7 +152,7 @@ class TestCanvasLMSGetStudents:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            students = canvas.get_students(123)
+            students = canvas.get_students("123")
             assert students == []
 
     @patch("edutools.canvas.requests.get")
@@ -163,7 +163,7 @@ class TestCanvasLMSGetStudents:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
             with pytest.raises(RuntimeError, match="Canvas API error 403"):
-                canvas.get_students(123)
+                canvas.get_students("123")
 
 
 class TestCanvasLMSGetSubmissions:
@@ -178,7 +178,7 @@ class TestCanvasLMSGetSubmissions:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            submissions = canvas.get_submissions(123, 456)
+            submissions = canvas.get_submissions("123", "456")
 
             assert len(submissions) == 2
             assert submissions[0]["id"] == 1
@@ -191,7 +191,7 @@ class TestCanvasLMSGetSubmissions:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            submissions = canvas.get_submissions(123, 456)
+            submissions = canvas.get_submissions("123", "456")
             assert submissions == []
 
     @patch("edutools.canvas.requests.get")
@@ -202,7 +202,7 @@ class TestCanvasLMSGetSubmissions:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
             with pytest.raises(RuntimeError, match="Canvas API error 500"):
-                canvas.get_submissions(123, 456)
+                canvas.get_submissions("123", "456")
 
 
 class TestCanvasLMSGetAssignment:
@@ -218,7 +218,7 @@ class TestCanvasLMSGetAssignment:
 
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
-            assignment = canvas.get_assignment(123, 456)
+            assignment = canvas.get_assignment("123", "456")
 
             assert assignment["id"] == 456
             assert assignment["name"] == "Final Project"
@@ -232,7 +232,7 @@ class TestCanvasLMSGetAssignment:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
             with pytest.raises(RuntimeError, match="Canvas API error 404"):
-                canvas.get_assignment(123, 999)
+                canvas.get_assignment("123", "999")
 
     @patch("edutools.canvas.requests.get")
     def test_get_assignment_api_failure(self, mock_get):
@@ -242,7 +242,7 @@ class TestCanvasLMSGetAssignment:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "test_token"}):
             canvas = CanvasLMS()
             with pytest.raises(RuntimeError, match="Canvas API error 500"):
-                canvas.get_assignment(123, 456)
+                canvas.get_assignment("123", "456")
 
 
 class TestCanvasLMSHeaders:
