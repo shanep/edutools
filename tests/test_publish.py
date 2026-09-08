@@ -731,6 +731,15 @@ class TestAssignmentGroupSync:
         assert canvas.update_assignment_group.call_args.args[1] == "2"
         assert canvas.update_assignment_group.call_args.args[2]["group_weight"] == "40"
 
+    def test_an_undeclared_weight_is_never_written(self, tmp_path: Path):
+        """A group whose weight is managed by hand keeps whatever Canvas holds,
+        even when the group has to be repositioned."""
+        canvas = self._canvas([{"id": 4, "name": "Extra Credit", "group_weight": 2.5, "position": 9}])
+        groups = '\n[[group]]\nname = "Extra Credit"\n'
+        result = self._publisher(tmp_path, canvas, groups).sync_groups()
+        assert result.updated == 1
+        assert "group_weight" not in canvas.update_assignment_group.call_args.args[2]
+
     def test_syncing_twice_writes_once(self, tmp_path: Path):
         canvas = self._canvas()
         publisher = self._publisher(tmp_path, canvas, self.GROUPS)
