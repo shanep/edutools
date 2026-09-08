@@ -182,3 +182,5 @@ keys/
 # App specific files
 *.log
 *.csv
+
+/.claude/worktrees/*
