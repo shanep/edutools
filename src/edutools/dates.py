@@ -16,11 +16,11 @@ import datetime as dt
 import re
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Final, Literal
+from pathlib import Path, PurePosixPath
+from typing import Final, Literal, cast, get_args
 from zoneinfo import ZoneInfo
 
-ItemKind = Literal["lab", "quiz", "discussion", "exam"]
+ItemKind = Literal["lab", "project", "quiz", "discussion", "exam"]
 
 _WEEKDAY_OFFSET: Final[dict[str, int]] = {
     "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
@@ -62,6 +62,9 @@ class Term:
     last_day_of_instruction: dt.date
     finals_start: dt.date
     finals_end: dt.date
+    # What every gradable item should add up to. Zero means the course grades by
+    # weighted assignment groups instead, so there is no total to check against.
+    total_points: float = 1000
 
     @property
     def tz(self) -> ZoneInfo:
@@ -141,17 +144,57 @@ def parse_header(text: str) -> tuple[int | None, float]:
     return week, float(match.group("points"))
 
 
-def classify(path: Path) -> ItemKind | None:
+@dataclass(frozen=True)
+class Layout:
+    """What a course repo calls its files.
+
+    Two courses name the same things differently: CS331 has ``assignments/lab-*.md``
+    and a ``syllabus.md``, CS425 has ``assignments/p0.md`` and uses ``index.md`` as
+    its syllabus because the same directory is also a VitePress site.  Rather than
+    grow a second set of hardcoded globs, a repo declares its own shape in the
+    ``[layout]`` section of ``canvas.toml`` and everything else reads it from here.
+    """
+
+    syllabus: str = "syllabus.md"
+    pages: tuple[str, ...] = (
+        "objectives.md",
+        "resources.md",
+        "modules/*.md",
+        "assignments/*-exam-guide.md",
+    )
+    files: tuple[str, ...] = ("docs/*.pdf", "data/*")
+    gradable: tuple[tuple[str, ItemKind], ...] = (
+        ("assignments/lab-*.md", "lab"),
+        ("assignments/p[0-9]*.md", "project"),
+        ("quizzes/quiz-*.md", "quiz"),
+        ("discussions/*.md", "discussion"),
+    )
+
+    @property
+    def gradable_dirs(self) -> tuple[str, ...]:
+        """Every directory a gradable item can live in, without duplicates."""
+        seen: dict[str, None] = {}
+        for pattern, _ in self.gradable:
+            seen.setdefault(PurePosixPath(pattern).parent.as_posix(), None)
+        return tuple(seen)
+
+
+DEFAULT_LAYOUT: Final[Layout] = Layout()
+
+# Pages are matched before gradable items so that a file caught by both, such as
+# an exam guide that also sits under assignments/, stays a page.
+_EXAM_GUIDE_RE: Final[re.Pattern[str]] = re.compile(r"-exam-guide\.md$")
+
+
+def classify(path: Path, layout: Layout = DEFAULT_LAYOUT) -> ItemKind | None:
     """Decide what kind of gradable item a repo file is, or None if it is not one."""
     name, parent = path.name, path.parent.name
-    if parent == "assignments" and name.startswith("lab-"):
-        return "lab"
-    if parent == "assignments" and name.endswith("-exam-guide.md"):
+    if parent == "assignments" and _EXAM_GUIDE_RE.search(name):
         return "exam"
-    if parent == "quizzes" and name.startswith("quiz-"):
-        return "quiz"
-    if parent == "discussions":
-        return "discussion"
+    for pattern, kind in layout.gradable:
+        pure = PurePosixPath(pattern)
+        if parent == pure.parent.as_posix() and PurePosixPath(name).match(pure.name):
+            return kind
     return None
 
 
@@ -170,6 +213,7 @@ class DateConfig:
     term: Term
     policies: dict[str, Policy]
     overrides: dict[str, dict[str, object]]
+    layout: Layout = DEFAULT_LAYOUT
 
 
 def _as_date(value: object, field: str) -> dt.date:
@@ -203,6 +247,7 @@ def load_config(repo: Path) -> DateConfig:
         ),
         finals_start=_as_date(term_raw.get("finals_start"), "finals_start"),
         finals_end=_as_date(term_raw.get("finals_end"), "finals_end"),
+        total_points=float(term_raw.get("total_points", 1000)),
     )
     if term.first_monday.weekday() != 0:
         raise DateConfigError(
@@ -227,7 +272,56 @@ def load_config(repo: Path) -> DateConfig:
     overrides: dict[str, dict[str, object]] = {
         str(k): dict(v) for k, v in overrides_raw.items() if isinstance(v, dict)
     }
-    return DateConfig(term=term, policies=policies, overrides=overrides)
+    return DateConfig(
+        term=term, policies=policies, overrides=overrides, layout=load_layout(raw)
+    )
+
+
+def _glob_list(raw: dict[str, object], key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = raw.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise DateConfigError(f"[layout] {key} must be a list of glob strings, got {value!r}")
+    return tuple(str(item) for item in value)
+
+
+def load_layout(raw: dict[str, object]) -> Layout:
+    """Read the optional [layout] section; an absent section keeps the defaults."""
+    section = raw.get("layout")
+    if section is None:
+        return DEFAULT_LAYOUT
+    if not isinstance(section, dict):
+        raise DateConfigError("canvas.toml [layout] must be a table")
+
+    syllabus = section.get("syllabus", DEFAULT_LAYOUT.syllabus)
+    if not isinstance(syllabus, str):
+        raise DateConfigError(f"[layout] syllabus must be a string, got {syllabus!r}")
+
+    gradable_raw = section.get("gradable")
+    if gradable_raw is None:
+        gradable = DEFAULT_LAYOUT.gradable
+    else:
+        if not isinstance(gradable_raw, dict):
+            raise DateConfigError("[layout] gradable must be a table of kind = glob")
+        pairs: list[tuple[str, ItemKind]] = []
+        for kind, pattern in gradable_raw.items():
+            if kind not in get_args(ItemKind):
+                raise DateConfigError(
+                    f"[layout] gradable.{kind} is not a known item kind "
+                    f"({', '.join(get_args(ItemKind))})"
+                )
+            if not isinstance(pattern, str):
+                raise DateConfigError(f"[layout] gradable.{kind} must be a glob string")
+            pairs.append((pattern, cast(ItemKind, kind)))
+        gradable = tuple(pairs)
+
+    return Layout(
+        syllabus=syllabus,
+        pages=_glob_list(section, "pages", DEFAULT_LAYOUT.pages),
+        files=_glob_list(section, "files", DEFAULT_LAYOUT.files),
+        gradable=gradable,
+    )
 
 
 def _str_override(override: dict[str, object], key: str, default: str, where: str) -> str:
@@ -250,9 +344,9 @@ def compute(repo: Path, config: DateConfig | None = None) -> list[ItemDates]:
     term, tz = cfg.term, cfg.term.tz
     items: list[ItemDates] = []
 
-    for directory in ("assignments", "quizzes", "discussions"):
+    for directory in cfg.layout.gradable_dirs:
         for path in sorted((repo / directory).glob("*.md")):
-            kind = classify(path)
+            kind = classify(path, cfg.layout)
             if kind is None:
                 continue
             text = path.read_text(encoding="utf-8")
@@ -329,8 +423,11 @@ def validate(items: list[ItemDates], term: Term) -> list[str]:
                 problems.append(f"{item.path}: due {item.due_at:%b %d}, during the break week")
 
     total = sum(i.points for i in items)
-    if total != 1000:
-        problems.append(f"points across all gradable items sum to {total:g}, not 1000")
+    if term.total_points and total != term.total_points:
+        problems.append(
+            f"points across all gradable items sum to {total:g}, "
+            f"not {term.total_points:g}"
+        )
     return problems
 
 

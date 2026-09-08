@@ -23,6 +23,7 @@ from edutools.publish import (
     rubric_fields,
     strip_instructor_sections,
     strip_title,
+    strip_vitepress,
     structure_counts,
     style_declarations,
     visible_text,
@@ -338,3 +339,82 @@ class TestAgainstCS331:
         for path in sorted((CS331 / "quizzes").glob("*.md")):
             _, html = render_markdown(path)
             assert "Instructor note" not in html, path.name
+
+
+class TestStripVitepress:
+    """The same file is a VitePress page and a Canvas object, so the VitePress-only
+    syntax has to be resolved rather than passed through to pandoc as literal text."""
+
+    def _write(self, tmp_path: Path, name: str, text: str) -> Path:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_frontmatter_is_removed(self, tmp_path: Path):
+        source = self._write(tmp_path, "a.md", "---\nnext: false\nprev: false\n---\n\n# Title\n")
+        assert strip_vitepress(source.read_text(), source, tmp_path).strip() == "# Title"
+
+    def test_a_horizontal_rule_is_not_mistaken_for_frontmatter(self, tmp_path: Path):
+        source = self._write(tmp_path, "a.md", "# Title\n\n---\n\nBody\n")
+        assert "Body" in strip_vitepress(source.read_text(), source, tmp_path)
+        assert "---" in strip_vitepress(source.read_text(), source, tmp_path)
+
+    def test_include_is_inlined(self, tmp_path: Path):
+        self._write(tmp_path, "parts/boiler.md", "## Boilerplate\n\nShared text.\n")
+        source = self._write(tmp_path, "a.md", "# Title\n\n<!--@include: parts/boiler.md-->\n")
+        out = strip_vitepress(source.read_text(), source, tmp_path)
+        assert "## Boilerplate" in out
+        assert "@include" not in out
+
+    def test_include_resolves_relative_to_the_including_file(self, tmp_path: Path):
+        self._write(tmp_path, "parts/boiler.md", "Shared.\n")
+        source = self._write(tmp_path, "deep/a.md", "<!--@include: ../parts/boiler.md-->\n")
+        assert "Shared." in strip_vitepress(source.read_text(), source, tmp_path)
+
+    def test_a_missing_include_is_an_error(self, tmp_path: Path):
+        source = self._write(tmp_path, "a.md", "<!--@include: nope.md-->\n")
+        with pytest.raises(PublishError, match="does not exist"):
+            strip_vitepress(source.read_text(), source, tmp_path)
+
+    def test_an_include_cycle_is_an_error(self, tmp_path: Path):
+        self._write(tmp_path, "b.md", "<!--@include: a.md-->\n")
+        source = self._write(tmp_path, "a.md", "<!--@include: b.md-->\n")
+        with pytest.raises(PublishError, match="nested more than"):
+            strip_vitepress(source.read_text(), source, tmp_path)
+
+    def test_a_container_becomes_a_quoted_callout(self, tmp_path: Path):
+        source = self._write(
+            tmp_path, "a.md", "::: danger\n\nDo not do this.\n\nEver.\n\n:::\n"
+        )
+        out = strip_vitepress(source.read_text(), source, tmp_path)
+        assert ":::" not in out
+        # Every body line stays inside the blockquote, blank lines included, or the
+        # quote would end at the first of them and the warning would escape it.
+        assert "> **Warning**" in out
+        assert "> Do not do this." in out
+        assert "> Ever." in out
+
+    def test_a_container_title_overrides_the_default(self, tmp_path: Path):
+        source = self._write(tmp_path, "a.md", "::: tip Read this first\n\nBody.\n\n:::\n")
+        assert "> **Read this first**" in strip_vitepress(source.read_text(), source, tmp_path)
+
+    def test_vue_components_are_dropped(self, tmp_path: Path):
+        source = self._write(
+            tmp_path,
+            "a.md",
+            '<script setup>\nimport x from "./x.json"\n</script>\n\n'
+            "# Title\n\n<OfficeHoursLink />\n\n<CourseSchedule :weeks=\"x.weeks\" />\n",
+        )
+        out = strip_vitepress(source.read_text(), source, tmp_path)
+        assert "OfficeHoursLink" not in out
+        assert "CourseSchedule" not in out
+        assert "import x" not in out
+        assert "# Title" in out
+
+    def test_ordinary_html_is_left_alone(self, tmp_path: Path):
+        """Only capitalised tags are Vue components; real HTML has to survive."""
+        source = self._write(tmp_path, "a.md", "<img src='x.png' alt='x'>\n\n<br>\n")
+        out = strip_vitepress(source.read_text(), source, tmp_path)
+        assert "<img" in out
+        assert "<br>" in out

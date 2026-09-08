@@ -129,10 +129,92 @@ def strip_title(markdown: str) -> tuple[str, str]:
     return title, "\n".join(lines).lstrip("\n")
 
 
-def render_markdown(path: Path) -> tuple[str, str]:
+# ---------------------------------------------------------------------------
+# VitePress: the same markdown is a website and a Canvas object
+# ---------------------------------------------------------------------------
+
+# "---\nnext: false\n---\n" at the very top of the file.
+_FRONTMATTER_RE: Final[re.Pattern[str]] = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.S)
+
+# "<!--@include: ../../parts/syllabus-boiler.md-->"
+_INCLUDE_RE: Final[re.Pattern[str]] = re.compile(r"^[ \t]*<!--\s*@include:\s*(\S+?)\s*-->[ \t]*$", re.M)
+
+# "::: danger", "::: warning Custom Title", "::: tip", closed by a bare ":::".
+_CONTAINER_RE: Final[re.Pattern[str]] = re.compile(
+    r"^:::+[ \t]*(?P<kind>[a-z-]+)[ \t]*(?P<title>[^\n]*)\n(?P<body>.*?)^:::+[ \t]*$",
+    re.M | re.S,
+)
+
+# "<OfficeHoursLink />" or "<CourseSchedule :weeks="x" />": a capitalised tag is a
+# Vue component, which means nothing outside the website.
+_COMPONENT_RE: Final[re.Pattern[str]] = re.compile(r"<(?P<tag>[A-Z]\w*)\b[^>]*?/?>(?:</(?P=tag)>)?")
+
+# "<script setup> ... </script>" blocks that feed those components.
+_SCRIPT_RE: Final[re.Pattern[str]] = re.compile(r"^<script\b[^>]*>.*?</script>[ \t]*$", re.M | re.S)
+
+# The title Canvas should show for each container kind when the author gave none.
+_CONTAINER_TITLES: Final[dict[str, str]] = {
+    "danger": "Warning",
+    "warning": "Caution",
+    "info": "Note",
+    "tip": "Tip",
+    "details": "Details",
+}
+
+_MAX_INCLUDE_DEPTH: Final[int] = 5
+
+
+def strip_vitepress(markdown: str, source: Path, repo: Path | None = None, depth: int = 0) -> str:
+    """Resolve the VitePress-only syntax that pandoc would otherwise pass through.
+
+    A course directory is served as a website *and* pushed to Canvas, so the same
+    file carries VitePress constructs that mean nothing to pandoc.  Left alone they
+    reach Canvas as literal text: a reader sees ``::: danger`` and an unrendered
+    ``<!--@include:-->`` comment.  Each one is resolved into plain markdown here.
+    """
+    markdown = _FRONTMATTER_RE.sub("", markdown)
+    markdown = _SCRIPT_RE.sub("", markdown)
+
+    # Includes are resolved relative to the file that names them, and recursively,
+    # since a boilerplate part may include another.
+    def _include(match: re.Match[str]) -> str:
+        if depth >= _MAX_INCLUDE_DEPTH:
+            raise PublishError(
+                f"{source.name}: @include nested more than {_MAX_INCLUDE_DEPTH} deep"
+            )
+        target = (source.parent / match.group(1)).resolve()
+        if not target.exists():
+            raise PublishError(f"{source.name}: @include target {match.group(1)} does not exist")
+        return strip_vitepress(target.read_text(encoding="utf-8"), target, repo, depth + 1)
+
+    markdown = _INCLUDE_RE.sub(_include, markdown)
+
+    # A container becomes a blockquote with a bold lead line.  Canvas keeps both, so
+    # the callout still reads as a callout without needing any custom CSS, and the
+    # body has to be quoted line by line or the quote ends at the first blank line.
+    def _container(match: re.Match[str]) -> str:
+        kind = match.group("kind")
+        title = match.group("title").strip() or _CONTAINER_TITLES.get(kind, kind.title())
+        body = match.group("body").strip("\n")
+        quoted = "\n".join(f"> {line}".rstrip() for line in body.splitlines())
+        return f"> **{title}**\n>\n{quoted}\n"
+
+    # Innermost first, so a container nested inside another is resolved before the
+    # outer one quotes it.
+    while True:
+        markdown, count = _CONTAINER_RE.subn(_container, markdown)
+        if not count:
+            break
+
+    markdown = _COMPONENT_RE.sub("", markdown)
+    return markdown
+
+
+def render_markdown(path: Path, repo: Path | None = None) -> tuple[str, str]:
     """Render one course file to (title, html)."""
     require_pandoc()
-    source = strip_instructor_sections(path.read_text(encoding="utf-8"))
+    source = strip_vitepress(path.read_text(encoding="utf-8"), path, repo)
+    source = strip_instructor_sections(source)
     title, body = strip_title(source)
     result = subprocess.run(
         ["pandoc", "--from", "gfm", "--to", "html", "--wrap=none"],

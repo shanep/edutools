@@ -33,8 +33,15 @@ from edutools.publish import (
 
 Reporter = Callable[[str], None]
 
-# Files published as Canvas pages rather than gradable objects.
-TOP_LEVEL_PAGES = ("objectives.md", "resources.md")
+# Which Canvas object each gradable kind becomes.  An exam guide is a study guide,
+# published as a page; the exam itself is a Canvas quiz built by hand.
+KIND_TO_CANVAS: dict[str, str] = {
+    "lab": "assignment",
+    "project": "assignment",
+    "quiz": "quiz",
+    "discussion": "discussion",
+    "exam": "page",
+}
 
 
 @dataclass
@@ -93,7 +100,7 @@ class Publisher:
 
     def render(self, source: Path) -> tuple[str, str]:
         """Markdown -> decorated, styled, Canvas-safe HTML."""
-        title, html = render_markdown(source)
+        title, html = render_markdown(source, self.repo)
         html = wrap_tables(mark_table_rows(decorate(html)))
         if self.css:
             html, dropped = inline_css(html, self.css)
@@ -107,44 +114,52 @@ class Publisher:
 
     def plan(self) -> list[Plan]:
         """Everything that will be created or updated, in dependency order."""
+        layout = self.config.layout
         plans: list[Plan] = []
+        claimed: set[str] = set()
 
-        for name in ("docs/CyBOK_v1.1.0.pdf",):
-            path = self.repo / name
-            if path.exists():
-                plans.append(Plan(key=name, kind="file", title=path.name, source=path))
-        for path in sorted((self.repo / "data").glob("*")):
-            if path.is_file():
-                key = path.relative_to(self.repo).as_posix()
-                plans.append(Plan(key=key, kind="file", title=path.name, source=path))
+        def key_of(path: Path) -> str:
+            return path.relative_to(self.repo).as_posix()
 
-        for name in TOP_LEVEL_PAGES:
-            path = self.repo / name
-            if path.exists():
-                plans.append(Plan(key=name, kind="page", title="", source=path))
-        for path in sorted((self.repo / "modules").glob("*.md")):
-            plans.append(Plan(key=path.relative_to(self.repo).as_posix(), kind="page", title="", source=path))
-        for path in sorted((self.repo / "assignments").glob("*-exam-guide.md")):
-            plans.append(Plan(key=path.relative_to(self.repo).as_posix(), kind="page", title="", source=path))
+        for pattern in layout.files:
+            for path in sorted(self.repo.glob(pattern)):
+                if path.is_file() and key_of(path) not in claimed:
+                    claimed.add(key_of(path))
+                    plans.append(Plan(key=key_of(path), kind="file", title=path.name, source=path))
 
-        for path in sorted((self.repo / "assignments").glob("lab-*.md")):
-            key = path.relative_to(self.repo).as_posix()
-            item = self.dates.get(key)
-            plans.append(Plan(key=key, kind="assignment", title="", source=path,
-                              points=item.points if item else None, dates=item))
-        for path in sorted((self.repo / "discussions").glob("*.md")):
-            key = path.relative_to(self.repo).as_posix()
-            item = self.dates.get(key)
-            plans.append(Plan(key=key, kind="discussion", title="", source=path,
-                              points=item.points if item else None, dates=item))
-        for path in sorted((self.repo / "quizzes").glob("*.md")):
-            key = path.relative_to(self.repo).as_posix()
-            item = self.dates.get(key)
-            plans.append(Plan(key=key, kind="quiz", title="", source=path,
-                              points=item.points if item else None, dates=item))
+        # Pages before gradable items: a file matched by both, such as an exam guide
+        # sitting under assignments/, stays a page.
+        for pattern in layout.pages:
+            for path in sorted(self.repo.glob(pattern)):
+                if path.is_file() and key_of(path) not in claimed:
+                    claimed.add(key_of(path))
+                    plans.append(Plan(key=key_of(path), kind="page", title="", source=path))
 
-        plans.append(Plan(key="syllabus.md", kind="syllabus", title="Syllabus",
-                          source=self.repo / "syllabus.md"))
+        for pattern, kind in layout.gradable:
+            canvas_kind = KIND_TO_CANVAS.get(kind)
+            if canvas_kind is None:
+                continue
+            for path in sorted(self.repo.glob(pattern)):
+                key = key_of(path)
+                if not path.is_file() or key in claimed:
+                    continue
+                claimed.add(key)
+                item = self.dates.get(key)
+                plans.append(
+                    Plan(
+                        key=key,
+                        kind=canvas_kind,
+                        title="",
+                        source=path,
+                        points=item.points if item else None,
+                        dates=item,
+                    )
+                )
+
+        syllabus = self.repo / layout.syllabus
+        plans.append(
+            Plan(key=layout.syllabus, kind="syllabus", title="Syllabus", source=syllabus)
+        )
         return plans
 
     # -- helpers --------------------------------------------------------
