@@ -523,6 +523,20 @@ def push_course(
         console.print(f"[red]{error}[/red]")
         raise typer.Exit(1)
 
+    if publisher.drafts:
+        console.print(
+            f"[dim]draft, not pushed: {', '.join(sorted(publisher.drafts))}[/dim]"
+        )
+    if not dry_run:
+        # A file that was pushed before it became a draft still has an object in
+        # Canvas. Forgetting it here is what stops `verify` reporting it, but the
+        # object itself is left alone because it may already have submissions.
+        for orphan in publisher.prune_drafts():
+            console.print(
+                f"[yellow]{orphan} is now a draft; its Canvas object is no longer "
+                f"tracked and has to be deleted by hand if it still exists[/yellow]"
+            )
+
     wanted = set(only or [])
     kind_group = {
         "page": "pages", "assignment": "assignments", "discussion": "discussions",
@@ -691,6 +705,10 @@ def verify_course(
         console.print("[yellow]Nothing in the manifest for this course, push first.[/yellow]")
         raise typer.Exit(1)
 
+    drafts = {key for key in manifest.entries if publisher.is_draft_key(key)}
+    if drafts:
+        console.print(f"[dim]draft, not verified: {', '.join(sorted(drafts))}[/dim]")
+
     failures: list[Failure] = []
     known = known_link_targets(manifest, course_id)
 
@@ -699,8 +717,10 @@ def verify_course(
 
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                   BarColumn(), TaskProgressColumn(), console=console) as progress:
-        task = progress.add_task("Verifying", total=len(manifest.entries))
+        task = progress.add_task("Verifying", total=len(manifest.entries) - len(drafts))
         for key, entry in sorted(manifest.entries.items()):
+            if key in drafts:
+                continue
             progress.update(task, description=f"Verifying {key}")
             plan = plans.get(key)
             try:
@@ -763,7 +783,7 @@ def verify_course(
 
     if not failures:
         console.print(
-            f"\n[green]✓ all {len(manifest.entries)} objects verified against Canvas[/green]"
+            f"\n[green]✓ all {len(manifest.entries) - len(drafts)} objects verified against Canvas[/green]"
         )
         return
 

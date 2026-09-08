@@ -25,6 +25,7 @@ from edutools.publish import (
     mark_table_rows,
     parse_quiz,
     parse_rubric,
+    path_is_draft,
     question_fields,
     render_markdown,
     rewrite_links,
@@ -109,6 +110,8 @@ class Publisher:
         self.css = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
         self.rendered: dict[str, str] = {}
         self.protected: set[str] = set()
+        # Repo paths marked `draft: true`, filled in by plan().
+        self.drafts: set[str] = set()
         # Canvas assignment group name -> id, filled in by sync_groups().
         self.groups: dict[str, str] = {}
         self._groups_synced = False
@@ -139,9 +142,22 @@ class Publisher:
         def key_of(path: Path) -> str:
             return path.relative_to(self.repo).as_posix()
 
+        def skip(path: Path) -> bool:
+            """A draft is not a Canvas object, so it never enters the plan.
+
+            Claiming the key as well keeps a later, looser glob from picking the
+            same file back up as a page.
+            """
+            if not path_is_draft(path):
+                return False
+            key = key_of(path)
+            self.drafts.add(key)
+            claimed.add(key)
+            return True
+
         for pattern in layout.files:
             for path in sorted(self.repo.glob(pattern)):
-                if path.is_file() and key_of(path) not in claimed:
+                if path.is_file() and not skip(path) and key_of(path) not in claimed:
                     claimed.add(key_of(path))
                     plans.append(Plan(key=key_of(path), kind="file", title=path.name, source=path))
 
@@ -149,7 +165,7 @@ class Publisher:
         # sitting under assignments/, stays a page.
         for pattern in layout.pages:
             for path in sorted(self.repo.glob(pattern)):
-                if path.is_file() and key_of(path) not in claimed:
+                if path.is_file() and not skip(path) and key_of(path) not in claimed:
                     claimed.add(key_of(path))
                     plans.append(Plan(key=key_of(path), kind="page", title="", source=path))
 
@@ -159,7 +175,7 @@ class Publisher:
                 continue
             for path in sorted(self.repo.glob(pattern)):
                 key = key_of(path)
-                if not path.is_file() or key in claimed:
+                if not path.is_file() or skip(path) or key in claimed:
                     continue
                 claimed.add(key)
                 item = self.dates.get(key)
@@ -209,6 +225,36 @@ class Publisher:
         if self.canvas is None:
             raise PublishError("no Canvas client configured")
         return self.canvas
+
+    def is_draft_key(self, key: str) -> bool:
+        """Whether a repo path is a draft.
+
+        Reads the file rather than trusting ``self.drafts`` so that it is right
+        even when nothing has called ``plan()`` yet.
+        """
+        if key in self.drafts:
+            return True
+        path = self.repo / key
+        if path.is_file() and path_is_draft(path):
+            self.drafts.add(key)
+            return True
+        return False
+
+    def prune_drafts(self) -> list[str]:
+        """Forget the Canvas objects of files that have since become drafts.
+
+        A file that was pushed and is now a draft leaves an object behind in
+        Canvas. Dropping the manifest entry is what makes the draft invisible to
+        ``verify``, but it also orphans that object, so the keys are returned for
+        the caller to report. Deleting it is left to a human: an assignment may
+        already have submissions against it.
+        """
+        orphaned: list[str] = []
+        for key in sorted(self.manifest.entries):
+            if self.is_draft_key(key):
+                orphaned.append(key)
+                self.manifest.drop(key)
+        return orphaned
 
     def _is_live(self, entry: Entry | None) -> bool:
         """True if this object is already published, so students can see it.
@@ -503,7 +549,8 @@ class Publisher:
                 canvas.delete_module_item(self.course_id, module_id, str(current["id"]))
 
             keys = [str(module.get("page", ""))] + [str(k) for k in module.get("items", [])]
-            for index, key in enumerate([k for k in keys if k], start=1):
+            listed = [k for k in keys if k and not self.is_draft_key(k)]
+            for index, key in enumerate(listed, start=1):
                 entry = self.manifest.get(key)
                 if entry is None:
                     result.errors.append(f"module {name!r}: {key} has not been published")

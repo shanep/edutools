@@ -219,6 +219,32 @@ literal text:
 Ordinary lowercase HTML is left alone, and an include written inline in prose,
 rather than alone on its own line, stays as text so it can be documented.
 
+### Drafts
+
+A file whose frontmatter carries `draft: true` is not a Canvas object at all:
+
+```markdown
+---
+draft: true
+---
+
+# A1 - Get on the Box
+```
+
+`push` does not create or update it, `dates` gives it no due date and does not
+count its points, and the `[[module]]` that lists it is built without it rather
+than reporting it as unpublished. A draft needs no `**Week N · P points**`
+header line, so half written work can sit in the repo. `verify` ignores it too.
+
+Marking an *already pushed* file as a draft does not delete anything. The push
+drops the manifest entry, which is what stops `verify` checking an object the
+repo no longer manages, and prints the path so you know the Canvas object is now
+orphaned. Deleting it is left to you, since an assignment may already have
+submissions against it.
+
+Hiding a draft from the website as well is the site generator's job, not this
+tool's. In VitePress that is `srcExclude`.
+
 ### Assignment groups
 
 Canvas files every assignment, quiz and graded discussion under an assignment

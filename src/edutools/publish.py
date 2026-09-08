@@ -136,6 +136,33 @@ def strip_title(markdown: str) -> tuple[str, str]:
 # "---\nnext: false\n---\n" at the very top of the file.
 _FRONTMATTER_RE: Final[re.Pattern[str]] = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.S)
 
+# "draft: true" as a top level key of that frontmatter. Parsed with a regex rather
+# than a YAML library because this is the only key edutools reads out of the block
+# and the block is otherwise VitePress's business.
+_DRAFT_RE: Final[re.Pattern[str]] = re.compile(
+    r"^draft[ \t]*:[ \t]*(?P<value>true|yes|on)[ \t]*$", re.M | re.I
+)
+
+
+def is_draft(markdown: str) -> bool:
+    """Whether a course file is marked ``draft: true`` in its frontmatter.
+
+    A draft is work in progress that is not a Canvas object at all: it is not
+    pushed, it takes no due date, it is left out of its module and it is not
+    verified. The website hides it too, so a draft is invisible everywhere until
+    the flag comes off.
+    """
+    block = _FRONTMATTER_RE.match(markdown)
+    return block is not None and _DRAFT_RE.search(block.group(0)) is not None
+
+
+def path_is_draft(path: Path) -> bool:
+    """``is_draft`` for a file, treating anything unreadable as not a draft."""
+    try:
+        return is_draft(path.read_text(encoding="utf-8"))
+    except OSError:
+        return False
+
 # "<!--@include: ../../parts/syllabus-boiler.md-->"
 _INCLUDE_RE: Final[re.Pattern[str]] = re.compile(r"^[ \t]*<!--\s*@include:\s*(\S+?)\s*-->[ \t]*$", re.M)
 

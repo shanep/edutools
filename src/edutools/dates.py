@@ -20,6 +20,8 @@ from pathlib import Path, PurePosixPath
 from typing import Final, Literal, cast, get_args
 from zoneinfo import ZoneInfo
 
+from edutools.publish import is_draft
+
 ItemKind = Literal["lab", "project", "quiz", "discussion", "exam"]
 
 _WEEKDAY_OFFSET: Final[dict[str, int]] = {
@@ -445,6 +447,10 @@ def compute(repo: Path, config: DateConfig | None = None) -> list[ItemDates]:
             if kind is None:
                 continue
             text = path.read_text(encoding="utf-8")
+            if is_draft(text):
+                # A draft is not a Canvas object, so it has no due date and does
+                # not count toward the course total.
+                continue
             week, points = parse_header(text)
             rel = path.relative_to(repo).as_posix()
 

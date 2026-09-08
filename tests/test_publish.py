@@ -16,9 +16,11 @@ from edutools.publish import (
     decorate,
     inline_css,
     internal_links,
+    is_draft,
     mark_table_rows,
     parse_quiz,
     parse_rubric,
+    path_is_draft,
     question_fields,
     render_inline,
     render_markdown,
@@ -820,3 +822,184 @@ class TestAssignmentGroupPlacement:
         kinds = {plan.key: plan.item_kind for plan in publisher.plan()}
         assert kinds["assignments/p0.md"] == "project"
         assert kinds["activities/a1.md"] == "lab"
+
+
+class TestDraftFrontmatter:
+    """`draft: true` marks a file that is not a Canvas object at all."""
+
+    def test_a_draft_is_recognised(self):
+        assert is_draft("---\nnext: false\ndraft: true\n---\n\n# A1\n")
+
+    def test_frontmatter_without_the_key_is_not_a_draft(self):
+        assert not is_draft("---\nnext: false\nprev: false\n---\n\n# A1\n")
+
+    def test_a_file_with_no_frontmatter_is_not_a_draft(self):
+        assert not is_draft("# A1\n\nSome text.\n")
+
+    def test_draft_false_is_not_a_draft(self):
+        assert not is_draft("---\ndraft: false\n---\n\n# A1\n")
+
+    @pytest.mark.parametrize("value", ["true", "True", "TRUE", "yes", "on"])
+    def test_the_usual_spellings_of_true_are_accepted(self, value: str):
+        assert is_draft(f"---\ndraft: {value}\n---\n\n# A1\n")
+
+    def test_the_word_draft_in_the_body_is_ignored(self):
+        # Only the frontmatter block counts, or any page that discusses drafting
+        # would disappear from the course.
+        assert not is_draft("---\nnext: false\n---\n\n# A1\n\ndraft: true\n")
+
+    def test_frontmatter_must_be_at_the_top(self):
+        assert not is_draft("# A1\n\n---\ndraft: true\n---\n")
+
+    def test_path_is_draft_reads_the_file(self, tmp_path: Path):
+        path = tmp_path / "a1.md"
+        path.write_text("---\ndraft: true\n---\n\n# A1\n", encoding="utf-8")
+        assert path_is_draft(path)
+
+    def test_path_is_draft_on_a_missing_file(self, tmp_path: Path):
+        assert not path_is_draft(tmp_path / "nope.md")
+
+
+class TestDraftsAreNotPushed:
+    """A draft is invisible to the whole push: plan, modules and manifest."""
+
+    def _publisher(self, tmp_path: Path, draft_p1: bool = True):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "assignments").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "notes.md").write_text(
+            "---\ndraft: true\n---\n\n# Notes\n", encoding="utf-8"
+        )
+        (tmp_path / "assignments" / "p0.md").write_text(
+            "# P0\n\n**Week 2 · 50 points · x**\n", encoding="utf-8"
+        )
+        head = "---\ndraft: true\n---\n\n" if draft_p1 else ""
+        (tmp_path / "assignments" / "p1.md").write_text(
+            f"{head}# P1\n\n**Week 4 · 100 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["notes.md"]\nfiles = []\n\n'
+            '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n',
+            encoding="utf-8",
+        )
+        return Publisher(tmp_path, "42", MagicMock())
+
+    def test_a_draft_assignment_is_not_planned(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path)
+        keys = {plan.key for plan in publisher.plan()}
+        assert "assignments/p0.md" in keys
+        assert "assignments/p1.md" not in keys
+
+    def test_a_draft_page_is_not_planned(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path)
+        assert "notes.md" not in {plan.key for plan in publisher.plan()}
+
+    def test_plan_records_what_it_held_back(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path)
+        publisher.plan()
+        assert publisher.drafts == {"notes.md", "assignments/p1.md"}
+
+    def test_clearing_the_flag_brings_it_back(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path, draft_p1=False)
+        assert "assignments/p1.md" in {plan.key for plan in publisher.plan()}
+
+    def test_is_draft_key_works_before_plan_runs(self, tmp_path: Path):
+        # push_modules() asks about keys that plan() may never have reached.
+        publisher = self._publisher(tmp_path)
+        assert publisher.is_draft_key("assignments/p1.md")
+        assert not publisher.is_draft_key("assignments/p0.md")
+
+    def test_is_draft_key_on_a_path_with_no_file(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path)
+        assert not publisher.is_draft_key("assignments/gone.md")
+
+    def test_prune_drafts_forgets_a_newly_drafted_object(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path)
+        publisher.manifest.put(
+            "assignments/p1.md", Entry(kind="assignment", canvas_id="7", title="P1")
+        )
+        publisher.manifest.put(
+            "assignments/p0.md", Entry(kind="assignment", canvas_id="8", title="P0")
+        )
+        assert publisher.prune_drafts() == ["assignments/p1.md"]
+        assert publisher.manifest.get("assignments/p1.md") is None
+        assert publisher.manifest.get("assignments/p0.md") is not None
+
+    def test_prune_drafts_is_quiet_when_nothing_is_a_draft(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path, draft_p1=False)
+        publisher.manifest.put(
+            "assignments/p1.md", Entry(kind="assignment", canvas_id="7", title="P1")
+        )
+        assert publisher.prune_drafts() == []
+
+
+class TestDraftsLeaveTheirModule:
+    """A module lists a draft's path; the module is built without it."""
+
+    def _publisher(self, tmp_path: Path):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "assignments").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "week1.md").write_text("# Week 1\n", encoding="utf-8")
+        (tmp_path / "assignments" / "p0.md").write_text(
+            "# P0\n\n**Week 2 · 50 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "assignments" / "p1.md").write_text(
+            "---\ndraft: true\n---\n\n# P1\n\n**Week 4 · 100 points · x**\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["week1.md"]\nfiles = []\n\n'
+            '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n\n'
+            "[[module]]\n"
+            'title = "Week 1"\n'
+            'page = "week1.md"\n'
+            'items = ["assignments/p0.md", "assignments/p1.md"]\n',
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.list_modules.return_value = []
+        canvas.create_module.return_value = {"id": "9"}
+        canvas.list_module_items.return_value = []
+        publisher = Publisher(tmp_path, "42", canvas)
+        publisher.manifest.put(
+            "week1.md", Entry(kind="page", canvas_id="week-1", page_url="week-1", title="Week 1")
+        )
+        publisher.manifest.put(
+            "assignments/p0.md", Entry(kind="assignment", canvas_id="7", title="P0")
+        )
+        return publisher, canvas
+
+    def test_the_draft_is_not_added_as_a_module_item(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path)
+        publisher.push_modules()
+        titles = [
+            call.args[2]["module_item[title]"] for call in canvas.create_module_item.call_args_list
+        ]
+        assert titles == ["Week 1", "P0"]
+
+    def test_a_draft_is_not_reported_as_unpublished(self, tmp_path: Path):
+        # Before drafts existed this was the failure: a file with no manifest
+        # entry looked like something the push had missed.
+        publisher, _ = self._publisher(tmp_path)
+        assert publisher.push_modules().errors == []
+
+    def test_a_genuinely_missing_object_is_still_an_error(self, tmp_path: Path):
+        publisher, _ = self._publisher(tmp_path)
+        publisher.manifest.drop("assignments/p0.md")
+        errors = publisher.push_modules().errors
+        assert len(errors) == 1 and "assignments/p0.md" in errors[0]

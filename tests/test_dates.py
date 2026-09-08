@@ -465,3 +465,53 @@ class TestAssignmentGroups:
         found = config.group_for("lab")
         assert found is not None and found.name == "In Class"
         assert found.weight == 40.0
+
+
+class TestDraftsTakeNoDates:
+    """A draft is not a Canvas object, so it never gets a due date."""
+
+    def _repo(self, tmp_path: Path, a1_frontmatter: str) -> Path:
+        (tmp_path / "activities").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "activities" / "a1-devbox.md").write_text(
+            f"{a1_frontmatter}# A1\n\n**Week 1 · 20 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "activities" / "a2-sockets.md").write_text(
+            "# A2\n\n**Week 3 · 20 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\n"
+            "weeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\n"
+            "finals_end = 2026-12-18\n"
+            "total_points = 0\n\n"
+            "[term.policy.lab]\n"
+            'due = "wed 23:59"\n'
+            "grace_days = 0\n\n"
+            "[layout]\n"
+            'syllabus = "index.md"\n\n'
+            "[layout.gradable]\n"
+            'lab = "activities/a[0-9]*.md"\n',
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_a_draft_is_left_out(self, tmp_path: Path):
+        repo = self._repo(tmp_path, "---\ndraft: true\n---\n\n")
+        assert [item.path for item in compute(repo)] == ["activities/a2-sockets.md"]
+
+    def test_the_same_file_counts_once_the_flag_comes_off(self, tmp_path: Path):
+        repo = self._repo(tmp_path, "---\nnext: false\n---\n\n")
+        assert len(compute(repo)) == 2
+
+    def test_a_draft_needs_no_header_line(self, tmp_path: Path):
+        # Half written work has no "**Week N · P points**" line yet, and demanding
+        # one would mean a draft could not be committed until it was finished.
+        repo = self._repo(tmp_path, "")
+        (repo / "activities" / "a1-devbox.md").write_text(
+            "---\ndraft: true\n---\n\n# A1\n\nStill thinking about this one.\n",
+            encoding="utf-8",
+        )
+        assert [item.path for item in compute(repo)] == ["activities/a2-sockets.md"]
