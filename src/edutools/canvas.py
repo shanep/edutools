@@ -256,8 +256,13 @@ class CanvasLMS():
 
     # -- assignment groups ----------------------------------------------
 
-    def list_assignment_groups(self, course_id: str) -> list[dict[str, object]]:
-        return self.list_json(f"/api/v1/courses/{course_id}/assignment_groups")
+    def list_assignment_groups(
+        self, course_id: str, *, with_assignments: bool = False
+    ) -> list[dict[str, object]]:
+        # Canvas leaves the assignments out of this payload unless asked, so a
+        # caller counting what is in a group has to opt in or it counts zero.
+        params: dict[str, str | int] | None = {"include[]": "assignments"} if with_assignments else None
+        return self.list_json(f"/api/v1/courses/{course_id}/assignment_groups", params)
 
     def create_assignment_group(self, course_id: str, fields: dict[str, str]) -> dict[str, object]:
         # This endpoint takes bare parameters (name, position, group_weight),
