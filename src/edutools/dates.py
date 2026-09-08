@@ -106,6 +106,9 @@ class Group:
     """
 
     name: str
+    # None means the weight is managed in Canvas and a push must not send one.
+    # An extra credit group that is raised by hand before final grades depends
+    # on that: a declared 0 would put it back every time the course is pushed.
     weight: float | None = None
     kinds: tuple[ItemKind, ...] = ()
 

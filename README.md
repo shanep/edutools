@@ -246,6 +246,12 @@ at most one group. A group with no `kinds` is still created, which is how a cour
 whose exams are hand built quizzes gets an "Exams" group worth half the grade with
 nothing in the repository to put in it.
 
+A group that omits `weight` is created and positioned like any other, but its
+weight is never written, so whatever Canvas holds survives every push. That is the
+way to declare a group whose weight is managed by hand: an extra credit group that
+sits at 0% all semester and is raised just before final grades are pushed keeps the
+raised value, where a declared `weight = 0` would quietly put it back.
+
 `push` creates the missing groups, corrects a weight or a position that has drifted,
 and files each item into its group as it goes. Declaration order becomes the order
 Canvas shows, so the gradebook reads the way the syllabus does. As soon as any group
