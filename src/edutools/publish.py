@@ -202,7 +202,11 @@ def strip_vitepress(markdown: str, source: Path, repo: Path | None = None, depth
         # The marker is an HTML comment, which pandoc passes through untouched and
         # decorate() turns into a class. Without it every severity renders as the
         # same blockquote, so a "this fails the project" warning reads like an aside.
-        return f"> {_CALLOUT_MARKER % kind}**{title}**\n>\n{quoted}\n"
+        #
+        # It has to trail the title, never lead it: a comment at the start of a line
+        # opens a CommonMark HTML *block*, which swallows the rest of that line and
+        # emits "**Warning**" as literal text instead of bold.
+        return f"> **{title}**{_CALLOUT_MARKER % kind}\n>\n{quoted}\n"
 
     # Innermost first, so a container nested inside another is resolved before the
     # outer one quotes it.

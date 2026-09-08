@@ -395,7 +395,7 @@ class TestStripVitepress:
         # Every body line stays inside the blockquote, blank lines included, or the
         # quote would end at the first of them and the warning would escape it.
         assert "**Warning**" in out
-        assert out.startswith("> <!--cs-callout:danger-->")
+        assert "<!--cs-callout:danger-->" in out
         assert "> Do not do this." in out
         assert "> Ever." in out
 
@@ -597,6 +597,14 @@ class TestCalloutClasses:
         html = self._html(tmp_path, "# T\n\n::: danger\n\nDo not.\n\nEver.\n\n:::\n")
         assert "Do not." in html
         assert "Ever." in html
+
+    def test_the_title_renders_as_bold_not_literal_markdown(self, tmp_path: Path):
+        """The marker has to trail the title. A comment leading a line opens a
+        CommonMark HTML block, which emits the rest of the line as literal text,
+        so the reader sees '**Warning**' with the asterisks."""
+        html = self._html(tmp_path, "# T\n\n::: danger\n\nBody.\n\n:::\n")
+        assert "<strong>Warning</strong>" in html
+        assert "**" not in html
 
     def test_a_plain_blockquote_is_left_alone(self):
         html = "<blockquote><p>Just a quote.</p></blockquote>"
