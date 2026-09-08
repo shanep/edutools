@@ -9,12 +9,16 @@ from pathlib import Path
 import pytest
 
 from edutools.dates import (
+    DEFAULT_LAYOUT,
     DateConfigError,
+    ItemDates,
+    Layout,
     Term,
     classify,
     compute,
     cross_check_syllabus,
     load_config,
+    load_layout,
     parse_header,
     resolve,
     validate,
@@ -106,10 +110,63 @@ class TestClassify:
             ("discussions/d05-current-security-failure.md", "discussion"),
             ("modules/week-01-what-is-cyber-security.md", None),
             ("data/sqli_demo.py", None),
+            # A course whose projects are p0.md, p1.md rather than lab-*.md.
+            ("assignments/p0.md", "project"),
+            ("assignments/p12.md", "project"),
+            # Neither of these is gradable even though it sits under assignments/.
+            ("assignments/index.md", None),
+            ("assignments/grading-rubric.md", None),
         ],
     )
     def test_classification(self, path: str, expected: str | None):
         assert classify(Path(path)) == expected
+
+    def test_an_exam_guide_wins_over_the_project_glob(self):
+        """Both patterns sit under assignments/; the guide must not become a project."""
+        assert classify(Path("assignments/midterm-exam-guide.md")) == "exam"
+
+    def test_a_custom_layout_replaces_the_default_globs(self):
+        layout = Layout(gradable=(("assignments/hw*.md", "lab"),))
+        assert classify(Path("assignments/hw3.md"), layout) == "lab"
+        assert classify(Path("assignments/lab-01.md"), layout) is None
+
+
+class TestLayout:
+    def test_an_absent_section_keeps_the_defaults(self):
+        assert load_layout({}) is DEFAULT_LAYOUT
+
+    def test_syllabus_can_be_renamed(self):
+        layout = load_layout({"layout": {"syllabus": "index.md"}})
+        assert layout.syllabus == "index.md"
+        # Everything not named falls back to the default.
+        assert layout.pages == DEFAULT_LAYOUT.pages
+
+    def test_globs_are_read_as_lists(self):
+        layout = load_layout({"layout": {"pages": ["notes/*.md"], "files": []}})
+        assert layout.pages == ("notes/*.md",)
+        assert layout.files == ()
+
+    def test_gradable_maps_kind_to_glob(self):
+        layout = load_layout({"layout": {"gradable": {"project": "assignments/p*.md"}}})
+        assert layout.gradable == (("assignments/p*.md", "project"),)
+
+    def test_gradable_dirs_deduplicates(self):
+        layout = Layout(
+            gradable=(
+                ("assignments/lab-*.md", "lab"),
+                ("assignments/p*.md", "project"),
+                ("quizzes/quiz-*.md", "quiz"),
+            )
+        )
+        assert layout.gradable_dirs == ("assignments", "quizzes")
+
+    def test_an_unknown_kind_is_an_error(self):
+        with pytest.raises(DateConfigError, match="not a known item kind"):
+            load_layout({"layout": {"gradable": {"homework": "assignments/hw*.md"}}})
+
+    def test_a_glob_list_of_the_wrong_shape_is_an_error(self):
+        with pytest.raises(DateConfigError, match="list of glob strings"):
+            load_layout({"layout": {"pages": "notes/*.md"}})
 
 
 @needs_cs331
@@ -226,3 +283,28 @@ class TestValidation:
     def test_missing_canvas_toml(self, tmp_path: Path):
         with pytest.raises(DateConfigError, match="no canvas.toml"):
             load_config(tmp_path)
+
+
+class TestTotalPoints:
+    """CS331 grades out of a fixed 1000; CS425 grades by weighted groups instead."""
+
+    def _item(self, points: float):
+        term = _term()
+        tz = term.tz
+        due = dt.datetime(2027, 1, 15, 23, 59, tzinfo=tz)
+        return ItemDates(
+            path="assignments/p0.md", title="P0", kind="project", week=1, points=points,
+            unlock_at=due - dt.timedelta(days=4), due_at=due, lock_at=due,
+        )
+
+    def test_the_default_total_is_still_checked(self):
+        problems = validate([self._item(850)], _term())
+        assert any("not 1000" in p for p in problems)
+
+    def test_a_custom_total_is_checked_against(self):
+        problems = validate([self._item(850)], _term(total_points=850))
+        assert not any("sum to" in p for p in problems)
+
+    def test_zero_disables_the_check(self):
+        problems = validate([self._item(37)], _term(total_points=0))
+        assert not any("sum to" in p for p in problems)

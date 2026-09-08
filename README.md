@@ -127,6 +127,68 @@ is visible instead of silent.
 `dates` computes assignment due dates from the term skeleton in the repo's
 `canvas.toml`. `--show` prints the computed schedule without publishing anything.
 
+### Course repository layout
+
+By default a course repo looks like this, and a repo shaped this way needs no
+`[layout]` section at all:
+
+```
+canvas.toml            term skeleton, date policies, module layout
+syllabus.md            becomes the Canvas syllabus
+objectives.md          published as a page
+resources.md           published as a page
+modules/*.md           published as pages
+assignments/lab-*.md   published as assignments
+assignments/*-exam-guide.md   published as pages
+quizzes/quiz-*.md      published as quizzes
+discussions/*.md       published as discussions
+docs/*.pdf, data/*     uploaded as files
+```
+
+Courses that name things differently declare their own shape instead. A directory
+that is also a VitePress site, for instance, has to call its syllabus `index.md`,
+and may call its projects `p0.md` rather than `lab-0.md`:
+
+```toml
+[layout]
+syllabus = "index.md"
+pages    = ["objectives.md", "resources.md", "notes/*.md", "assignments/*-exam-guide.md"]
+files    = []
+
+[layout.gradable]
+project    = "assignments/p[0-9]*.md"
+quiz       = "quizzes/quiz-*.md"
+discussion = "discussions/*.md"
+```
+
+Anything the section leaves out keeps its default. Page patterns are matched before
+gradable ones, so a file caught by both stays a page. The keys under
+`[layout.gradable]` are item kinds (`lab`, `project`, `quiz`, `discussion`, `exam`),
+and each needs a matching `[term.policy.<kind>]` to compute its dates from.
+
+### VitePress source
+
+A course directory can be served as a website and pushed to Canvas at the same
+time. `push` resolves the VitePress-only syntax that pandoc would otherwise emit as
+literal text:
+
+| In the markdown | In Canvas |
+| --------------- | --------- |
+| YAML frontmatter | removed |
+| `<!--@include: path.md-->` | the target file, inlined recursively |
+| `::: danger` ... `:::` | a blockquote with a bold lead line |
+| `<OfficeHoursLink />` and other capitalised tags | removed |
+| `<script setup>` blocks | removed |
+
+Ordinary lowercase HTML is left alone, and an include written inline in prose,
+rather than alone on its own line, stays as text so it can be documented.
+
+### Point totals
+
+`[term] total_points` is what every gradable item should add up to, defaulting to
+1000. Set it to `0` for a course that grades by weighted assignment groups instead,
+which skips the check.
+
 ### Editing one object at a time
 
 `push` drives a whole repository. When you only need to touch one thing, `create`,
