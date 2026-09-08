@@ -758,6 +758,529 @@ def course_dates(
 
 
 # ============================================================================
+# Single-Object Commands
+#
+# `push` publishes a whole repository; these touch one object. Every command
+# takes --course, names the object by id (or, for a page, its url slug), and
+# accepts --set key=value for any Canvas field the flags do not model.
+# ============================================================================
+
+_KIND_ARG = typer.Argument(..., help="page, assignment, discussion, quiz, or module")
+
+
+def _load_body(body: Optional[str], body_file: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Resolve --body / --body-file into (title from the source, html).
+
+    A .md file goes through the same pandoc + Canvas-safe pipeline as `push`,
+    and its H1 becomes the default title so the two paths agree on what a
+    document is called.
+    """
+    if body is not None and body_file is not None:
+        console.print("[red]Pass --body or --body-file, not both.[/red]")
+        raise typer.Exit(1)
+    if body is not None:
+        return None, body
+    if body_file is None:
+        return None, None
+
+    from pathlib import Path
+
+    from edutools.publish import PublishError, decorate, mark_table_rows, render_markdown, wrap_tables
+
+    path = Path(body_file).expanduser()
+    if not path.is_file():
+        console.print(f"[red]No such file: {path}[/red]")
+        raise typer.Exit(1)
+    if path.suffix.lower() not in (".md", ".markdown"):
+        return None, path.read_text(encoding="utf-8")
+
+    try:
+        title, html = render_markdown(path)
+    except PublishError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(1)
+    return title or None, wrap_tables(mark_table_rows(decorate(html)))
+
+
+def _build(kind: str, **kwargs: Any) -> dict[str, str]:
+    """Map flags onto Canvas field names, reporting a bad combination cleanly."""
+    from edutools.objects import FieldError, build_fields
+
+    try:
+        return build_fields(kind, **kwargs)
+    except FieldError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(1)
+
+
+def _overrides(pairs: Optional[list[str]]) -> dict[str, str]:
+    from edutools.objects import FieldError, parse_overrides
+
+    try:
+        return parse_overrides(pairs)
+    except FieldError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(1)
+
+
+def _identify(kind: str, stored: dict[str, Any]) -> str:
+    """The handle you would pass back in: a page's url slug, otherwise its id."""
+    return str(stored.get("url") if kind == "page" else stored.get("id"))
+
+
+def _describe(kind: str, stored: dict[str, Any]) -> str:
+    title = stored.get("title") or stored.get("name") or ""
+    return f"{kind} [cyan]{_identify(kind, stored)}[/cyan] [green]{title}[/green]"
+
+
+@app.command("create")
+def create_object(
+    kind: str = _KIND_ARG,
+    course_id: str = typer.Option(..., "--course", "-c", help="Canvas course ID"),
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="Object title (defaults to the H1 of a markdown --body-file)"),
+    body: Optional[str] = typer.Option(None, "--body", help="Body as literal HTML"),
+    body_file: Optional[str] = typer.Option(None, "--body-file", "-f", help="Body from a file; .md is rendered like 'push' does"),
+    points: Optional[float] = typer.Option(None, "--points", "-p", help="Points possible (assignments and graded discussions)"),
+    due: Optional[str] = typer.Option(None, "--due", help="Due date, ISO 8601 (2026-09-15T23:59:00-06:00)"),
+    unlock: Optional[str] = typer.Option(None, "--unlock", help="Available-from date, ISO 8601"),
+    lock: Optional[str] = typer.Option(None, "--lock", help="Available-until date, ISO 8601"),
+    position: Optional[int] = typer.Option(None, "--position", help="Module position, 1-based"),
+    published: bool = typer.Option(False, "--publish/--no-publish", help="Make it student-visible (default: unpublished)"),
+    sets: Optional[list[str]] = typer.Option(None, "--set", help="Any other Canvas field, e.g. --set 'assignment[submission_types][]=online_upload'"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the created object as JSON"),
+):
+    """Create one Canvas object.
+
+    Created UNPUBLISHED unless --publish is given, matching 'edutools push'.
+    """
+    init()
+    from edutools.canvas import CanvasLMS
+
+    md_title, html = _load_body(body, body_file)
+    resolved_title = title or md_title
+    if not resolved_title:
+        console.print("[red]A new object needs --title (or a markdown --body-file with an H1).[/red]")
+        raise typer.Exit(1)
+
+    fields = _build(
+        kind, title=resolved_title, body=html, points=points, due=due, unlock=unlock,
+        lock=lock, published=published, position=position, overrides=_overrides(sets),
+    )
+
+    with console.status(f"[bold green]Creating {kind}...", spinner="dots"):
+        stored = CanvasLMS().create_object(kind, course_id, fields)
+
+    if as_json:
+        _emit_json(stored)
+        return
+    console.print(f"[green]✓[/green] created {_describe(kind, stored)}")
+    if not published:
+        console.print("[dim]Unpublished. Run 'edutools publish' when it is ready.[/dim]")
+
+
+@app.command("update")
+def update_object(
+    kind: str = _KIND_ARG,
+    object_id: str = typer.Argument(..., help="Object ID, or the url slug for a page"),
+    course_id: str = typer.Option(..., "--course", "-c", help="Canvas course ID"),
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="New title"),
+    body: Optional[str] = typer.Option(None, "--body", help="Body as literal HTML"),
+    body_file: Optional[str] = typer.Option(None, "--body-file", "-f", help="Body from a file; .md is rendered like 'push' does"),
+    points: Optional[float] = typer.Option(None, "--points", "-p", help="Points possible"),
+    due: Optional[str] = typer.Option(None, "--due", help="Due date, ISO 8601"),
+    unlock: Optional[str] = typer.Option(None, "--unlock", help="Available-from date, ISO 8601"),
+    lock: Optional[str] = typer.Option(None, "--lock", help="Available-until date, ISO 8601"),
+    position: Optional[int] = typer.Option(None, "--position", help="Module position, 1-based"),
+    published: Optional[bool] = typer.Option(None, "--publish/--unpublish", help="Change student visibility"),
+    sets: Optional[list[str]] = typer.Option(None, "--set", help="Any other Canvas field, repeatable"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the updated object as JSON"),
+):
+    """Change one Canvas object.
+
+    Only the fields you pass are sent, so an update never clears something you
+    did not mention.
+    """
+    init()
+    from edutools.canvas import CanvasLMS
+
+    md_title, html = _load_body(body, body_file)
+    fields = _build(
+        kind, title=title or md_title, body=html, points=points, due=due, unlock=unlock,
+        lock=lock, published=published, position=position, overrides=_overrides(sets),
+    )
+    if not fields:
+        console.print("[yellow]Nothing to update; pass at least one field.[/yellow]")
+        raise typer.Exit(1)
+
+    with console.status(f"[bold green]Updating {kind} {object_id}...", spinner="dots"):
+        stored = CanvasLMS().update_object(kind, course_id, object_id, fields)
+
+    if as_json:
+        _emit_json(stored)
+        return
+    console.print(
+        f"[green]✓[/green] updated {_describe(kind, stored)} "
+        f"[dim]({', '.join(sorted(fields))})[/dim]"
+    )
+
+
+@app.command("delete")
+def delete_object(
+    kind: str = _KIND_ARG,
+    object_id: str = typer.Argument(..., help="Object ID, or the url slug for a page"),
+    course_id: str = typer.Option(..., "--course", "-c", help="Canvas course ID"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the deleted object as JSON"),
+):
+    """Delete one Canvas object.
+
+    Prints what is about to go and asks first. Deleting an assignment or a
+    graded discussion takes its submissions and grades with it.
+    """
+    init()
+    from edutools.canvas import CanvasLMS
+
+    canvas = CanvasLMS()
+    try:
+        target = canvas.get_object(kind, course_id, object_id)
+    except RuntimeError as error:
+        console.print(f"[red]Cannot read {kind} {object_id}: {error}[/red]")
+        raise typer.Exit(1)
+
+    if not yes:
+        console.print(f"About to delete {_describe(kind, target)} from course {course_id}.")
+        if kind in ("assignment", "discussion", "quiz"):
+            console.print("[yellow]Any submissions and grades on it go too.[/yellow]")
+        if not typer.confirm("Delete it?"):
+            console.print("[dim]Left alone.[/dim]")
+            raise typer.Exit()
+
+    with console.status(f"[bold green]Deleting {kind} {object_id}...", spinner="dots"):
+        stored = canvas.delete_object(kind, course_id, object_id)
+
+    if as_json:
+        _emit_json(stored)
+        return
+    console.print(f"[green]✓[/green] deleted {_describe(kind, target)}")
+
+
+def _set_published(kind: str, object_id: str, course_id: str, state: bool, as_json: bool) -> None:
+    from edutools.canvas import CanvasLMS
+
+    fields = _build(kind, published=state)
+    verb = "Publishing" if state else "Unpublishing"
+    with console.status(f"[bold green]{verb} {kind} {object_id}...", spinner="dots"):
+        stored = CanvasLMS().update_object(kind, course_id, object_id, fields)
+
+    if as_json:
+        _emit_json(stored)
+        return
+    console.print(
+        f"[green]✓[/green] {'published' if state else 'unpublished'} {_describe(kind, stored)}"
+    )
+
+
+@app.command("publish")
+def publish_object(
+    kind: str = _KIND_ARG,
+    object_id: str = typer.Argument(..., help="Object ID, or the url slug for a page"),
+    course_id: str = typer.Option(..., "--course", "-c", help="Canvas course ID"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the updated object as JSON"),
+):
+    """Make one object visible to students.
+
+    A module publishes everything inside it. To publish a whole repository, use
+    'edutools push --publish' instead.
+    """
+    init()
+    _set_published(kind, object_id, course_id, True, as_json)
+
+
+@app.command("unpublish")
+def unpublish_object(
+    kind: str = _KIND_ARG,
+    object_id: str = typer.Argument(..., help="Object ID, or the url slug for a page"),
+    course_id: str = typer.Option(..., "--course", "-c", help="Canvas course ID"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the updated object as JSON"),
+):
+    """Hide one object from students.
+
+    Canvas refuses to unpublish anything with student submissions.
+    """
+    init()
+    _set_published(kind, object_id, course_id, False, as_json)
+
+
+# ============================================================================
+# Grading Commands
+# ============================================================================
+
+@app.command("submission")
+def show_submission(
+    course_id: Optional[str] = typer.Option(None, "--course", "-c", help="Canvas course ID (prompted if omitted)"),
+    assignment_id: Optional[str] = typer.Option(None, "--assignment", "-a", help="Assignment ID (prompted if omitted)"),
+    student_id: str = typer.Option(..., "--student", "-s", help="Student user ID"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the raw submission JSON"),
+):
+    """Show one submission with its body, attachments, and existing comments.
+
+    This is what to read before grading: --json gives the submission text and
+    the attachment URLs, and shows any feedback already left on it.
+    """
+    init()
+    from edutools.canvas import CanvasLMS
+
+    if course_id is None:
+        course_id = _select_course()
+    if assignment_id is None:
+        assignment_id = _select_assignment(course_id)
+
+    with console.status("[bold green]Fetching submission...", spinner="dots"):
+        stored = CanvasLMS().get_submission(course_id, assignment_id, student_id)
+
+    if as_json:
+        _emit_json(stored)
+        return
+
+    user = stored.get("user")
+    name = user.get("name") if isinstance(user, dict) else student_id
+    console.print(Panel.fit(
+        f"[bold]{name}[/bold] [dim](user {student_id})[/dim]\n"
+        f"Grade: [green]{stored.get('grade') or '-'}[/green]"
+        f"  Score: {stored.get('score') if stored.get('score') is not None else '-'}"
+        f"  State: {stored.get('workflow_state')}\n"
+        f"Submitted: {stored.get('submitted_at') or 'never'}"
+        f"  Late: {stored.get('late')}  Missing: {stored.get('missing')}",
+        title=f"Submission - assignment {assignment_id}",
+        border_style="cyan",
+    ))
+
+    attachments = stored.get("attachments")
+    if isinstance(attachments, list) and attachments:
+        table = Table(title="Attachments", show_header=True, header_style="bold magenta")
+        table.add_column("ID", style="cyan", justify="right")
+        table.add_column("Filename", style="green")
+        table.add_column("Bytes", justify="right", style="dim")
+        for item in attachments:
+            if isinstance(item, dict):
+                table.add_row(str(item.get("id")), str(item.get("display_name")), str(item.get("size")))
+        console.print(table)
+
+    body = stored.get("body")
+    if body:
+        console.print(Panel(str(body)[:4000], title="Submitted text", border_style="dim"))
+
+    comments = stored.get("submission_comments")
+    if isinstance(comments, list) and comments:
+        console.print("\n[bold]Existing comments[/bold]")
+        for item in comments:
+            if isinstance(item, dict):
+                console.print(
+                    f"  [dim]{item.get('created_at', '')}[/dim] "
+                    f"[cyan]{item.get('author_name', '')}[/cyan]: {item.get('comment', '')}"
+                )
+
+
+@app.command("download")
+def download_submissions(
+    out: str = typer.Option(..., "--out", "-o", help="Directory to write into; one subdirectory per student"),
+    course_id: Optional[str] = typer.Option(None, "--course", "-c", help="Canvas course ID (prompted if omitted)"),
+    assignment_id: Optional[str] = typer.Option(None, "--assignment", "-a", help="Assignment ID (prompted if omitted)"),
+    student_id: Optional[str] = typer.Option(None, "--student", "-s", help="Only this student"),
+):
+    """Download submission attachments so the work can be read locally.
+
+    Writes <out>/<user_id>/<filename>, plus submission.txt for any typed-in
+    text. Nothing is overwritten silently: an existing file of the same size is
+    left alone.
+    """
+    init()
+    from pathlib import Path
+
+    from edutools.canvas import CanvasLMS
+
+    if course_id is None:
+        course_id = _select_course()
+    if assignment_id is None:
+        assignment_id = _select_assignment(course_id)
+
+    canvas = CanvasLMS()
+    with console.status("[bold green]Fetching submissions...", spinner="dots"):
+        submissions = canvas.get_submissions(course_id, assignment_id)
+    if student_id is not None:
+        submissions = [s for s in submissions if str(s.get("user_id")) == student_id]
+
+    root = Path(out).expanduser()
+    written = skipped = 0
+    problems: list[str] = []
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  BarColumn(), TaskProgressColumn(), console=console) as progress:
+        task = progress.add_task(f"Downloading {len(submissions)} submissions", total=len(submissions))
+        for sub in submissions:
+            user_id = str(sub.get("user_id"))
+            progress.update(task, description=f"Downloading user {user_id}")
+            folder = root / user_id
+
+            text = sub.get("body")
+            if text:
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "submission.txt").write_text(str(text), encoding="utf-8")
+                written += 1
+
+            attachments = sub.get("attachments")
+            for item in attachments if isinstance(attachments, list) else []:
+                if not isinstance(item, dict) or not item.get("url"):
+                    continue
+                name = str(item.get("display_name") or item.get("filename") or item.get("id"))
+                dest = folder / name.replace("/", "_")
+                size = item.get("size")
+                if dest.exists() and isinstance(size, int) and dest.stat().st_size == size:
+                    skipped += 1
+                    continue
+                try:
+                    canvas.download_attachment(str(item["url"]), dest)
+                    written += 1
+                except RuntimeError as error:
+                    problems.append(f"user {user_id}, {name}: {error}")
+            progress.advance(task)
+
+    console.print(
+        f"[green]✓[/green] {written} file(s) written to {root}"
+        + (f", {skipped} already present" if skipped else "")
+    )
+    if problems:
+        console.print(f"\n[red]{len(problems)} download problem(s):[/red]")
+        for problem in problems[:20]:
+            console.print(f"  [red]•[/red] {problem}")
+        raise typer.Exit(1)
+
+
+@app.command("grade")
+def grade_submissions(
+    course_id: Optional[str] = typer.Option(None, "--course", "-c", help="Canvas course ID (prompted if omitted)"),
+    assignment_id: Optional[str] = typer.Option(None, "--assignment", "-a", help="Assignment ID (prompted if omitted)"),
+    student_id: Optional[str] = typer.Option(None, "--student", "-s", help="Student user ID (omit when using --from-file)"),
+    score: Optional[str] = typer.Option(None, "--score", help="Grade: points ('18'), percent ('92%'), letter ('B+'), or pass/fail"),
+    comment: Optional[str] = typer.Option(None, "--comment", help="Feedback comment"),
+    comment_file: Optional[str] = typer.Option(None, "--comment-file", help="Feedback comment from a file"),
+    excuse: bool = typer.Option(False, "--excuse", help="Excuse the student from the assignment"),
+    late_status: Optional[str] = typer.Option(None, "--late-status", help="late, missing, extended, none"),
+    from_file: Optional[str] = typer.Option(None, "--from-file", help="Grade a batch from JSON or CSV; '-' reads stdin"),
+    as_csv: bool = typer.Option(False, "--csv", help="Treat --from-file as CSV (inferred from a .csv name)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be sent, write nothing"),
+):
+    """Grade submissions, with feedback.
+
+    One student:
+
+        edutools grade -c 123 -a 456 -s 789 --score 18 --comment "Clean tests."
+
+    A batch, from JSON (a list of objects, or an object keyed by student id) or
+    a CSV with a header row. Column names are matched loosely, so score/grade/
+    points and comment/feedback all work:
+
+        [{"student": 789, "score": 18, "comment": "Clean tests."},
+         {"student": 790, "excuse": true}]
+
+    A comment with no score returns feedback without putting a number on it.
+    If the assignment has a manual posting policy the grade lands but stays
+    hidden until it is posted from the Canvas gradebook.
+    """
+    init()
+    from pathlib import Path
+
+    from edutools.canvas import CanvasLMS
+    from edutools.objects import FieldError, GradeRow, parse_grades
+
+    if course_id is None:
+        course_id = _select_course()
+    if assignment_id is None:
+        assignment_id = _select_assignment(course_id)
+
+    if comment is not None and comment_file is not None:
+        console.print("[red]Pass --comment or --comment-file, not both.[/red]")
+        raise typer.Exit(1)
+    if comment_file is not None:
+        comment = Path(comment_file).expanduser().read_text(encoding="utf-8").strip()
+
+    rows: list[GradeRow] = []
+    if from_file is not None:
+        if student_id is not None:
+            console.print("[red]Pass --student or --from-file, not both.[/red]")
+            raise typer.Exit(1)
+        if from_file == "-":
+            import sys
+
+            text, name = sys.stdin.read(), "stdin"
+        else:
+            path = Path(from_file).expanduser()
+            if not path.is_file():
+                console.print(f"[red]No such file: {path}[/red]")
+                raise typer.Exit(1)
+            text, name = path.read_text(encoding="utf-8"), path.name
+        try:
+            rows = parse_grades(text, as_csv=as_csv or name.lower().endswith(".csv"))
+        except FieldError as error:
+            console.print(f"[red]{error}[/red]")
+            raise typer.Exit(1)
+    else:
+        if student_id is None:
+            console.print("[red]Pass --student, or --from-file for a batch.[/red]")
+            raise typer.Exit(1)
+        try:
+            rows = [GradeRow(
+                user_id=student_id, grade=score, comment=comment,
+                excuse=True if excuse else None, late_policy_status=late_status,
+            )]
+        except FieldError as error:
+            console.print(f"[red]{error}[/red]")
+            raise typer.Exit(1)
+
+    table = Table(title=f"Grading assignment {assignment_id}", show_header=True, header_style="bold magenta")
+    table.add_column("User ID", style="cyan", justify="right")
+    table.add_column("Grade", style="green")
+    table.add_column("Comment", no_wrap=False)
+    table.add_column("Result" if not dry_run else "Would send")
+
+    if dry_run:
+        for row in rows:
+            table.add_row(row.user_id, row.grade or "-", (row.comment or "")[:60], "[dim]dry run[/dim]")
+        console.print(table)
+        console.print(f"\n[green]✓[/green] dry run: {len(rows)} submission(s), nothing written.")
+        return
+
+    canvas = CanvasLMS()
+    failures: list[str] = []
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  BarColumn(), TaskProgressColumn(), console=console) as progress:
+        task = progress.add_task(f"Grading {len(rows)} submission(s)", total=len(rows))
+        for row in rows:
+            progress.update(task, description=f"Grading user {row.user_id}")
+            try:
+                stored = canvas.grade_submission(
+                    course_id, assignment_id, row.user_id,
+                    grade=row.grade, comment=row.comment, excuse=row.excuse,
+                    late_policy_status=row.late_policy_status,
+                    rubric_assessment=row.rubric or None,
+                )
+                outcome = f"[green]{stored.get('grade') or 'commented'}[/green]"
+            except (RuntimeError, ValueError) as error:
+                outcome = "[red]failed[/red]"
+                failures.append(f"user {row.user_id}: {error}")
+            table.add_row(row.user_id, row.grade or "-", (row.comment or "")[:60], outcome)
+            progress.advance(task)
+
+    console.print(table)
+    if failures:
+        console.print(f"\n[red]{len(failures)} failure(s):[/red]")
+        for failure in failures[:20]:
+            console.print(f"  [red]•[/red] {failure}")
+        raise typer.Exit(1)
+    console.print(f"\n[green]✓[/green] graded {len(rows)} submission(s) in course {course_id}")
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 

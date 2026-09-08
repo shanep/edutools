@@ -10,11 +10,35 @@ import requests
 # What `requests` accepts for a form body: a flat mapping, or repeated keys as
 # tuples (Canvas uses those for question[answers][][answer_text]).
 RequestData = dict[str, str] | list[tuple[str, str]] | None
+# Query parameters, as a mapping or as repeated keys (include[]=a&include[]=b).
+RequestParams = dict[str, str | int] | list[tuple[str, str]] | None
+
+# A rubric assessment: criterion id -> {"points": 4, "comments": "...", "rating_id": "..."}
+RubricAssessment = dict[str, dict[str, str | float]]
 
 
 # Pattern to extract the "next" URL from the Link header.
 # Canvas returns: <https://...?page=2&per_page=100>; rel="next", ...
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+
+# Canvas object kind -> the collection segment of its course-scoped path.
+KIND_PATHS: dict[str, str] = {
+    "page": "pages",
+    "assignment": "assignments",
+    "discussion": "discussion_topics",
+    "quiz": "quizzes",
+    "module": "modules",
+}
+
+
+def kind_path(kind: str) -> str:
+    """Path segment for a Canvas object kind."""
+    try:
+        return KIND_PATHS[kind]
+    except KeyError:
+        raise ValueError(
+            f"unknown Canvas kind {kind!r}; expected one of {', '.join(KIND_PATHS)}"
+        ) from None
 
 
 class CanvasLMS():
@@ -126,7 +150,7 @@ class CanvasLMS():
         url: str,
         *,
         data: RequestData = None,
-        params: dict[str, str | int] | None = None,
+        params: RequestParams = None,
         absolute: bool = False,
         timeout: int | None = None,
         allow_redirects: bool = True,
@@ -379,6 +403,128 @@ class CanvasLMS():
                 f"{path.name} uploaded as {uploaded} bytes but the local file is {size}"
             )
         return result
+
+    # -- one object at a time -------------------------------------------
+    #
+    # The publisher above drives a whole repository through the typed methods.
+    # These four cover the other half: create, read, change, or remove a single
+    # object of any kind. The only per-kind difference is the path segment, and
+    # a page is addressed by its url slug where everything else uses a numeric
+    # id. Canvas answers a DELETE with the deleted object rather than an empty
+    # body, so delete_object hands it back: it is the only record of what went.
+
+    def create_object(self, kind: str, course_id: str, fields: dict[str, str]) -> dict[str, object]:
+        return self._json("POST", f"/api/v1/courses/{course_id}/{kind_path(kind)}", data=fields)
+
+    def get_object(self, kind: str, course_id: str, object_id: str) -> dict[str, object]:
+        return self.get_json(f"/api/v1/courses/{course_id}/{kind_path(kind)}/{object_id}")
+
+    def update_object(
+        self, kind: str, course_id: str, object_id: str, fields: dict[str, str]
+    ) -> dict[str, object]:
+        return self._json(
+            "PUT", f"/api/v1/courses/{course_id}/{kind_path(kind)}/{object_id}", data=fields
+        )
+
+    def delete_object(self, kind: str, course_id: str, object_id: str) -> dict[str, object]:
+        return self._json("DELETE", f"/api/v1/courses/{course_id}/{kind_path(kind)}/{object_id}")
+
+    def delete_file(self, file_id: str) -> dict[str, object]:
+        """Files live outside the course namespace, so they get their own method."""
+        return self._json("DELETE", f"/api/v1/files/{file_id}")
+
+    # -- submissions and grading -----------------------------------------
+    #
+    # One endpoint carries both halves of "grade with feedback": submission[]
+    # fields set the score, comment[] fields attach the feedback. Sending only
+    # comment[text_comment] leaves the submission ungraded but commented, which
+    # is how you return work without putting a number on it.
+
+    def get_submission(
+        self,
+        course_id: str,
+        assignment_id: str,
+        user_id: str,
+        *,
+        include: tuple[str, ...] = ("submission_comments", "rubric_assessment", "user"),
+    ) -> dict[str, object]:
+        """Fetch one submission, with its comments and rubric by default."""
+        response = self._request(
+            "GET",
+            f"/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}",
+            params=[("include[]", name) for name in include],
+        )
+        if not response.ok:
+            raise RuntimeError(f"Canvas API error {response.status_code}: {response.text}")
+        result: dict[str, object] = response.json()
+        return result
+
+    def grade_submission(
+        self,
+        course_id: str,
+        assignment_id: str,
+        user_id: str,
+        *,
+        grade: str | None = None,
+        comment: str | None = None,
+        group_comment: bool = False,
+        excuse: bool | None = None,
+        late_policy_status: str | None = None,
+        seconds_late_override: int | None = None,
+        rubric_assessment: RubricAssessment | None = None,
+    ) -> dict[str, object]:
+        """Set a score and/or attach a comment on one submission.
+
+        `grade` is whatever the assignment's grading type accepts: points
+        ("18"), a percentage ("92%"), a letter ("B+"), or "pass"/"fail".
+        """
+        data: dict[str, str] = {}
+        if grade is not None:
+            data["submission[posted_grade]"] = grade
+        if excuse is not None:
+            data["submission[excuse]"] = str(excuse).lower()
+        if late_policy_status is not None:
+            data["submission[late_policy_status]"] = late_policy_status
+        if seconds_late_override is not None:
+            data["submission[seconds_late_override]"] = str(seconds_late_override)
+        if comment:
+            data["comment[text_comment]"] = comment
+            if group_comment:
+                data["comment[group_comment]"] = "true"
+        if rubric_assessment:
+            for criterion_id, entry in rubric_assessment.items():
+                for field, value in entry.items():
+                    data[f"rubric_assessment[{criterion_id}][{field}]"] = str(value)
+
+        if not data:
+            raise ValueError("grade_submission needs at least a grade, a comment, or a rubric")
+
+        return self._json(
+            "PUT",
+            f"/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}",
+            data=data,
+        )
+
+    def download_attachment(self, url: str, dest: Path) -> int:
+        """Stream a submission attachment to disk and return its size in bytes.
+
+        Canvas attachment URLs redirect to blob storage; `requests` drops the
+        Authorization header on a cross-host redirect, so the token stays put.
+        """
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with requests.get(
+            url, headers=self.headers, timeout=self._UPLOAD_TIMEOUT, stream=True
+        ) as response:
+            if not response.ok:
+                raise RuntimeError(
+                    f"Canvas download failed for {dest.name}: HTTP {response.status_code}"
+                )
+            written = 0
+            with dest.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1 << 16):
+                    handle.write(chunk)
+                    written += len(chunk)
+        return written
 
     # -- rubrics --------------------------------------------------------
 

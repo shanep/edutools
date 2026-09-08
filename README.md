@@ -1,8 +1,9 @@
 # Edu Tools
 
 A command line tool for Canvas LMS. It reads course data out of Canvas (courses,
-assignments, students, submissions, ungraded work) and publishes a course repo of
-markdown into Canvas pages, assignments, and modules.
+assignments, students, submissions, ungraded work), publishes a course repo of
+markdown into Canvas pages, assignments, and modules, edits individual Canvas
+objects, and grades submissions with written feedback.
 
 Every read command can emit raw JSON with `--json`, so the output is easy to parse
 from a script or an agent instead of scraping table borders.
@@ -60,6 +61,18 @@ edutools ungraded <course_id> [--json]           list submissions still needing 
 edutools push <course_repo> --course <id>        publish a course repo into Canvas
 edutools verify <course_repo> --course <id>      read published content back and prove it landed
 edutools dates <course_repo> [--show] [--shift]  compute due dates from canvas.toml
+
+edutools create <kind> --course <id> ...         create one page/assignment/discussion/quiz/module
+edutools update <kind> <id> --course <id> ...    change one object
+edutools delete <kind> <id> --course <id>        delete one object (asks first)
+edutools publish <kind> <id> --course <id>       make one object student-visible
+edutools unpublish <kind> <id> --course <id>     hide one object from students
+
+edutools submission -c <id> -a <id> -s <id>      show one submission with its comments
+edutools download -c <id> -a <id> --out <dir>    download submission attachments
+edutools grade -c <id> -a <id> -s <id> ...       grade one submission, with feedback
+edutools grade -c <id> -a <id> --from-file <f>   grade a batch from JSON or CSV
+
 edutools --version                               print the version
 ```
 
@@ -114,6 +127,86 @@ is visible instead of silent.
 `dates` computes assignment due dates from the term skeleton in the repo's
 `canvas.toml`. `--show` prints the computed schedule without publishing anything.
 
+### Editing one object at a time
+
+`push` drives a whole repository. When you only need to touch one thing, `create`,
+`update`, `delete`, `publish`, and `unpublish` each take a kind (`page`,
+`assignment`, `discussion`, `quiz`, or `module`) and a course:
+
+```bash
+edutools create assignment -c 12345 --title "Lab 7" --points 50 \
+    --body-file assignments/lab-07.md --due 2026-10-14T23:59:00-06:00
+
+edutools update assignment 98765 -c 12345 --points 40
+edutools publish assignment 98765 -c 12345
+edutools unpublish page week-1 -c 12345
+edutools delete assignment 98765 -c 12345
+```
+
+Like `push`, `create` leaves an object **unpublished** unless `--publish` is given.
+A `.md` file passed to `--body-file` goes through the same pandoc rendering and
+Canvas-safe HTML pipeline that `push` uses, and its `#` heading becomes the default
+title. `update` sends only the fields you name, so it never clears anything you did
+not mention. `delete` prints what it is about to remove and asks for confirmation
+unless `--yes` is given.
+
+Canvas names the same idea differently on each endpoint (an assignment has a `name`,
+a page a `title`; a graded discussion hangs its points off `assignment[...]`).
+`edutools` maps the common flags for you, and `--set` reaches anything it does not
+model:
+
+```bash
+edutools create assignment -c 12345 --title "Lab 7" \
+    --set 'assignment[submission_types][]=online_upload' \
+    --set 'assignment[omit_from_final_grade]=true'
+```
+
+A page is addressed by its url slug (`week-1`) rather than a numeric id; everything
+else uses its id.
+
+### Grading with feedback
+
+```bash
+edutools ungraded 12345                                  # what still needs a grade
+edutools submission -c 12345 -a 67890 -s 555             # read one submission
+edutools download -c 12345 -a 67890 --out ./submissions  # pull the attachments down
+
+edutools grade -c 12345 -a 67890 -s 555 --score 18 --comment "Clean tests."
+edutools grade -c 12345 -a 67890 -s 555 --comment-file feedback.md
+edutools grade -c 12345 -a 67890 -s 555 --excuse
+```
+
+`--score` takes whatever the assignment's grading type accepts: points (`18`), a
+percentage (`92%`), a letter (`B+`), or `pass`/`fail`. A `--comment` with no
+`--score` returns feedback without putting a number on the work.
+
+A whole class at once comes from a file, as JSON (a list of objects, or an object
+keyed by student id) or a CSV with a header row. Column names are matched loosely,
+so `score`/`grade`/`points` and `comment`/`feedback` all mean the same thing:
+
+```json
+[
+  {"student": 555, "score": 18, "comment": "Clean tests, good naming."},
+  {"student": 556, "score": 12, "comment": "See the note on error handling."},
+  {"student": 557, "excuse": true}
+]
+```
+
+```bash
+edutools grade -c 12345 -a 67890 --from-file grades.json --dry-run   # show, write nothing
+edutools grade -c 12345 -a 67890 --from-file grades.json
+edutools grade -c 12345 -a 67890 --from-file grades.csv
+```
+
+Grading is deliberately sequential: Canvas throttles parallel writes, and a
+per-student loop reports exactly which rows failed. `--dry-run` prints the table it
+would send and writes nothing.
+
+If the assignment uses a **manual posting policy**, a grade written here lands on
+the submission but stays hidden from the student until it is posted from the Canvas
+gradebook. Canvas exposes posting only through its GraphQL API, so `edutools` does
+not do it.
+
 ## Development
 
 ### Prerequisites
@@ -138,10 +231,13 @@ src/edutools/
 ├── publisher.py    # two-pass course-repo publisher (create objects, then rewrite links)
 ├── verify.py       # reads content back out of Canvas and compares semantically
 ├── dates.py        # due-date computation from a canvas.toml term skeleton
+├── objects.py      # pure functions: per-kind Canvas field names, grade-file parsing
 └── _version.py     # version reporting
 tests/
 ├── test_canvas.py
+├── test_cli.py
 ├── test_dates.py
+├── test_objects.py
 ├── test_publish.py
 ├── test_verify.py
 └── test_version.py
