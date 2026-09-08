@@ -308,3 +308,63 @@ class TestTotalPoints:
     def test_zero_disables_the_check(self):
         problems = validate([self._item(37)], _term(total_points=0))
         assert not any("sum to" in p for p in problems)
+
+
+class TestOptionalUnlock:
+    """A policy with no `unlock` leaves Canvas's "Available from" blank."""
+
+    def _config(self, tmp_path, unlock_line: str):
+        (tmp_path / "assignments").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "assignments" / "p0.md").write_text(
+            "# P0\n\n**Week 2 · 50 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\n"
+            "weeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\n"
+            "finals_end = 2026-12-18\n"
+            "total_points = 0\n\n"
+            "[term.policy.project]\n"
+            f"{unlock_line}"
+            'due = "tue 23:59"\n'
+            "grace_days = 2\n\n"
+            "[layout]\n"
+            'syllabus = "index.md"\n\n'
+            "[layout.gradable]\n"
+            'project = "assignments/p[0-9]*.md"\n',
+            encoding="utf-8",
+        )
+        return load_config(tmp_path)
+
+    def test_an_absent_unlock_yields_no_unlock_date(self, tmp_path: Path):
+        config = self._config(tmp_path, "")
+        assert config.policies["project"].unlock is None
+        item = compute(tmp_path, config)[0]
+        assert item.unlock_at is None
+        assert item.due_at is not None
+
+    def test_a_present_unlock_still_works(self, tmp_path: Path):
+        config = self._config(tmp_path, 'unlock = "mon 00:00"\n')
+        item = compute(tmp_path, config)[0]
+        assert item.unlock_at is not None
+        assert item.unlock_at.hour == 0
+
+    def test_validate_accepts_an_item_with_no_unlock(self, tmp_path: Path):
+        config = self._config(tmp_path, "")
+        assert validate(compute(tmp_path, config), config.term) == []
+
+    def test_validate_still_catches_due_after_lock(self, tmp_path: Path):
+        config = self._config(tmp_path, "")
+        item = compute(tmp_path, config)[0]
+        broken = ItemDates(
+            item.path, item.title, item.kind, item.week, item.points,
+            None, item.due_at, item.due_at - dt.timedelta(days=1),
+        )
+        assert any("out of order" in p for p in validate([broken], config.term))
+
+    def test_shifting_keeps_the_absent_unlock(self, tmp_path: Path):
+        item = compute(tmp_path, self._config(tmp_path, ""))[0]
+        assert item.shifted(3).unlock_at is None

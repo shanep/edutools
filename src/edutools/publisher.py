@@ -16,6 +16,7 @@ from edutools.canvas import CanvasLMS
 from edutools.dates import ItemDates, compute, load_config
 from edutools.publish import (
     Entry,
+    canvas_path,
     Manifest,
     PublishError,
     assert_no_forbidden_tags,
@@ -80,6 +81,7 @@ class Publisher:
         *,
         publish: bool = False,
         dry_run: bool = False,
+        update_published: bool = False,
         report: Reporter = print,
     ) -> None:
         self.repo = repo.resolve()
@@ -87,6 +89,7 @@ class Publisher:
         self.canvas = canvas
         self.publish = publish
         self.dry_run = dry_run
+        self.update_published = update_published
         self.report = report
         self.manifest = Manifest.for_course(self.repo, course_id)
         self.config = load_config(self.repo)
@@ -94,6 +97,7 @@ class Publisher:
         css_path = self.repo / "canvas.css"
         self.css = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
         self.rendered: dict[str, str] = {}
+        self.protected: set[str] = set()
         self.dropped_css: set[str] = set()
 
     # -- rendering ------------------------------------------------------
@@ -167,9 +171,12 @@ class Publisher:
     def _date_fields(self, prefix: str, item: ItemDates | None) -> dict[str, str]:
         if item is None:
             return {}
+        # A course that wants no "Available from" date omits unlock from its policy.
+        # That has to be sent as an empty value rather than left out: omitting the
+        # field on an update makes Canvas keep whatever date is already there.
         return {
             f"{prefix}[due_at]": item.due_at.isoformat(),
-            f"{prefix}[unlock_at]": item.unlock_at.isoformat(),
+            f"{prefix}[unlock_at]": item.unlock_at.isoformat() if item.unlock_at else "",
             f"{prefix}[lock_at]": item.lock_at.isoformat(),
         }
 
@@ -177,6 +184,25 @@ class Publisher:
         if self.canvas is None:
             raise PublishError("no Canvas client configured")
         return self.canvas
+
+    def _is_live(self, entry: Entry | None) -> bool:
+        """True if this object is already published, so students can see it.
+
+        Rewriting something a class is part-way through reading is worse than
+        leaving it stale, so a push skips it unless asked to do otherwise. The
+        syllabus has no published flag of its own: it is visible whenever the
+        course is, so treat it as live in a published course.
+        """
+        if entry is None or self.update_published:
+            return False
+        canvas = self._client()
+        if entry.kind == "syllabus":
+            course = canvas.get_json(f"/api/v1/courses/{self.course_id}")
+            return str(course.get("workflow_state", "")) == "available"
+        if entry.kind == "file":
+            return False
+        stored = canvas.get_json(f"/api/v1{canvas_path(entry, self.course_id)}")
+        return bool(stored.get("published"))
 
     # -- pass one -------------------------------------------------------
 
@@ -198,6 +224,11 @@ class Publisher:
 
         canvas = self._client()
         existing = self.manifest.get(item.key)
+
+        if self._is_live(existing):
+            self.protected.add(item.key)
+            result.skipped = 1
+            return result
 
         if item.kind == "syllabus":
             canvas.update_syllabus(self.course_id, html)
@@ -253,7 +284,12 @@ class Publisher:
                 "quiz[title]": title,
                 "quiz[description]": html,
                 "quiz[quiz_type]": "assignment" if graded else "practice_quiz",
-                "quiz[published]": str(self.publish).lower(),
+                # Always written unpublished, then published again below once the
+                # questions exist. Canvas freezes a quiz's question set when it is
+                # published, so questions added to an already-published quiz are
+                # never counted: the quiz reads 0 questions and 0 points to
+                # students until someone unpublishes and republishes it by hand.
+                "quiz[published]": "false",
                 "quiz[allowed_attempts]": "1",
                 "quiz[scoring_policy]": "keep_highest",
                 **self._date_fields("quiz", item.dates),
@@ -266,6 +302,8 @@ class Publisher:
                 canvas_id, result.created = str(created["id"]), 1
             self.manifest.put(item.key, Entry(kind="quiz", canvas_id=canvas_id, title=title))
             self._push_questions(item, canvas_id)
+            if self.publish:
+                canvas.update_quiz(self.course_id, canvas_id, {"quiz[published]": "true"})
         return result
 
     def _push_file(self, item: Plan) -> Result:
@@ -299,7 +337,7 @@ class Publisher:
 
     def rewrite(self, item: Plan) -> list[str]:
         """Point relative links at Canvas objects and update the body."""
-        if item.source is None or item.kind == "file":
+        if item.source is None or item.kind == "file" or item.key in self.protected:
             return []
         html = self.rendered.get(item.key)
         entry = self.manifest.get(item.key)
@@ -337,15 +375,22 @@ class Publisher:
             return result
 
         canvas = self._client()
-        existing = {str(m.get("name")): str(m.get("id")) for m in canvas.list_modules(self.course_id)}
+        stored_modules = canvas.list_modules(self.course_id)
+        existing = {str(m.get("name")): str(m.get("id")) for m in stored_modules}
+        live = {
+            str(m.get("name")) for m in stored_modules if m.get("published")
+        } if not self.update_published else set()
 
         for position, module in enumerate(modules, start=1):
             if not isinstance(module, dict):
                 continue
             name = str(module.get("title", f"Module {position}"))
+            if name in live:
+                result.skipped += 1
+                continue
             module_id = existing.get(name)
             if module_id is None:
-                created = canvas.create_module(self.course_id, name, position)
+                created = canvas.create_module(self.course_id, name, position, self.publish)
                 module_id = str(created["id"])
                 result.created += 1
             else:
@@ -377,6 +422,9 @@ class Publisher:
                 else:
                     fields["module_item[content_id]"] = entry.canvas_id
                 canvas.create_module_item(self.course_id, module_id, fields)
+
+            if self.publish:
+                canvas.update_module(self.course_id, module_id, {"module[published]": "true"})
         return result
 
     # -- rubrics --------------------------------------------------------
@@ -388,7 +436,7 @@ class Publisher:
             return result
         canvas = self._client()
         for key, entry in sorted(self.manifest.entries.items()):
-            if entry.kind not in ("assignment", "discussion"):
+            if entry.kind not in ("assignment", "discussion") or key in self.protected:
                 continue
             source = self.repo / key
             if not source.exists():

@@ -88,8 +88,10 @@ class Term:
 class Policy:
     """How one kind of item is scheduled within its week."""
 
-    unlock: str      # e.g. "mon 00:00"
-    due: str         # e.g. "sun 23:59"
+    # Omitted entirely when a course wants no "Available from" date, which leaves
+    # the item visible as soon as it is published.
+    unlock: str | None  # e.g. "mon 00:00"
+    due: str            # e.g. "sun 23:59"
     grace_days: int  # days between due_at and lock_at
 
 
@@ -102,7 +104,7 @@ class ItemDates:
     kind: ItemKind
     week: int | None      # None for finals-week items
     points: float
-    unlock_at: dt.datetime
+    unlock_at: dt.datetime | None
     due_at: dt.datetime
     lock_at: dt.datetime
 
@@ -110,7 +112,8 @@ class ItemDates:
         delta = dt.timedelta(days=days)
         return ItemDates(
             self.path, self.title, self.kind, self.week, self.points,
-            self.unlock_at + delta, self.due_at + delta, self.lock_at + delta,
+            self.unlock_at + delta if self.unlock_at else None,
+            self.due_at + delta, self.lock_at + delta,
         )
 
 
@@ -263,7 +266,7 @@ def load_config(repo: Path) -> DateConfig:
         if not isinstance(spec, dict):
             raise DateConfigError(f"policy.{kind} must be a table")
         policies[str(kind)] = Policy(
-            unlock=str(spec["unlock"]),
+            unlock=str(spec["unlock"]) if spec.get("unlock") is not None else None,
             due=str(spec["due"]),
             grace_days=int(spec.get("grace_days", 0)),
         )
@@ -358,18 +361,22 @@ def compute(repo: Path, config: DateConfig | None = None) -> list[ItemDates]:
                 raise DateConfigError(f"no policy.{kind} in canvas.toml for {rel}")
 
             override = cfg.overrides.get(rel, {})
-            unlock_spec = _str_override(override, "unlock", policy.unlock, rel)
+            unlock_raw = override.get("unlock", policy.unlock)
+            unlock_spec = (
+                None if unlock_raw is None
+                else _str_override(override, "unlock", policy.unlock or "", rel)
+            )
             due_spec = _str_override(override, "due", policy.due, rel)
             grace = _int_override(override, "grace_days", policy.grace_days, rel)
 
             if week is None:
                 # A finals-week item: the finals window replaces the weekly one.
-                unlock_at = _at(term.finals_start, "00:00", tz)
+                unlock_at = _at(term.finals_start, "00:00", tz) if unlock_spec else None
                 due_at = _at(term.finals_end, "23:59", tz)
                 lock_at = due_at
             else:
                 monday = term.monday_of(week)
-                unlock_at = resolve(unlock_spec, monday, tz)
+                unlock_at = resolve(unlock_spec, monday, tz) if unlock_spec else None
                 due_at = resolve(due_spec, monday, tz)
                 lock_at = due_at + dt.timedelta(days=grace)
                 # The Late Work Policy forbids accepting anything after the last
@@ -402,7 +409,13 @@ def validate(items: list[ItemDates], term: Term) -> list[str]:
     break_monday = term.break_monday()
 
     for item in items:
-        if not (item.unlock_at <= item.due_at <= item.lock_at):
+        if item.unlock_at is None:
+            if item.due_at > item.lock_at:
+                problems.append(
+                    f"{item.path}: dates out of order "
+                    f"(due {item.due_at:%b %d %H:%M}, lock {item.lock_at:%b %d %H:%M})"
+                )
+        elif not (item.unlock_at <= item.due_at <= item.lock_at):
             problems.append(
                 f"{item.path}: dates out of order "
                 f"(unlock {item.unlock_at:%b %d %H:%M}, due {item.due_at:%b %d %H:%M}, "
@@ -415,7 +428,7 @@ def validate(items: list[ItemDates], term: Term) -> list[str]:
             )
         if break_monday is not None:
             break_end = break_monday + dt.timedelta(days=6)
-            if break_monday <= item.unlock_at.date() <= break_end:
+            if item.unlock_at and break_monday <= item.unlock_at.date() <= break_end:
                 problems.append(
                     f"{item.path}: unlocks {item.unlock_at:%b %d}, during the break week"
                 )

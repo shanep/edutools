@@ -86,6 +86,7 @@ edutools --version                               print the version
                        modules, syllabus, or rubrics (repeatable)
 --no-verify            skip the verification pass that normally follows a push
 --preview <dir>        write the rendered HTML to a directory for inspection
+--update-published     also rewrite content students can already see
 ```
 
 ### Reading course data
@@ -117,6 +118,13 @@ edutools verify ./cs121 --course 12345            # read the content back and co
 Objects are created **unpublished** unless `--publish` is given, so a push is safe to
 run against a live course before students should see the content. `push` runs
 `verify` automatically when it finishes; pass `--no-verify` to skip that.
+
+A push also **leaves published content alone**. Rewriting a page or an assignment
+that a class is part-way through reading is worse than leaving it stale, so anything
+already visible to students is skipped and listed at the end. `--update-published`
+overwrites it anyway. The same guard covers modules and rubrics: a module is not
+rebuilt while it is published, and a rubric is not replaced on work already under
+way.
 
 `push` runs in two passes: the first pass creates or updates every Canvas object so
 each one has an id, and the second pass rewrites cross-references between them into
@@ -188,6 +196,22 @@ rather than alone on its own line, stays as text so it can be documented.
 `[term] total_points` is what every gradable item should add up to, defaulting to
 1000. Set it to `0` for a course that grades by weighted assignment groups instead,
 which skips the check.
+
+### Date policies
+
+Each item kind gets a `[term.policy.<kind>]` with `due`, an optional `unlock`, and
+an optional `grace_days`:
+
+```toml
+[term.policy.project]
+due        = "tue 23:59"   # required
+grace_days = 2             # days between due_at and lock_at
+# unlock   = "mon 00:00"   # omit to leave Canvas's "Available from" blank
+```
+
+Omitting `unlock` means the item has no availability date and is visible as soon as
+it is published. The field is sent to Canvas empty rather than left out, so removing
+`unlock` from a policy clears a date that an earlier push had set.
 
 ### Editing one object at a time
 

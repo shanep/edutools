@@ -165,7 +165,12 @@ def check_quiz_questions(
             failures.append(
                 Failure(key, "answers", f"{name}: multiple choice with {len(correct)} correct answers")
             )
-        if not str(question.get("neutral_comments", "")).strip():
+        # Canvas keeps the two forms in separate fields and fills only the one it
+        # was given, so a rendered rationale leaves neutral_comments empty.
+        rationale = str(question.get("neutral_comments", "")) or str(
+            question.get("neutral_comments_html", "")
+        )
+        if not rationale.strip():
             failures.append(Failure(key, "rationale", f"{name}: rationale missing"))
     return failures
 

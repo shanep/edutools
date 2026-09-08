@@ -447,3 +447,21 @@ class TestDownloadAttachment:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "tok"}):
             with pytest.raises(RuntimeError, match="403"):
                 CanvasLMS().download_attachment("https://files.test/x", Path(tmp_path) / "x.py")
+
+
+class TestModulePublishing:
+    """An unpublished module hides its contents, so --publish has to reach it."""
+
+    @patch("edutools.canvas.requests.request")
+    def test_create_module_defaults_to_unpublished(self, mock_request):
+        mock_request.return_value = _mock_response(json_data={"id": 1})
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            CanvasLMS().create_module("42", "Week 1", 1)
+        assert mock_request.call_args.kwargs["data"]["module[published]"] == "false"
+
+    @patch("edutools.canvas.requests.request")
+    def test_create_module_can_publish(self, mock_request):
+        mock_request.return_value = _mock_response(json_data={"id": 1})
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            CanvasLMS().create_module("42", "Week 1", 1, True)
+        assert mock_request.call_args.kwargs["data"]["module[published]"] == "true"

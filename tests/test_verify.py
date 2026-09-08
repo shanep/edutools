@@ -185,3 +185,31 @@ def test_summarise_groups_by_check():
         + check_gradebook_total([{"points_possible": 1}], 1000.0)  # type: ignore[list-item]
     )
     assert summarise(failures) == {"missing": 2, "gradebook": 1}
+
+
+class TestRationaleField:
+    """Canvas fills neutral_comments or neutral_comments_html, never both."""
+
+    def _stored(self, **comments: str):
+        base = {
+            "question_name": "Q1", "question_type": "multiple_choice_question",
+            "question_text": "<p>s</p>",
+            "answers": [{"text": "a", "weight": 100.0}],
+            "neutral_comments": "", "neutral_comments_html": "",
+        }
+        base.update(comments)
+        return [base]
+
+    def test_a_plain_rationale_passes(self):
+        failures = check_quiz_questions("q.md", 1, self._stored(neutral_comments="because"))
+        assert not [f for f in failures if f.check == "rationale"]
+
+    def test_a_rendered_rationale_passes(self):
+        failures = check_quiz_questions(
+            "q.md", 1, self._stored(neutral_comments_html="<p>because</p>")
+        )
+        assert not [f for f in failures if f.check == "rationale"]
+
+    def test_no_rationale_at_all_still_fails(self):
+        failures = check_quiz_questions("q.md", 1, self._stored())
+        assert [f for f in failures if f.check == "rationale"]

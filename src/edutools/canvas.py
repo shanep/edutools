@@ -319,11 +319,17 @@ class CanvasLMS():
     def list_modules(self, course_id: str) -> list[dict[str, object]]:
         return self.list_json(f"/api/v1/courses/{course_id}/modules")
 
-    def create_module(self, course_id: str, name: str, position: int) -> dict[str, object]:
+    def create_module(
+        self, course_id: str, name: str, position: int, published: bool = False
+    ) -> dict[str, object]:
         return self._json(
             "POST",
             f"/api/v1/courses/{course_id}/modules",
-            data={"module[name]": name, "module[position]": str(position)},
+            data={
+                "module[name]": name,
+                "module[position]": str(position),
+                "module[published]": str(published).lower(),
+            },
         )
 
     def update_module(self, course_id: str, module_id: str, fields: dict[str, str]) -> dict[str, object]:

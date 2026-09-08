@@ -461,6 +461,29 @@ def parse_quiz(path: Path) -> list[Question]:
     return questions
 
 
+# Emphasis, code spans and links: the markdown a quiz answer can actually carry.
+_MARKDOWN_RE: Final[re.Pattern[str]] = re.compile(r"\*\*|`|\[[^\]]*\]\(")
+
+
+def render_inline(markdown: str) -> str:
+    """Render one markdown fragment to HTML.
+
+    Quiz stems and rationales reach Canvas as HTML, so a stem written "Select
+    **all** that apply" has to be rendered or the reader sees the asterisks, and
+    the emphasis that marks a multiple-answer question is lost.
+    """
+    if not markdown.strip():
+        return ""
+    require_pandoc()
+    result = subprocess.run(
+        ["pandoc", "--from", "gfm", "--to", "html", "--wrap=none"],
+        input=markdown, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        raise PublishError(f"pandoc failed on a quiz fragment: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
 def question_fields(question: Question, position: int) -> list[tuple[str, str]]:
     """Canvas form fields for one quiz question."""
     name = f"Q{question.number}"
@@ -468,14 +491,17 @@ def question_fields(question: Question, position: int) -> list[tuple[str, str]]:
         name += f" (Objective {question.objective})"
     fields: list[tuple[str, str]] = [
         ("question[question_name]", name),
-        ("question[question_text]", f"<p>{question.stem}</p>"),
+        ("question[question_text]", render_inline(question.stem)),
         ("question[question_type]", question.kind),
         ("question[points_possible]", "2"),
         ("question[position]", str(position)),
-        ("question[neutral_comments]", question.rationale),
+        ("question[neutral_comments_html]", render_inline(question.rationale)),
     ]
     for answer in question.answers:
-        fields.append(("question[answers][][answer_text]", answer.text))
+        if _MARKDOWN_RE.search(answer.text):
+            fields.append(("question[answers][][answer_html]", render_inline(answer.text)))
+        else:
+            fields.append(("question[answers][][answer_text]", answer.text))
         fields.append(("question[answers][][answer_weight]", "100" if answer.correct else "0"))
     return fields
 

@@ -423,6 +423,7 @@ def push_course(
     course_id: str = typer.Option(..., "--course", help="Canvas course ID"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Render everything, write nothing"),
     publish: bool = typer.Option(False, "--publish", help="Make objects student-visible (default: unpublished)"),
+    update_published: bool = typer.Option(False, "--update-published", help="Also rewrite content students can already see (default: skip it)"),
     only: Optional[list[str]] = typer.Option(None, "--only", help="Limit to: pages, assignments, discussions, quizzes, files, modules, syllabus, rubrics"),
     verify: bool = typer.Option(True, "--verify/--no-verify", help="Read everything back from Canvas afterwards"),
     preview: Optional[str] = typer.Option(None, "--preview", help="Write the rendered HTML to a directory and open nothing else"),
@@ -431,6 +432,10 @@ def push_course(
 
     Two passes: create or update every object, then rewrite relative links now
     that ids exist. Everything is created UNPUBLISHED unless --publish is given.
+
+    Anything already published is left alone, because rewriting what a class is
+    part-way through reading is worse than leaving it stale. Pass
+    --update-published to overwrite it anyway.
     """
     from pathlib import Path
 
@@ -448,7 +453,8 @@ def push_course(
 
     try:
         publisher = Publisher(
-            repo_path, course_id, canvas, publish=publish, dry_run=dry_run, report=console.print
+            repo_path, course_id, canvas, publish=publish, dry_run=dry_run,
+            update_published=update_published, report=console.print
         )
         plans = publisher.plan()
     except (PublishError, ValueError) as error:
@@ -542,6 +548,13 @@ def push_course(
         f"\n[green]✓[/green] pushed to course {course_id} "
         f"({'published' if publish else '[bold]unpublished[/bold]'})"
     )
+    if publisher.protected:
+        console.print(
+            f"[yellow]![/yellow] left {len(publisher.protected)} published "
+            f"object(s) untouched; --update-published overwrites them:"
+        )
+        for key in sorted(publisher.protected):
+            console.print(f"    [dim]{key}[/dim]")
     if verify:
         verify_course(repo, course_id)
 
@@ -650,7 +663,9 @@ def verify_course(
     assignments = canvas.list_json(f"/api/v1/courses/{course_id}/assignments")
     published_assignments = [a for a in assignments if a.get("published")]
     if published_assignments:
-        failures.extend(check_gradebook_total(published_assignments, 1000.0))
+        expected_total = publisher.config.term.total_points
+        if expected_total:
+            failures.extend(check_gradebook_total(published_assignments, expected_total))
 
     if not failures:
         console.print(
@@ -728,7 +743,7 @@ def course_dates(
             item.kind,
             str(item.week) if item.week is not None else "-",
             f"{item.points:g}",
-            item.unlock_at.strftime("%b %d %H:%M"),
+            item.unlock_at.strftime("%b %d %H:%M") if item.unlock_at else "-",
             item.due_at.strftime("%b %d %H:%M"),
             item.lock_at.strftime("%b %d %H:%M"),
         )

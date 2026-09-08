@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from unittest.mock import MagicMock
 
 from edutools.publish import (
     CANVAS_CSS_PROPERTIES,
@@ -18,6 +19,7 @@ from edutools.publish import (
     parse_quiz,
     parse_rubric,
     question_fields,
+    render_inline,
     render_markdown,
     rewrite_links,
     rubric_fields,
@@ -418,3 +420,148 @@ class TestStripVitepress:
         out = strip_vitepress(source.read_text(), source, tmp_path)
         assert "<img" in out
         assert "<br>" in out
+
+
+class TestQuestionRendering:
+    """Question text reaches Canvas as HTML; unrendered markdown is what a student
+    would otherwise read, including the '**all**' that marks a multi-answer item."""
+
+    QUIZ = (
+        "# Q\n\n**Week 1 · 20 points · x**\n\n---\n\n"
+        "**Q1.** Select **all** that apply to `La/R`. *(Objective 1.2)*\n\n"
+        "- A. Uses `L/R` arithmetic\n- B. Plain option\n\n"
+        "*Answer:* **A** -- Because `L/R` is the formula.\n"
+    )
+
+    def _question(self, tmp_path: Path):
+        path = tmp_path / "quiz-01.md"
+        path.write_text(self.QUIZ, encoding="utf-8")
+        return parse_quiz(path)[0]
+
+    def test_render_inline_is_empty_for_empty_input(self):
+        assert render_inline("   ") == ""
+
+    def test_render_inline_renders_emphasis_and_code(self):
+        out = render_inline("Select **all** for `x`")
+        assert "<strong>all</strong>" in out
+        assert "<code>x</code>" in out
+
+    def test_the_stem_is_rendered(self, tmp_path: Path):
+        fields = dict(question_fields(self._question(tmp_path), 1))
+        assert "<strong>all</strong>" in fields["question[question_text]"]
+        assert "**" not in fields["question[question_text]"]
+
+    def test_the_rationale_goes_to_the_html_field_rendered(self, tmp_path: Path):
+        fields = dict(question_fields(self._question(tmp_path), 1))
+        assert "<code>L/R</code>" in fields["question[neutral_comments_html]"]
+
+    def test_an_answer_with_markdown_is_sent_as_html(self, tmp_path: Path):
+        pairs = question_fields(self._question(tmp_path), 1)
+        html = [v for k, v in pairs if k.endswith("[answer_html]")]
+        assert len(html) == 1
+        assert "<code>L/R</code>" in html[0]
+
+    def test_a_plain_answer_stays_plain_text(self, tmp_path: Path):
+        """Canvas empties answer_text whenever answer_html is set, so an answer that
+        needs no rendering should keep its plain form."""
+        pairs = question_fields(self._question(tmp_path), 1)
+        text = [v for k, v in pairs if k.endswith("[answer_text]")]
+        assert text == ["Plain option"]
+
+
+class TestPublishedContentGuard:
+    """A push must not rewrite what a class is part-way through reading."""
+
+    def _publisher(self, tmp_path: Path, canvas, **kwargs):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "assignments").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n'
+            '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n',
+            encoding="utf-8",
+        )
+        return Publisher(tmp_path, "42", canvas, **kwargs)
+
+    def _entry(self):
+        return Entry(kind="assignment", canvas_id="7", title="P0")
+
+    def test_a_published_object_is_reported_live(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.get_json.return_value = {"published": True}
+        publisher = self._publisher(tmp_path, canvas)
+        assert publisher._is_live(self._entry()) is True
+
+    def test_an_unpublished_object_is_not_live(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.get_json.return_value = {"published": False}
+        publisher = self._publisher(tmp_path, canvas)
+        assert publisher._is_live(self._entry()) is False
+
+    def test_update_published_opts_back_in(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.get_json.return_value = {"published": True}
+        publisher = self._publisher(tmp_path, canvas, update_published=True)
+        assert publisher._is_live(self._entry()) is False
+        canvas.get_json.assert_not_called()
+
+    def test_an_object_that_does_not_exist_yet_is_not_live(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path, MagicMock())
+        assert publisher._is_live(None) is False
+
+    def test_the_syllabus_is_live_when_the_course_is_available(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.get_json.return_value = {"workflow_state": "available"}
+        publisher = self._publisher(tmp_path, canvas)
+        assert publisher._is_live(Entry(kind="syllabus", canvas_id="42", title="S")) is True
+
+    def test_the_syllabus_is_not_live_in_an_unpublished_course(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.get_json.return_value = {"workflow_state": "unpublished"}
+        publisher = self._publisher(tmp_path, canvas)
+        assert publisher._is_live(Entry(kind="syllabus", canvas_id="42", title="S")) is False
+
+
+class TestUnlockField:
+    """An omitted unlock has to be sent empty; leaving the key out makes Canvas
+    keep whatever date is already on the object."""
+
+    def _dates(self, unlock):
+        import datetime as dt
+
+        from edutools.dates import ItemDates
+
+        tz = dt.timezone.utc
+        due = dt.datetime(2026, 9, 1, 23, 59, tzinfo=tz)
+        return ItemDates("assignments/p0.md", "P0", "project", 2, 50.0,
+                         unlock, due, due + dt.timedelta(days=2))
+
+    def _fields(self, tmp_path: Path, unlock):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n',
+            encoding="utf-8",
+        )
+        return Publisher(tmp_path, "42", None)._date_fields("assignment", self._dates(unlock))
+
+    def test_no_unlock_sends_an_empty_string(self, tmp_path: Path):
+        assert self._fields(tmp_path, None)["assignment[unlock_at]"] == ""
+
+    def test_an_unlock_is_sent_as_an_iso_timestamp(self, tmp_path: Path):
+        import datetime as dt
+
+        when = dt.datetime(2026, 8, 31, tzinfo=dt.timezone.utc)
+        assert self._fields(tmp_path, when)["assignment[unlock_at]"].startswith("2026-08-31")

@@ -83,6 +83,11 @@ Canvas writes are real and immediate, against courses with real students in them
 
 - Default to unpublished. `push` and `create` both leave objects invisible to
   students unless `--publish` is passed. Preserve that default in anything new.
+- **Never rewrite published content.** `push` skips any object Canvas reports as
+  published, and lists what it skipped; `--update-published` is the opt-in. The
+  same guard covers modules and rubrics. Changing a page mid-semester under a
+  class that is reading it is worse than leaving it stale, so anything new that
+  writes to Canvas has to respect `Publisher.protected` too.
 - Prefer `--dry-run` first (`push`, `grade`) and check the output before writing.
 - Deletes cascade: removing an assignment or graded discussion takes its
   submissions and grades with it. `delete` confirms before acting; keep it that way.
