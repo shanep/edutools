@@ -425,6 +425,7 @@ def push_course(
     publish: bool = typer.Option(False, "--publish", help="Make objects student-visible (default: unpublished)"),
     update_published: bool = typer.Option(False, "--update-published", help="Also rewrite content students can already see (default: skip it)"),
     only: Optional[list[str]] = typer.Option(None, "--only", help="Limit to: pages, assignments, discussions, quizzes, files, modules, syllabus, rubrics"),
+    path: Optional[list[str]] = typer.Option(None, "--path", help="Limit to specific repo files, exact or glob, repeatable"),
     verify: bool = typer.Option(True, "--verify/--no-verify", help="Read everything back from Canvas afterwards"),
     preview: Optional[str] = typer.Option(None, "--preview", help="Write the rendered HTML to a directory and open nothing else"),
 ):
@@ -436,6 +437,15 @@ def push_course(
     Anything already published is left alone, because rewriting what a class is
     part-way through reading is worse than leaving it stale. Pass
     --update-published to overwrite it anyway.
+
+    To push one correction rather than the whole course, name it with --path:
+
+        edutools push ./cs425 --course 48194 --path assignments/p1.md
+
+    --path takes a repo-relative path or a glob and is repeatable. It runs the
+    same pipeline the full push does, so dates, links, rubric and styling all
+    still come from the repository. Whole-course module rebuilding is skipped,
+    since that is a structural change rather than a correction.
     """
     from pathlib import Path
 
@@ -467,6 +477,25 @@ def push_course(
         "quiz": "quizzes", "file": "files", "syllabus": "syllabus",
     }
     selected = [p for p in plans if not wanted or kind_group.get(p.kind) in wanted]
+
+    patterns = list(path or [])
+    if patterns:
+        from fnmatch import fnmatch
+
+        def hits(pattern: str) -> list[str]:
+            return [p.key for p in selected if fnmatch(p.key, pattern)]
+
+        # A pattern that matches nothing is a typo, and silently pushing zero
+        # objects looks exactly like a successful push.
+        missed = [pattern for pattern in patterns if not hits(pattern)]
+        if missed:
+            console.print(f"[red]no file in the repo matches: {', '.join(missed)}[/red]")
+            console.print("[dim]available:[/dim]")
+            for key in sorted(p.key for p in selected):
+                console.print(f"  [dim]{key}[/dim]")
+            raise typer.Exit(1)
+        chosen = {key for pattern in patterns for key in hits(pattern)}
+        selected = [p for p in selected if p.key in chosen]
 
     totals = {"created": 0, "updated": 0, "skipped": 0}
     problems: list[str] = []
@@ -501,14 +530,14 @@ def push_course(
         )
         problems.append("canvas.css contains properties Canvas will not store")
 
-    if not wanted or "modules" in wanted:
+    if "modules" in wanted or (not wanted and not patterns):
         outcome = publisher.push_modules()
         totals["created"] += outcome.created
         totals["updated"] += outcome.updated
         problems.extend(outcome.errors)
 
-    if "rubrics" in wanted:
-        outcome = publisher.push_rubrics()
+    if "rubrics" in wanted or patterns:
+        outcome = publisher.push_rubrics({p.key for p in selected} if patterns else None)
         totals["created"] += outcome.created
         problems.extend(outcome.errors)
 
@@ -546,7 +575,8 @@ def push_course(
 
     console.print(
         f"\n[green]✓[/green] pushed to course {course_id} "
-        f"({'published' if publish else '[bold]unpublished[/bold]'})"
+        + ("(published)" if publish
+           else "([bold]new objects unpublished[/bold]; existing visibility unchanged)")
     )
     if publisher.protected:
         console.print(

@@ -609,3 +609,32 @@ class TestCalloutClasses:
     def test_a_plain_blockquote_is_left_alone(self):
         html = "<blockquote><p>Just a quote.</p></blockquote>"
         assert classify_callouts(html) == html
+
+
+class TestVisibilityOnUpdate:
+    """--publish means "make it visible". Its absence must not mean "hide it":
+    pushing a correction cannot pull a live assignment out from under a class."""
+
+    def _publisher(self, tmp_path: Path, publish: bool):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n',
+            encoding="utf-8",
+        )
+        return Publisher(tmp_path, "42", MagicMock(), publish=publish)
+
+    def test_a_new_object_takes_the_flag(self, tmp_path: Path):
+        assert self._publisher(tmp_path, False)._visibility(exists=False) is False
+        assert self._publisher(tmp_path, True)._visibility(exists=False) is True
+
+    def test_an_update_without_publish_says_nothing(self, tmp_path: Path):
+        assert self._publisher(tmp_path, False)._visibility(exists=True) is None
+
+    def test_an_update_with_publish_still_publishes(self, tmp_path: Path):
+        assert self._publisher(tmp_path, True)._visibility(exists=True) is True

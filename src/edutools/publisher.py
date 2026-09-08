@@ -168,6 +168,16 @@ class Publisher:
 
     # -- helpers --------------------------------------------------------
 
+    def _visibility(self, exists: bool) -> bool | None:
+        """What to say about visibility, or None to say nothing at all.
+
+        On create there is no prior state, so the flag decides it. On update,
+        --publish still publishes, but its absence must leave the object alone:
+        pushing a correction to a live assignment should not pull it out from
+        under the class currently reading it.
+        """
+        return self.publish if (not exists or self.publish) else None
+
     def _date_fields(self, prefix: str, item: ItemDates | None) -> dict[str, str]:
         if item is None:
             return {}
@@ -236,7 +246,9 @@ class Publisher:
             result.updated = 1
         elif item.kind == "page":
             if existing and canvas.exists(f"/api/v1/courses/{self.course_id}/pages/{existing.page_url}"):
-                canvas.update_page(self.course_id, existing.page_url, title, html, self.publish)
+                canvas.update_page(
+                    self.course_id, existing.page_url, title, html, self._visibility(True)
+                )
                 result.updated = 1
                 page_url = existing.page_url
             else:
@@ -250,13 +262,18 @@ class Publisher:
                 "assignment[description]": html,
                 "assignment[points_possible]": f"{item.points or 0:g}",
                 "assignment[submission_types][]": "online_text_entry",
-                "assignment[published]": str(self.publish).lower(),
                 **self._date_fields("assignment", item.dates),
             }
-            if existing and canvas.exists(f"/api/v1/courses/{self.course_id}/assignments/{existing.canvas_id}"):
+            if existing and canvas.exists(
+                f"/api/v1/courses/{self.course_id}/assignments/{existing.canvas_id}"
+            ):
+                visible = self._visibility(True)
+                if visible is not None:
+                    fields["assignment[published]"] = str(visible).lower()
                 canvas.update_assignment(self.course_id, existing.canvas_id, fields)
                 canvas_id, result.updated = existing.canvas_id, 1
             else:
+                fields["assignment[published]"] = str(self.publish).lower()
                 created = canvas.create_assignment(self.course_id, fields)
                 canvas_id, result.created = str(created["id"]), 1
             self.manifest.put(item.key, Entry(kind="assignment", canvas_id=canvas_id, title=title))
@@ -264,16 +281,19 @@ class Publisher:
             fields = {
                 "title": title,
                 "message": html,
-                "published": str(self.publish).lower(),
                 "assignment[points_possible]": f"{item.points or 0:g}",
                 **self._date_fields("assignment", item.dates),
             }
             if existing and canvas.exists(
                 f"/api/v1/courses/{self.course_id}/discussion_topics/{existing.canvas_id}"
             ):
+                visible = self._visibility(True)
+                if visible is not None:
+                    fields["published"] = str(visible).lower()
                 stored = canvas.update_discussion(self.course_id, existing.canvas_id, fields)
                 canvas_id, result.updated = existing.canvas_id, 1
             else:
+                fields["published"] = str(self.publish).lower()
                 stored = canvas.create_discussion(self.course_id, fields)
                 canvas_id, result.created = str(stored["id"]), 1
             extra = {"assignment_id": str(stored.get("assignment_id", ""))}
@@ -294,7 +314,12 @@ class Publisher:
                 "quiz[scoring_policy]": "keep_highest",
                 **self._date_fields("quiz", item.dates),
             }
+            was_live = False
             if existing and canvas.exists(f"/api/v1/courses/{self.course_id}/quizzes/{existing.canvas_id}"):
+                stored_quiz = canvas.get_json(
+                    f"/api/v1/courses/{self.course_id}/quizzes/{existing.canvas_id}"
+                )
+                was_live = bool(stored_quiz.get("published"))
                 canvas.update_quiz(self.course_id, existing.canvas_id, fields)
                 canvas_id, result.updated = existing.canvas_id, 1
             else:
@@ -302,7 +327,9 @@ class Publisher:
                 canvas_id, result.created = str(created["id"]), 1
             self.manifest.put(item.key, Entry(kind="quiz", canvas_id=canvas_id, title=title))
             self._push_questions(item, canvas_id)
-            if self.publish:
+            # was_live: the write above forced published=false to let the question
+            # set be rebuilt, so a quiz that arrived published has to go back.
+            if self.publish or was_live:
                 canvas.update_quiz(self.course_id, canvas_id, {"quiz[published]": "true"})
         return result
 
@@ -429,14 +456,20 @@ class Publisher:
 
     # -- rubrics --------------------------------------------------------
 
-    def push_rubrics(self) -> Result:
-        """Create a Canvas rubric per lab and discussion, bound to its assignment."""
+    def push_rubrics(self, keys: set[str] | None = None) -> Result:
+        """Create a Canvas rubric per lab and discussion, bound to its assignment.
+
+        `keys` limits the sweep to particular repo files, so a scoped push carries
+        the corrected rubric without touching every other assignment's.
+        """
         result = Result()
         if self.dry_run:
             return result
         canvas = self._client()
         for key, entry in sorted(self.manifest.entries.items()):
             if entry.kind not in ("assignment", "discussion") or key in self.protected:
+                continue
+            if keys is not None and key not in keys:
                 continue
             source = self.repo / key
             if not source.exists():

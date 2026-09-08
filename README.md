@@ -87,6 +87,7 @@ edutools --version                               print the version
 --no-verify            skip the verification pass that normally follows a push
 --preview <dir>        write the rendered HTML to a directory for inspection
 --update-published     also rewrite content students can already see
+--path <glob>          limit to specific repo files, repeatable
 ```
 
 ### Reading course data
@@ -118,6 +119,32 @@ edutools verify ./cs121 --course 12345            # read the content back and co
 Objects are created **unpublished** unless `--publish` is given, so a push is safe to
 run against a live course before students should see the content. `push` runs
 `verify` automatically when it finishes; pass `--no-verify` to skip that.
+
+### Pushing one correction
+
+`--path` limits a push to particular files, so a fix to one assignment does not
+re-render the course:
+
+```bash
+edutools push ./cs425 --course 48194 --path assignments/p1.md
+edutools push ./cs425 --course 48194 --path 'assignments/p*.md' --path index.md
+```
+
+It takes a repo-relative path or a glob and is repeatable, and a pattern matching
+nothing is an error rather than a silent no-op. The full pipeline still runs for
+what is selected, so dates, links, rubric and styling all come from the repository.
+Whole-course module rebuilding is skipped, since that is a structural change rather
+than a correction.
+
+Correcting something students can already see needs `--update-published` as well:
+
+```bash
+edutools push ./cs425 --course 48194 --path assignments/p1.md --update-published
+```
+
+That leaves the assignment published. `--publish` makes an object visible; its
+absence means "leave visibility as it is", not "hide it", so a correction never
+pulls a live assignment out from under the class reading it.
 
 A push also **leaves published content alone**. Rewriting a page or an assignment
 that a class is part-way through reading is worse than leaving it stale, so anything
