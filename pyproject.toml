@@ -8,14 +8,14 @@ edutools = "edutools.cli:app"
 [project]
 name = "edutools"
 version = "1.0.1"
-description = "Tools for managing educational technology and software maintenance."
+description = "Command line tools for Canvas LMS: query courses and publish course content."
 readme = "README.md"
 authors = [
     { name = "Shane Panter", email = "shanepanter@boisestate.edu" }
 ]
 requires-python = ">=3.14"
 license = { text = "MIT" }
-keywords = ["education", "canvas", "google docs", "google drive", "edtech", "software maintenance"]
+keywords = ["education", "canvas", "canvas-lms", "lms", "edtech", "grading", "publishing"]
 classifiers = [
     "Intended Audience :: Education",
     "License :: OSI Approved :: MIT License",
@@ -24,13 +24,8 @@ classifiers = [
 
 dependencies = [
 	"requests==2.32.5",
-	"google-api-python-client==2.154.0",
-	"google-auth-httplib2==0.2.0",
-	"google-auth-oauthlib==1.2.1",
-	"boto3>=1.34,<2.0",
 	"typer>=0.9.0",
-	"botocore[crt]>=1.42.39",
-	"paramiko>=3.4,<4.0",
+	"rich>=13.7,<15.0",
 	"css-inline>=0.21.2",
 ]
 
@@ -45,10 +40,6 @@ testpaths = [
 pythonpath = [
     "src"
 ]
-markers = [
-    "integration: End-to-end AWS integration tests (require live credentials, run with -m integration)",
-]
-addopts = "-m 'not integration'"
 
 [dependency-groups]
 dev = [
