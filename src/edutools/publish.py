@@ -161,6 +161,8 @@ _CONTAINER_TITLES: Final[dict[str, str]] = {
     "details": "Details",
 }
 
+_CALLOUT_MARKER: Final[str] = "<!--cs-callout:%s-->"
+
 _MAX_INCLUDE_DEPTH: Final[int] = 5
 
 
@@ -197,7 +199,10 @@ def strip_vitepress(markdown: str, source: Path, repo: Path | None = None, depth
         title = match.group("title").strip() or _CONTAINER_TITLES.get(kind, kind.title())
         body = match.group("body").strip("\n")
         quoted = "\n".join(f"> {line}".rstrip() for line in body.splitlines())
-        return f"> **{title}**\n>\n{quoted}\n"
+        # The marker is an HTML comment, which pandoc passes through untouched and
+        # decorate() turns into a class. Without it every severity renders as the
+        # same blockquote, so a "this fails the project" warning reads like an aside.
+        return f"> {_CALLOUT_MARKER % kind}**{title}**\n>\n{quoted}\n"
 
     # Innermost first, so a container nested inside another is resolved before the
     # outer one quotes it.
@@ -237,12 +242,33 @@ def _plain(html: str) -> str:
     return re.sub(r"\s+", " ", _TAG_RE.sub("", html)).strip()
 
 
+_CALLOUT_RE: Final[re.Pattern[str]] = re.compile(
+    r"<blockquote>(?P<body>.*?)</blockquote>", re.S
+)
+_MARKER_RE: Final[re.Pattern[str]] = re.compile(r"<!--cs-callout:([a-z-]+)-->")
+
+
+def classify_callouts(html: str) -> str:
+    """Turn the marker strip_vitepress left inside a blockquote into a class."""
+    def per_quote(match: re.Match[str]) -> str:
+        body = match.group("body")
+        marker = _MARKER_RE.search(body)
+        if marker is None:
+            return match.group(0)
+        kind = marker.group(1)
+        body = _MARKER_RE.sub("", body)
+        return f'<blockquote class="cs-callout cs-{kind}">{body}</blockquote>'
+
+    return _CALLOUT_RE.sub(per_quote, html)
+
+
 def decorate(html: str) -> str:
     """Wrap each h2 section in a classed <div> and mark the header line.
 
     Canvas allows class attributes, and inlining resolves them into style
     attributes at publish time, so these hooks work either way.
     """
+    html = classify_callouts(html)
     # The bold meta line: "**Week 7 · 38 points · ...**" renders as a lone <p><strong>.
     html = re.sub(
         r"\A(\s*)<p><strong>((?:Week|Finals week|January|February|March|April|May)[^<]*)</strong></p>",

@@ -12,6 +12,7 @@ from edutools.publish import (
     PublishError,
     assert_no_forbidden_tags,
     canvas_path,
+    classify_callouts,
     decorate,
     inline_css,
     internal_links,
@@ -393,13 +394,16 @@ class TestStripVitepress:
         assert ":::" not in out
         # Every body line stays inside the blockquote, blank lines included, or the
         # quote would end at the first of them and the warning would escape it.
-        assert "> **Warning**" in out
+        assert "**Warning**" in out
+        assert out.startswith("> <!--cs-callout:danger-->")
         assert "> Do not do this." in out
         assert "> Ever." in out
 
     def test_a_container_title_overrides_the_default(self, tmp_path: Path):
         source = self._write(tmp_path, "a.md", "::: tip Read this first\n\nBody.\n\n:::\n")
-        assert "> **Read this first**" in strip_vitepress(source.read_text(), source, tmp_path)
+        out = strip_vitepress(source.read_text(), source, tmp_path)
+        assert "**Read this first**" in out
+        assert "<!--cs-callout:tip-->" in out
 
     def test_vue_components_are_dropped(self, tmp_path: Path):
         source = self._write(
@@ -565,3 +569,35 @@ class TestUnlockField:
 
         when = dt.datetime(2026, 8, 31, tzinfo=dt.timezone.utc)
         assert self._fields(tmp_path, when)["assignment[unlock_at]"].startswith("2026-08-31")
+
+
+class TestCalloutClasses:
+    """Every ::: container renders as a blockquote, so the severity has to survive
+    as a class or a "this fails your project" warning looks like an aside."""
+
+    def _html(self, tmp_path: Path, markdown: str) -> str:
+        source = tmp_path / "a.md"
+        source.write_text(markdown, encoding="utf-8")
+        return decorate(render_markdown(source, tmp_path)[1])
+
+    def test_danger_and_tip_get_different_classes(self, tmp_path: Path):
+        html = self._html(
+            tmp_path,
+            "# T\n\n::: danger\n\nLoud.\n\n:::\n\n::: tip\n\nQuiet.\n\n:::\n",
+        )
+        assert 'class="cs-callout cs-danger"' in html
+        assert 'class="cs-callout cs-tip"' in html
+
+    def test_the_marker_is_removed(self, tmp_path: Path):
+        html = self._html(tmp_path, "# T\n\n::: warning\n\nBody.\n\n:::\n")
+        assert "cs-callout:" not in html
+        assert "&lt;!--" not in html
+
+    def test_the_body_survives_the_rewrite(self, tmp_path: Path):
+        html = self._html(tmp_path, "# T\n\n::: danger\n\nDo not.\n\nEver.\n\n:::\n")
+        assert "Do not." in html
+        assert "Ever." in html
+
+    def test_a_plain_blockquote_is_left_alone(self):
+        html = "<blockquote><p>Just a quote.</p></blockquote>"
+        assert classify_callouts(html) == html
