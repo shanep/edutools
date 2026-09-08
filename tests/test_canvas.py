@@ -465,3 +465,67 @@ class TestModulePublishing:
         with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
             CanvasLMS().create_module("42", "Week 1", 1, True)
         assert mock_request.call_args.kwargs["data"]["module[published]"] == "true"
+
+
+class TestAssignmentGroups:
+    """Canvas takes bare parameters on this endpoint, not a bracket namespace."""
+
+    @patch("edutools.canvas.requests.request")
+    def test_create_posts_bare_fields(self, mock_request):
+        mock_request.return_value = _mock_response(json_data={"id": 9})
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            result = CanvasLMS().create_assignment_group(
+                "123", {"name": "Projects", "position": "3", "group_weight": "10"}
+            )
+
+        assert result == {"id": 9}
+        method, url = mock_request.call_args[0]
+        assert method == "POST"
+        assert url == "https://c.test/api/v1/courses/123/assignment_groups"
+        assert mock_request.call_args.kwargs["data"]["group_weight"] == "10"
+
+    @patch("edutools.canvas.requests.request")
+    def test_update_puts_to_the_group(self, mock_request):
+        mock_request.return_value = _mock_response(json_data={"id": 9})
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            CanvasLMS().update_assignment_group("123", "9", {"group_weight": "40"})
+
+        method, url = mock_request.call_args[0]
+        assert method == "PUT"
+        assert url == "https://c.test/api/v1/courses/123/assignment_groups/9"
+
+    @patch("edutools.canvas.requests.request")
+    def test_weighting_is_a_course_setting(self, mock_request):
+        """Group weights do nothing until the course itself is set to weight by group."""
+        mock_request.return_value = _mock_response(json_data={"id": 123})
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            CanvasLMS().set_group_weighting("123", True)
+
+        method, url = mock_request.call_args[0]
+        assert (method, url) == ("PUT", "https://c.test/api/v1/courses/123")
+        assert mock_request.call_args.kwargs["data"] == {
+            "course[apply_assignment_group_weights]": "true"
+        }
+
+
+class TestAsNumber:
+    """Canvas is not consistent about whether a weight arrives as a number."""
+
+    def test_numbers_pass_through(self):
+        from edutools.canvas import as_number
+
+        assert as_number(40) == 40.0
+        assert as_number(40.5) == 40.5
+
+    def test_numeric_strings_are_read(self):
+        from edutools.canvas import as_number
+
+        assert as_number("40") == 40.0
+
+    def test_anything_else_is_zero(self):
+        from edutools.canvas import as_number
+
+        assert as_number(None) == 0.0
+        assert as_number("") == 0.0
+        assert as_number(True) == 0.0
+        assert as_number({"a": 1}) == 0.0

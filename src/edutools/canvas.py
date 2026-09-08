@@ -41,6 +41,24 @@ def kind_path(kind: str) -> str:
         ) from None
 
 
+def as_number(value: object) -> float:
+    """Coerce a value out of a Canvas payload to a number, 0 if it is not one.
+
+    Canvas JSON is typed `object` on the way in, and it is not consistent about
+    whether a weight or a position comes back as a number or as a string.
+    """
+    if value is None or isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 class CanvasLMS():
     def __init__(self):
         token = os.getenv("CANVAS_TOKEN")
@@ -235,6 +253,36 @@ class CanvasLMS():
 
     def update_syllabus(self, course_id: str, body: str) -> dict[str, object]:
         return self._json("PUT", f"/api/v1/courses/{course_id}", data={"course[syllabus_body]": body})
+
+    # -- assignment groups ----------------------------------------------
+
+    def list_assignment_groups(self, course_id: str) -> list[dict[str, object]]:
+        return self.list_json(f"/api/v1/courses/{course_id}/assignment_groups")
+
+    def create_assignment_group(self, course_id: str, fields: dict[str, str]) -> dict[str, object]:
+        # This endpoint takes bare parameters (name, position, group_weight),
+        # not the assignment_group[...] bracket namespace the docs suggest.
+        return self._json("POST", f"/api/v1/courses/{course_id}/assignment_groups", data=fields)
+
+    def update_assignment_group(
+        self, course_id: str, group_id: str, fields: dict[str, str]
+    ) -> dict[str, object]:
+        return self._json(
+            "PUT", f"/api/v1/courses/{course_id}/assignment_groups/{group_id}", data=fields
+        )
+
+    def set_group_weighting(self, course_id: str, enabled: bool) -> dict[str, object]:
+        """Weight the final grade by assignment group, or stop doing so.
+
+        Canvas stores a group_weight on every group either way and ignores all of
+        them until this course-level flag is on, so a course that sets weights and
+        not this reads as if the weights never took.
+        """
+        return self._json(
+            "PUT",
+            f"/api/v1/courses/{course_id}",
+            data={"course[apply_assignment_group_weights]": str(enabled).lower()},
+        )
 
     # -- pages ----------------------------------------------------------
 

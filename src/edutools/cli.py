@@ -294,6 +294,58 @@ def list_assignments(
     console.print(f"\n[dim]Total: {len(assignments)} assignments[/dim]")
 
 
+@app.command("groups")
+def list_assignment_groups(
+    course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),
+    as_json: bool = typer.Option(False, "--json", help="Emit raw JSON instead of a table"),
+):
+    """List a course's assignment groups, their weights, and what is in them."""
+    init()
+    from edutools.canvas import CanvasLMS, as_number
+
+    if course_id is None:
+        course_id = _select_course()
+
+    with console.status(f"[bold green]Fetching assignment groups for course {course_id}...", spinner="dots"):
+        canvas = CanvasLMS()
+        groups = canvas.list_assignment_groups(course_id)
+        course = canvas.get_course(course_id)
+
+    if as_json:
+        _emit_json(groups)
+        return
+
+    if not groups:
+        console.print("[yellow]No assignment groups found.[/yellow]")
+        return
+
+    weighted = bool(course.get("apply_assignment_group_weights"))
+    table = Table(title=f"⚖️  Assignment groups for course {course_id}", show_header=True, header_style="bold magenta")
+    table.add_column("ID", style="cyan", justify="right")
+    table.add_column("Group", style="green")
+    table.add_column("Weight", justify="right")
+    table.add_column("Items", justify="right")
+
+    total = 0.0
+    for group in sorted(groups, key=lambda g: as_number(g.get("position"))):
+        weight = as_number(group.get("group_weight"))
+        total += weight
+        assignments = group.get("assignments")
+        count = len(assignments) if isinstance(assignments, list) else 0
+        table.add_row(
+            str(group["id"]), str(group.get("name", "")),
+            f"{weight:g}%" if weighted else "[dim]-[/dim]",
+            str(count) if count else "[dim]0[/dim]",
+        )
+
+    console.print(table)
+    if weighted:
+        console.print(f"[dim]Weights sum to {total:g}%[/dim]")
+    else:
+        # Weights that are stored but not applied look like they took, and do nothing.
+        console.print("[yellow]![/yellow] this course does not weight the final grade by group")
+
+
 @app.command("students")
 def list_students(
     course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),
@@ -424,7 +476,7 @@ def push_course(
     dry_run: bool = typer.Option(False, "--dry-run", help="Render everything, write nothing"),
     publish: bool = typer.Option(False, "--publish", help="Make objects student-visible (default: unpublished)"),
     update_published: bool = typer.Option(False, "--update-published", help="Also rewrite content students can already see (default: skip it)"),
-    only: Optional[list[str]] = typer.Option(None, "--only", help="Limit to: pages, assignments, discussions, quizzes, files, modules, syllabus, rubrics"),
+    only: Optional[list[str]] = typer.Option(None, "--only", help="Limit to: pages, assignments, discussions, quizzes, files, modules, syllabus, rubrics, groups"),
     path: Optional[list[str]] = typer.Option(None, "--path", help="Limit to specific repo files, exact or glob, repeatable"),
     verify: bool = typer.Option(True, "--verify/--no-verify", help="Read everything back from Canvas afterwards"),
     preview: Optional[str] = typer.Option(None, "--preview", help="Write the rendered HTML to a directory and open nothing else"),
@@ -499,6 +551,18 @@ def push_course(
 
     totals = {"created": 0, "updated": 0, "skipped": 0}
     problems: list[str] = []
+
+    # Groups first: every assignment, quiz and graded discussion below is filed
+    # into one, so the ids have to exist before the objects do. A --path push
+    # reaches the same sync lazily, through the item that needs it.
+    if not wanted or "groups" in wanted:
+        try:
+            outcome = publisher.sync_groups()
+            totals["created"] += outcome.created
+            totals["updated"] += outcome.updated
+            totals["skipped"] += outcome.skipped
+        except (PublishError, RuntimeError) as error:
+            problems.append(f"assignment groups: {error}")
 
     label = "Rendering" if dry_run else "Publishing"
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),

@@ -10,7 +10,9 @@ import pytest
 
 from edutools.dates import (
     DEFAULT_LAYOUT,
+    DateConfig,
     DateConfigError,
+    Group,
     ItemDates,
     Layout,
     Term,
@@ -18,6 +20,7 @@ from edutools.dates import (
     compute,
     cross_check_syllabus,
     load_config,
+    load_groups,
     load_layout,
     parse_header,
     resolve,
@@ -368,3 +371,97 @@ class TestOptionalUnlock:
     def test_shifting_keeps_the_absent_unlock(self, tmp_path: Path):
         item = compute(tmp_path, self._config(tmp_path, ""))[0]
         assert item.shifted(3).unlock_at is None
+
+
+class TestAssignmentGroups:
+    """[[group]] declares the Canvas assignment groups and their weights."""
+
+    def _raw(self, toml: str) -> dict[str, object]:
+        import tomllib
+
+        return tomllib.loads(toml)
+
+    def test_no_group_section_declares_nothing(self):
+        assert load_groups(self._raw("[term]\n")) == ()
+
+    def test_a_group_keeps_its_name_weight_and_kinds(self):
+        groups = load_groups(
+            self._raw('[[group]]\nname = "Projects"\nweight = 10\nkinds = ["project"]\n')
+        )
+        assert groups == (Group(name="Projects", weight=10.0, kinds=("project",)),)
+
+    def test_declaration_order_is_kept(self):
+        groups = load_groups(
+            self._raw('[[group]]\nname = "Exams"\n\n[[group]]\nname = "Projects"\n')
+        )
+        assert [group.name for group in groups] == ["Exams", "Projects"]
+
+    def test_a_group_needs_neither_weight_nor_kinds(self):
+        """An exam group whose quizzes are built by hand still has to exist."""
+        groups = load_groups(self._raw('[[group]]\nname = "Exams"\n'))
+        assert groups[0].weight is None and groups[0].kinds == ()
+
+    def test_group_for_finds_the_group_of_a_kind(self):
+        config = DateConfig(
+            term=_term(), policies={}, overrides={},
+            groups=load_groups(
+                self._raw('[[group]]\nname = "In Class"\nkinds = ["lab", "discussion"]\n')
+            ),
+        )
+        found = config.group_for("lab")
+        assert found is not None and found.name == "In Class"
+        assert config.group_for("project") is None
+
+    def test_total_weight_adds_the_declared_weights(self):
+        config = DateConfig(
+            term=_term(), policies={}, overrides={},
+            groups=load_groups(
+                self._raw(
+                    '[[group]]\nname = "Exams"\nweight = 50\n\n'
+                    '[[group]]\nname = "Projects"\nweight = 10\n\n'
+                    '[[group]]\nname = "Ungraded"\n'
+                )
+            ),
+        )
+        assert config.total_weight == 60.0
+
+    def test_two_groups_cannot_claim_the_same_kind(self):
+        with pytest.raises(DateConfigError, match="claimed by both"):
+            load_groups(
+                self._raw(
+                    '[[group]]\nname = "A"\nkinds = ["lab"]\n\n'
+                    '[[group]]\nname = "B"\nkinds = ["lab"]\n'
+                )
+            )
+
+    def test_an_unknown_kind_is_rejected(self):
+        with pytest.raises(DateConfigError, match="not a known item kind"):
+            load_groups(self._raw('[[group]]\nname = "A"\nkinds = ["homework"]\n'))
+
+    def test_a_duplicate_group_name_is_rejected(self):
+        with pytest.raises(DateConfigError, match="declared twice"):
+            load_groups(self._raw('[[group]]\nname = "A"\n\n[[group]]\nname = "A"\n'))
+
+    def test_a_nameless_group_is_rejected(self):
+        with pytest.raises(DateConfigError, match="non-empty string"):
+            load_groups(self._raw('[[group]]\nweight = 10\n'))
+
+    def test_a_non_numeric_weight_is_rejected(self):
+        with pytest.raises(DateConfigError, match="weight must be a number"):
+            load_groups(self._raw('[[group]]\nname = "A"\nweight = "lots"\n'))
+
+    def test_groups_load_from_canvas_toml(self, tmp_path: Path):
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\n\n"
+            '[term.policy.lab]\ndue = "wed 23:59"\n\n'
+            '[[group]]\nname = "In Class"\nweight = 40\nkinds = ["lab"]\n',
+            encoding="utf-8",
+        )
+        config = load_config(tmp_path)
+        found = config.group_for("lab")
+        assert found is not None and found.name == "In Class"
+        assert found.weight == 40.0

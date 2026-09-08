@@ -638,3 +638,176 @@ class TestVisibilityOnUpdate:
 
     def test_an_update_with_publish_still_publishes(self, tmp_path: Path):
         assert self._publisher(tmp_path, True)._visibility(exists=True) is True
+
+
+class TestAssignmentGroupSync:
+    """[[group]] has to reach Canvas before anything is filed into a group."""
+
+    TOML = (
+        "[term]\n"
+        'timezone = "America/Boise"\n'
+        "first_monday = 2026-08-24\nweeks = 15\n"
+        "last_day_of_instruction = 2026-12-11\n"
+        "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+        '[term.policy.project]\ndue = "tue 23:59"\n\n'
+        '[term.policy.lab]\ndue = "wed 23:59"\n\n'
+        '[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n'
+        '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n'
+        'lab = "activities/a[0-9]*.md"\n'
+    )
+    GROUPS = (
+        '\n[[group]]\nname = "Exams"\nweight = 50\n\n'
+        '[[group]]\nname = "In Class"\nweight = 40\nkinds = ["lab"]\n\n'
+        '[[group]]\nname = "Projects"\nweight = 10\nkinds = ["project"]\n'
+    )
+
+    def _publisher(self, tmp_path: Path, canvas, groups: str = "", **kwargs):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "assignments").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "activities").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(self.TOML + groups, encoding="utf-8")
+        return Publisher(tmp_path, "42", canvas, **kwargs)
+
+    def _canvas(self, existing: list[dict[str, object]] | None = None):
+        canvas = MagicMock()
+        canvas.list_assignment_groups.return_value = existing or []
+        canvas.create_assignment_group.return_value = {"id": "7"}
+        return canvas
+
+    def test_a_repo_with_no_groups_touches_nothing(self, tmp_path: Path):
+        canvas = self._canvas()
+        publisher = self._publisher(tmp_path, canvas)
+        result = publisher.sync_groups()
+        canvas.list_assignment_groups.assert_not_called()
+        canvas.set_group_weighting.assert_not_called()
+        assert (result.created, result.updated, result.skipped) == (0, 0, 0)
+
+    def test_missing_groups_are_created_in_declaration_order(self, tmp_path: Path):
+        canvas = self._canvas()
+        result = self._publisher(tmp_path, canvas, self.GROUPS).sync_groups()
+        sent = [call.args[1] for call in canvas.create_assignment_group.call_args_list]
+        assert [f["name"] for f in sent] == ["Exams", "In Class", "Projects"]
+        assert [f["position"] for f in sent] == ["1", "2", "3"]
+        assert [f["group_weight"] for f in sent] == ["50", "40", "10"]
+        assert result.created == 3
+
+    def test_weighting_is_turned_on_when_weights_are_declared(self, tmp_path: Path):
+        canvas = self._canvas()
+        self._publisher(tmp_path, canvas, self.GROUPS).sync_groups()
+        canvas.set_group_weighting.assert_called_once_with("42", True)
+
+    def test_a_group_with_no_weight_leaves_the_course_setting_alone(self, tmp_path: Path):
+        canvas = self._canvas()
+        groups = '\n[[group]]\nname = "Projects"\nkinds = ["project"]\n'
+        self._publisher(tmp_path, canvas, groups).sync_groups()
+        assert "group_weight" not in canvas.create_assignment_group.call_args.args[1]
+        canvas.set_group_weighting.assert_not_called()
+
+    def test_an_existing_group_that_matches_is_left_alone(self, tmp_path: Path):
+        canvas = self._canvas(
+            [
+                {"id": 1, "name": "Exams", "group_weight": 50, "position": 1},
+                {"id": 2, "name": "In Class", "group_weight": 40, "position": 2},
+                {"id": 3, "name": "Projects", "group_weight": 10, "position": 3},
+            ]
+        )
+        result = self._publisher(tmp_path, canvas, self.GROUPS).sync_groups()
+        canvas.create_assignment_group.assert_not_called()
+        canvas.update_assignment_group.assert_not_called()
+        assert result.skipped == 3
+
+    def test_a_changed_weight_is_pushed(self, tmp_path: Path):
+        canvas = self._canvas(
+            [
+                {"id": 1, "name": "Exams", "group_weight": 50, "position": 1},
+                {"id": 2, "name": "In Class", "group_weight": 25, "position": 2},
+                {"id": 3, "name": "Projects", "group_weight": 10, "position": 3},
+            ]
+        )
+        result = self._publisher(tmp_path, canvas, self.GROUPS).sync_groups()
+        assert result.updated == 1
+        assert canvas.update_assignment_group.call_args.args[1] == "2"
+        assert canvas.update_assignment_group.call_args.args[2]["group_weight"] == "40"
+
+    def test_syncing_twice_writes_once(self, tmp_path: Path):
+        canvas = self._canvas()
+        publisher = self._publisher(tmp_path, canvas, self.GROUPS)
+        publisher.sync_groups()
+        publisher.sync_groups()
+        assert canvas.create_assignment_group.call_count == 3
+
+    def test_a_dry_run_writes_nothing(self, tmp_path: Path):
+        canvas = self._canvas()
+        publisher = self._publisher(
+            tmp_path, canvas, self.GROUPS, dry_run=True, report=lambda _: None
+        )
+        result = publisher.sync_groups()
+        canvas.list_assignment_groups.assert_not_called()
+        assert result.skipped == 3
+
+
+class TestAssignmentGroupPlacement:
+    """Every gradable object has to name the group it belongs in."""
+
+    def _publisher(self, tmp_path: Path, canvas):
+        publisher = TestAssignmentGroupSync()._publisher(
+            tmp_path, canvas, TestAssignmentGroupSync.GROUPS
+        )
+        return publisher
+
+    def _plan(self, tmp_path: Path, name: str, kind: str, body: str):
+        from edutools.publisher import Plan
+
+        source = tmp_path / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(body, encoding="utf-8")
+        return Plan(key=name, kind=kind, title="", source=source, points=20, item_kind=None)
+
+    def test_an_assignment_is_filed_into_its_kinds_group(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.list_assignment_groups.return_value = [
+            {"id": 5, "name": "Projects", "group_weight": 10, "position": 3}
+        ]
+        canvas.create_assignment_group.return_value = {"id": 9}
+        canvas.create_assignment.return_value = {"id": "77"}
+        publisher = self._publisher(tmp_path, canvas)
+
+        item = self._plan(
+            tmp_path, "assignments/p0.md", "assignment", "# P0\n\n**Week 2 · 50 points**\n"
+        )
+        item.item_kind = "project"
+        publisher.create_or_update(item)
+
+        fields = canvas.create_assignment.call_args.args[1]
+        assert fields["assignment[assignment_group_id]"] == "5"
+
+    def test_a_kind_in_no_group_sends_no_group_field(self, tmp_path: Path):
+        canvas = MagicMock()
+        canvas.list_assignment_groups.return_value = []
+        canvas.create_assignment_group.return_value = {"id": 9}
+        canvas.create_assignment.return_value = {"id": "77"}
+        publisher = self._publisher(tmp_path, canvas)
+
+        item = self._plan(
+            tmp_path, "assignments/p0.md", "assignment", "# P0\n\n**Week 2 · 50 points**\n"
+        )
+        item.item_kind = "exam"
+        publisher.create_or_update(item)
+
+        fields = canvas.create_assignment.call_args.args[1]
+        assert "assignment[assignment_group_id]" not in fields
+
+    def test_planning_records_the_repo_kind(self, tmp_path: Path):
+        canvas = MagicMock()
+        publisher = self._publisher(tmp_path, canvas)
+        (tmp_path / "assignments" / "p0.md").write_text(
+            "# P0\n\n**Week 2 · 50 points**\n", encoding="utf-8"
+        )
+        (tmp_path / "activities" / "a1.md").write_text(
+            "# A1\n\n**Week 1 · 20 points**\n", encoding="utf-8"
+        )
+        kinds = {plan.key: plan.item_kind for plan in publisher.plan()}
+        assert kinds["assignments/p0.md"] == "project"
+        assert kinds["activities/a1.md"] == "lab"
