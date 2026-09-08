@@ -308,7 +308,7 @@ def list_assignment_groups(
 
     with console.status(f"[bold green]Fetching assignment groups for course {course_id}...", spinner="dots"):
         canvas = CanvasLMS()
-        groups = canvas.list_assignment_groups(course_id)
+        groups = canvas.list_assignment_groups(course_id, with_assignments=True)
         course = canvas.get_course(course_id)
 
     if as_json:

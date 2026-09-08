@@ -485,6 +485,23 @@ class TestAssignmentGroups:
         assert mock_request.call_args.kwargs["data"]["group_weight"] == "10"
 
     @patch("edutools.canvas.requests.request")
+    def test_listing_can_ask_for_the_assignments_in_each_group(self, mock_request):
+        """Counting what is in a group reads zero unless the include is sent."""
+        mock_request.return_value = _mock_response(json_data=[{"id": 1, "assignments": []}])
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            CanvasLMS().list_assignment_groups("123", with_assignments=True)
+
+        assert mock_request.call_args.kwargs["params"]["include[]"] == "assignments"
+
+    @patch("edutools.canvas.requests.request")
+    def test_listing_without_the_include_sends_no_params(self, mock_request):
+        mock_request.return_value = _mock_response(json_data=[{"id": 1}])
+        with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
+            CanvasLMS().list_assignment_groups("123")
+
+        assert "include[]" not in mock_request.call_args.kwargs["params"]
+
+    @patch("edutools.canvas.requests.request")
     def test_update_puts_to_the_group(self, mock_request):
         mock_request.return_value = _mock_response(json_data={"id": 9})
         with patch.dict(os.environ, {"CANVAS_TOKEN": "tok", "CANVAS_ENDPOINT": "https://c.test"}):
