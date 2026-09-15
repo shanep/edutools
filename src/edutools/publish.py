@@ -641,6 +641,61 @@ class Entry:
         }
 
 
+NativeKind = Literal["page", "assignment", "discussion", "quiz", "file"]
+
+_NATIVE_KINDS: Final[tuple[NativeKind, ...]] = ("page", "assignment", "discussion", "quiz", "file")
+
+
+@dataclass(frozen=True)
+class NativeItem:
+    """A module item that exists only in Canvas, named in a [[module]] table.
+
+    A hand built exam quiz or a file uploaded through the Canvas UI has no repo
+    file and so no manifest entry, but it still belongs in a module. Listing it
+    under ``canvas`` keeps it there across the rebuild every push does::
+
+        [[module]]
+        title  = "Week 8: Midterm Exam"
+        page   = "notes/midterm-review.md"
+        canvas = [{ quiz = 394147 }, { quiz = 393662, title = "Midterm" }]
+
+    A page is named by its url slug; everything else by its numeric id.
+    """
+
+    kind: NativeKind
+    ident: str
+    title: str = ""
+
+
+def parse_native_items(module: dict[str, object]) -> list[NativeItem]:
+    """The ``canvas`` list of one [[module]] table, in the order written.
+
+    Each entry is a one key table naming the kind, with an optional ``title``.
+    Anything else is a mistake in canvas.toml and is reported as one rather
+    than silently building a module with a hole in it.
+    """
+    raw = module.get("canvas", [])
+    if not isinstance(raw, list):
+        raise ValueError("'canvas' must be a list of tables such as { quiz = 123 }")
+    items: list[NativeItem] = []
+    for index, entry in enumerate(raw, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"canvas item {index}: expected a table such as {{ quiz = 123 }}")
+        kinds: list[NativeKind] = [k for k in _NATIVE_KINDS if k in entry]
+        unknown = [k for k in entry if k not in _NATIVE_KINDS and k != "title"]
+        if len(kinds) != 1 or unknown:
+            raise ValueError(
+                f"canvas item {index}: name exactly one of {', '.join(_NATIVE_KINDS)}, "
+                f"plus an optional title"
+            )
+        kind = kinds[0]
+        ident = str(entry[kind]).strip()
+        if not ident:
+            raise ValueError(f"canvas item {index}: {kind} needs an id")
+        items.append(NativeItem(kind=kind, ident=ident, title=str(entry.get("title", ""))))
+    return items
+
+
 class Manifest:
     """Maps repo paths to Canvas objects, checkpointed after every write.
 

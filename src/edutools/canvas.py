@@ -334,6 +334,9 @@ class CanvasLMS():
 
     # -- discussions ----------------------------------------------------
 
+    def list_discussions(self, course_id: str) -> list[dict[str, object]]:
+        return self.list_json(f"/api/v1/courses/{course_id}/discussion_topics")
+
     def get_discussion(self, course_id: str, topic_id: str) -> dict[str, object]:
         return self.get_json(f"/api/v1/courses/{course_id}/discussion_topics/{topic_id}")
 
@@ -344,6 +347,9 @@ class CanvasLMS():
         return self._json("PUT", f"/api/v1/courses/{course_id}/discussion_topics/{topic_id}", data=fields)
 
     # -- quizzes --------------------------------------------------------
+
+    def list_quizzes(self, course_id: str) -> list[dict[str, object]]:
+        return self.list_json(f"/api/v1/courses/{course_id}/quizzes")
 
     def get_quiz(self, course_id: str, quiz_id: str) -> dict[str, object]:
         return self.get_json(f"/api/v1/courses/{course_id}/quizzes/{quiz_id}")

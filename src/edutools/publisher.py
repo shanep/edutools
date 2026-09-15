@@ -23,6 +23,7 @@ from edutools.publish import (
     decorate,
     inline_css,
     mark_table_rows,
+    parse_native_items,
     parse_quiz,
     parse_rubric,
     path_is_draft,
@@ -43,6 +44,15 @@ KIND_TO_CANVAS: dict[str, str] = {
     "quiz": "quiz",
     "discussion": "discussion",
     "exam": "page",
+}
+
+# What the module items API calls each kind of object.
+_MODULE_ITEM_TYPES: dict[str, str] = {
+    "page": "Page",
+    "assignment": "Assignment",
+    "discussion": "Discussion",
+    "quiz": "Quiz",
+    "file": "File",
 }
 
 
@@ -548,28 +558,40 @@ class Publisher:
             for current in canvas.list_module_items(self.course_id, module_id):
                 canvas.delete_module_item(self.course_id, module_id, str(current["id"]))
 
+            # Repo items first, in the order written, then the Canvas-native
+            # ones named under `canvas`: a hand built quiz or an uploaded file
+            # that has no repo file but still belongs in the module.
             keys = [str(module.get("page", ""))] + [str(k) for k in module.get("items", [])]
             listed = [k for k in keys if k and not self.is_draft_key(k)]
-            for index, key in enumerate(listed, start=1):
+            placed: list[tuple[str, str, str]] = []
+            for key in listed:
                 entry = self.manifest.get(key)
                 if entry is None:
                     result.errors.append(f"module {name!r}: {key} has not been published")
                     continue
-                canvas_type = {
-                    "page": "Page", "assignment": "Assignment",
-                    "discussion": "Discussion", "quiz": "Quiz",
-                }.get(entry.kind)
-                if canvas_type is None:
-                    continue
+                if entry.kind in ("page", "assignment", "discussion", "quiz", "file"):
+                    ident = entry.page_url if entry.kind == "page" else entry.canvas_id
+                    placed.append((entry.kind, ident, entry.title))
+            try:
+                native = parse_native_items(module)
+            except ValueError as error:
+                result.errors.append(f"module {name!r}: {error}")
+                native = []
+            placed.extend((item.kind, item.ident, item.title) for item in native)
+
+            for index, (kind, ident, title) in enumerate(placed, start=1):
                 fields = {
-                    "module_item[title]": entry.title,
-                    "module_item[type]": canvas_type,
+                    "module_item[type]": _MODULE_ITEM_TYPES[kind],
                     "module_item[position]": str(index),
                 }
-                if canvas_type == "Page":
-                    fields["module_item[page_url]"] = entry.page_url
+                # Canvas takes the content's own title when none is sent, which
+                # is what a native item wants; a repo item sends the rendered one.
+                if title:
+                    fields["module_item[title]"] = title
+                if kind == "page":
+                    fields["module_item[page_url]"] = ident
                 else:
-                    fields["module_item[content_id]"] = entry.canvas_id
+                    fields["module_item[content_id]"] = ident
                 canvas.create_module_item(self.course_id, module_id, fields)
 
             if self.publish:

@@ -798,6 +798,99 @@ def verify_course(
     raise typer.Exit(1)
 
 
+@app.command("audit")
+def audit_course(
+    repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),
+    course_id: str = typer.Option(..., "--course", help="Canvas course ID"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the differences as JSON"),
+):
+    """Compare the manifest with what the course actually contains, both ways.
+
+    verify proves that every tracked object is still there and intact. This is
+    the other question: what is in Canvas that the repo did not put there, and
+    what does the manifest still track that Canvas no longer has. Exits non-zero
+    only for the second kind, because a hand-built exam quiz is expected and a
+    manifest pointing at nothing is not.
+    """
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from edutools.audit import (
+        audit_modules,
+        audit_objects,
+        declared_modules,
+        live_assignments,
+        live_discussions,
+        live_files,
+        live_modules,
+        live_pages,
+        live_quizzes,
+        summarise,
+    )
+    from edutools.canvas import CanvasLMS
+    from edutools.publisher import Publisher
+
+    init()
+    repo_path = Path(repo).expanduser()
+    canvas = CanvasLMS()
+    publisher = Publisher(repo_path, course_id, canvas)
+    manifest = publisher.manifest
+    drafts = {key for key in manifest.entries if publisher.is_draft_key(key)}
+
+    with (repo_path / "canvas.toml").open("rb") as handle:
+        declared = declared_modules(tomllib.load(handle))
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  console=console, transient=True) as progress:
+        task = progress.add_task("Reading pages")
+        live = live_pages(canvas.list_pages(course_id))
+        progress.update(task, description="Reading assignments")
+        live += live_assignments(canvas.get_assignments(course_id))
+        progress.update(task, description="Reading discussions")
+        live += live_discussions(canvas.list_discussions(course_id))
+        progress.update(task, description="Reading quizzes")
+        live += live_quizzes(canvas.list_quizzes(course_id))
+        progress.update(task, description="Reading files")
+        live += live_files(canvas.list_files(course_id))
+        progress.update(task, description="Reading modules")
+        stored_modules = canvas.list_modules(course_id)
+        items = {
+            str(m.get("id", "")): canvas.list_module_items(course_id, str(m.get("id", "")))
+            for m in stored_modules
+        }
+        modules = live_modules(stored_modules, items)
+
+    differences = audit_objects(manifest, live, drafts) + audit_modules(declared, modules, items, manifest)
+    stale = [d for d in differences if d.side == "stale"]
+
+    if as_json:
+        _emit_json([asdict(d) for d in differences])
+        raise typer.Exit(1 if stale else 0)
+
+    if not differences:
+        console.print(
+            f"\n[green]✓ the manifest and course {course_id} agree: "
+            f"{len(manifest.entries)} tracked objects, nothing untracked[/green]"
+        )
+        return
+
+    table = Table(title=f"Manifest vs course {course_id}", show_header=True, header_style="bold")
+    table.add_column("Side", style="yellow")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Title", no_wrap=False)
+    table.add_column("Id", style="dim")
+    table.add_column("Repo key", style="dim", no_wrap=False)
+    table.add_column("Detail", no_wrap=False)
+    for d in differences:
+        style = "red" if d.side == "stale" else ""
+        table.add_row(d.side, d.kind, d.title, d.ident, d.key, d.detail, style=style)
+    console.print(table)
+    console.print(f"\n{len(differences)} difference(s): {summarise(differences)}")
+    if stale:
+        console.print("[red]stale entries: the manifest tracks objects Canvas no longer has[/red]")
+        raise typer.Exit(1)
+
+
 @app.command("dates")
 def course_dates(
     repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),

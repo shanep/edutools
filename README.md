@@ -60,6 +60,7 @@ edutools submissions <course_id> <assignment_id> [--json]
 edutools ungraded <course_id> [--json]           list submissions still needing a grade
 edutools push <course_repo> --course <id>        publish a course repo into Canvas
 edutools verify <course_repo> --course <id>      read published content back and prove it landed
+edutools audit <course_repo> --course <id>       compare the manifest with the live course, both ways
 edutools dates <course_repo> [--show] [--shift]  compute due dates from canvas.toml
 
 edutools create <kind> --course <id> ...         create one page/assignment/discussion/quiz/module
@@ -120,6 +121,51 @@ edutools verify ./cs121 --course 12345            # read the content back and co
 Objects are created **unpublished** unless `--publish` is given, so a push is safe to
 run against a live course before students should see the content. `push` runs
 `verify` automatically when it finishes; pass `--no-verify` to skip that.
+
+`verify` walks the manifest and proves each tracked object is still in Canvas and
+intact. `audit` asks the other question too: what does Canvas hold that no repo
+file produced, and what does the manifest still track that Canvas no longer has.
+
+```bash
+edutools audit ./cs121 --course 12345             # stale and untracked, as a table
+edutools audit ./cs121 --course 12345 --json      # the same, for scripts
+```
+
+Untracked objects are normal (a hand built exam quiz, a file uploaded in the UI)
+and are only reported. A stale manifest entry exits non-zero, because the next push
+would try to update something that is gone; drop the entry from
+`.canvas/manifest-<id>.json` to have the push recreate it, or delete the repo file
+if the removal was deliberate. The audit also lists any item sitting in a
+repo-managed module that neither the manifest nor the module's `canvas` list
+knows about, since the next push rebuilds that module without it.
+
+### Modules
+
+Each `[[module]]` table in `canvas.toml` becomes a Canvas module, in the order
+written. `page` is the overview and `items` are the repo files it holds; both are
+paths relative to `canvas.toml` and must have been published. A push deletes every
+item in the module and rebuilds it from this list, so the repo is the source of
+truth for what a module contains.
+
+Some things belong in a module but have no repo file: an exam quiz built in the
+Canvas UI, a file uploaded by hand. Name them under `canvas` and the rebuild keeps
+them, after the repo items and in the order written:
+
+```toml
+[[module]]
+title  = "Week 8: Midterm Exam"
+page   = "notes/midterm-review.md"
+canvas = [
+    { quiz = 394147 },
+    { quiz = 393662, title = "Midterm Exam" },
+]
+```
+
+Each entry names exactly one of `page` (by url slug), `assignment`, `discussion`,
+`quiz` or `file` (by numeric id), plus an optional `title`; without one Canvas shows
+the object's own name. Ids come from `edutools assignments`, `edutools audit`, or the
+address bar. A malformed entry is reported as an error for that module rather than
+built around.
 
 ### Pushing one correction
 

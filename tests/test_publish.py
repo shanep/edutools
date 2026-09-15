@@ -1009,3 +1009,57 @@ class TestDraftsLeaveTheirModule:
         publisher.manifest.drop("assignments/p0.md")
         errors = publisher.push_modules().errors
         assert len(errors) == 1 and "assignments/p0.md" in errors[0]
+
+
+class TestNativeModuleItems:
+    """A [[module]] names Canvas-native objects under `canvas`; the rebuild keeps them."""
+
+    def _publisher(self, tmp_path: Path, canvas_line: str):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "review.md").write_text("# Midterm Review\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["review.md"]\nfiles = []\n\n'
+            "[[module]]\n"
+            'title = "Week 8"\n'
+            'page = "review.md"\n'
+            f"{canvas_line}\n",
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.list_modules.return_value = []
+        canvas.create_module.return_value = {"id": "9"}
+        canvas.list_module_items.return_value = []
+        publisher = Publisher(tmp_path, "42", canvas)
+        publisher.manifest.put(
+            "review.md", Entry(kind="page", canvas_id="midterm-review", page_url="midterm-review", title="Midterm Review")
+        )
+        return publisher, canvas
+
+    def test_native_items_follow_the_repo_items_in_order(self, tmp_path: Path):
+        publisher, canvas = self._publisher(
+            tmp_path, 'canvas = [{ quiz = 394147 }, { quiz = 393662, title = "Midterm" }, { file = 5 }]'
+        )
+        assert publisher.push_modules().errors == []
+        sent = [call.args[2] for call in canvas.create_module_item.call_args_list]
+        assert [f["module_item[type]"] for f in sent] == ["Page", "Quiz", "Quiz", "File"]
+        assert [f["module_item[position]"] for f in sent] == ["1", "2", "3", "4"]
+        assert sent[1]["module_item[content_id]"] == "394147"
+        # Canvas uses the quiz's own title when none is sent.
+        assert "module_item[title]" not in sent[1]
+        assert sent[2]["module_item[title]"] == "Midterm"
+        assert sent[0]["module_item[page_url]"] == "midterm-review"
+
+    def test_a_malformed_canvas_list_is_an_error_not_a_hole(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, "canvas = [{ quiz = 1, page = 'x' }]")
+        errors = publisher.push_modules().errors
+        assert len(errors) == 1 and "Week 8" in errors[0] and "exactly one of" in errors[0]
+        # The repo items still went in.
+        assert [c.args[2]["module_item[type]"] for c in canvas.create_module_item.call_args_list] == ["Page"]
