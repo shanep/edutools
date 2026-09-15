@@ -13,6 +13,7 @@ from edutools.verify import (
     check_links,
     check_metadata,
     check_module,
+    check_module_membership,
     check_quiz_questions,
     summarise,
     Intent,
@@ -176,6 +177,14 @@ class TestModulesAndGradebook:
         shortfall: list[dict[str, object]] = [{"points_possible": 962}]
         failures = check_gradebook_total(shortfall, 1000.0)
         assert failures and "962" in failures[0].detail
+
+    def test_every_item_in_a_module_passes(self):
+        assert check_module_membership([]) == []
+
+    def test_an_item_in_no_module_is_a_failure(self):
+        failures = check_module_membership(["assignments/lab-03.md", "assignments/lab-04.md"])
+        assert [f.key for f in failures] == ["assignments/lab-03.md", "assignments/lab-04.md"]
+        assert all(f.check == "module" and "no [[module]]" in f.detail for f in failures)
 
 
 def test_summarise_groups_by_check():

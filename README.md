@@ -175,6 +175,11 @@ the object's own name. Ids come from `edutools assignments`, `edutools audit`, o
 address bar. A malformed entry is reported as an error for that module rather than
 built around.
 
+Students find their work through Modules, so a gradable file that no `[[module]]`
+lists is published and yet invisible. A push names every such file it handled as a
+warning, and `verify` reports each one as a `module` failure. A repo with no
+`[[module]]` tables at all does not use modules and is left alone.
+
 ### Pushing one correction
 
 `--path` limits a push to particular files, so a fix to one assignment does not

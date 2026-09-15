@@ -18,7 +18,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, Sequence
 
 # ---------------------------------------------------------------------------
 # Canvas's HTML sanitizer allowlist.
@@ -761,6 +761,26 @@ def parse_native_items(module: dict[str, object]) -> list[NativeItem]:
             raise ValueError(f"canvas item {index}: {kind} needs an id")
         items.append(NativeItem(kind=kind, ident=ident, title=str(entry.get("title", ""))))
     return items
+
+
+def module_keys(modules: Sequence[object]) -> set[str]:
+    """Every repo path the [[module]] tables place, from ``page`` and ``items``.
+
+    Tolerant of a malformed table the way the push and the outline are: a
+    module that is not a table, or an ``items`` that is not a list, simply
+    contributes nothing.
+    """
+    keys: set[str] = set()
+    for module in modules:
+        if not isinstance(module, dict):
+            continue
+        page = str(module.get("page", ""))
+        if page:
+            keys.add(page)
+        items = module.get("items", [])
+        if isinstance(items, list):
+            keys.update(str(k) for k in items if str(k))
+    return keys
 
 
 class Manifest:

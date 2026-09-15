@@ -10,7 +10,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from edutools.canvas import CanvasLMS, as_number
 from edutools.dates import Group, ItemDates, compute, load_config
@@ -24,6 +24,7 @@ from edutools.publish import (
     decorate,
     inline_css,
     mark_table_rows,
+    module_keys,
     parse_native_items,
     parse_quiz,
     parse_rubric,
@@ -527,15 +528,43 @@ class Publisher:
 
     # -- modules --------------------------------------------------------
 
-    def push_modules(self) -> Result:
-        """Build the weekly modules from the [[module]] tables in canvas.toml."""
-        result = Result()
+    def module_tables(self) -> list[dict[str, object]]:
+        """The raw [[module]] tables of canvas.toml, in the order written."""
         config_path = self.repo / "canvas.toml"
         with config_path.open("rb") as handle:
             raw = tomllib.load(handle)
         modules = raw.get("module", [])
-        if not isinstance(modules, list) or self.dry_run:
-            result.skipped = len(modules) if isinstance(modules, list) else 0
+        if not isinstance(modules, list):
+            return []
+        return [m for m in modules if isinstance(m, dict)]
+
+    def unlisted(self, plans: Iterable[Plan]) -> list[str]:
+        """Gradable items among ``plans`` that no [[module]] places.
+
+        Students find their work through Modules, so an assignment that no
+        table lists is published and yet invisible. Forgetting the line in
+        canvas.toml is the easiest mistake in the workflow and, until this,
+        made no noise anywhere. A repo with no [[module]] tables at all does
+        not use modules and gets no warning.
+        """
+        modules = self.module_tables()
+        if not modules:
+            return []
+        placed = module_keys(modules)
+        return sorted(
+            plan.key
+            for plan in plans
+            if plan.item_kind is not None
+            and plan.key not in placed
+            and not self.is_draft_key(plan.key)
+        )
+
+    def push_modules(self) -> Result:
+        """Build the weekly modules from the [[module]] tables in canvas.toml."""
+        result = Result()
+        modules = self.module_tables()
+        if self.dry_run:
+            result.skipped = len(modules)
             return result
 
         canvas = self._client()
@@ -546,8 +575,6 @@ class Publisher:
         } if not self.update_published else set()
 
         for position, module in enumerate(modules, start=1):
-            if not isinstance(module, dict):
-                continue
             name = str(module.get("title", f"Module {position}"))
             if name in live:
                 result.skipped += 1
@@ -567,7 +594,9 @@ class Publisher:
             # Repo items first, in the order written, then the Canvas-native
             # ones named under `canvas`: a hand built quiz or an uploaded file
             # that has no repo file but still belongs in the module.
-            keys = [str(module.get("page", ""))] + [str(k) for k in module.get("items", [])]
+            items = module.get("items", [])
+            keys = [str(module.get("page", ""))]
+            keys += [str(k) for k in items] if isinstance(items, list) else []
             listed = [k for k in keys if k and not self.is_draft_key(k)]
             placed: list[tuple[str, str, str]] = []
             for key in listed:

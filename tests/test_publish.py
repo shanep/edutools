@@ -1065,6 +1065,111 @@ class TestNativeModuleItems:
         assert [c.args[2]["module_item[type]"] for c in canvas.create_module_item.call_args_list] == ["Page"]
 
 
+class TestModuleKeys:
+    """module_keys() is the union of every [[module]]'s page and items."""
+
+    def test_page_and_items_are_both_collected(self):
+        from edutools.publish import module_keys
+
+        modules = [
+            {"title": "Week 1", "page": "week1.md", "items": ["assignments/p0.md"]},
+            {"title": "Week 2", "items": ["assignments/p1.md", "quizzes/q1.md"]},
+        ]
+        assert module_keys(modules) == {
+            "week1.md", "assignments/p0.md", "assignments/p1.md", "quizzes/q1.md"
+        }
+
+    def test_a_malformed_table_contributes_nothing(self):
+        from edutools.publish import module_keys
+
+        modules = ["not a table", {"title": "Week 3", "items": "assignments/p2.md"}, {"page": ""}]
+        assert module_keys(modules) == set()
+
+
+class TestUnlistedGradables:
+    """A gradable file that no [[module]] lists is named, so it does not stay invisible."""
+
+    def _publisher(self, tmp_path: Path, modules: str):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "assignments").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "exams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "week1.md").write_text("# Week 1\n", encoding="utf-8")
+        (tmp_path / "assignments" / "p0.md").write_text(
+            "# P0\n\n**Week 2 · 50 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "assignments" / "p1.md").write_text(
+            "# P1\n\n**Week 4 · 100 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "assignments" / "p2.md").write_text(
+            "---\ndraft: true\n---\n\n# P2\n\n**Week 6 · 100 points · x**\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "exams" / "midterm.md").write_text(
+            "# Midterm\n\n**Week 8 · 100 points · x**\n", encoding="utf-8"
+        )
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[term.policy.exam]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["week1.md"]\nfiles = []\n\n'
+            '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\nexam = "exams/*.md"\n\n'
+            f"{modules}",
+            encoding="utf-8",
+        )
+        return Publisher(tmp_path, "42", MagicMock())
+
+    def test_an_item_in_no_module_is_named(self, tmp_path: Path):
+        publisher = self._publisher(
+            tmp_path,
+            '[[module]]\ntitle = "Week 1"\npage = "week1.md"\nitems = ["assignments/p0.md"]\n',
+        )
+        assert publisher.unlisted(publisher.plan()) == ["assignments/p1.md", "exams/midterm.md"]
+
+    def test_everything_listed_is_quiet(self, tmp_path: Path):
+        publisher = self._publisher(
+            tmp_path,
+            '[[module]]\ntitle = "Week 1"\npage = "week1.md"\nitems = ["assignments/p0.md"]\n\n'
+            '[[module]]\ntitle = "Week 2"\nitems = ["assignments/p1.md", "exams/midterm.md"]\n',
+        )
+        assert publisher.unlisted(publisher.plan()) == []
+
+    def test_a_draft_is_not_an_orphan(self, tmp_path: Path):
+        # p2.md is a draft and listed nowhere; it is not a Canvas object, so it
+        # cannot be missing from a module.
+        publisher = self._publisher(
+            tmp_path,
+            '[[module]]\ntitle = "Week 1"\nitems = ["assignments/p0.md", "assignments/p1.md", "exams/midterm.md"]\n',
+        )
+        assert publisher.unlisted(publisher.plan()) == []
+
+    def test_a_plain_page_is_not_gradable_and_not_reported(self, tmp_path: Path):
+        # week1.md is a page with no week header; only gradable items are checked.
+        publisher = self._publisher(
+            tmp_path,
+            '[[module]]\ntitle = "Week 1"\nitems = ["assignments/p0.md", "assignments/p1.md", "exams/midterm.md"]\n',
+        )
+        assert "week1.md" not in publisher.unlisted(publisher.plan())
+
+    def test_a_repo_with_no_modules_gets_no_warning(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path, "")
+        assert publisher.unlisted(publisher.plan()) == []
+
+    def test_only_the_plans_given_are_considered(self, tmp_path: Path):
+        # A --path push hands in just the files it pushed.
+        publisher = self._publisher(
+            tmp_path,
+            '[[module]]\ntitle = "Week 1"\nitems = ["assignments/p0.md"]\n',
+        )
+        chosen = [p for p in publisher.plan() if p.key == "assignments/p0.md"]
+        assert publisher.unlisted(chosen) == []
+
+
 class TestAssignmentOptions:
     """submission: and grading: in the frontmatter set the two fields that vary."""
 

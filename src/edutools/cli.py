@@ -669,6 +669,17 @@ def push_course(
         totals["created"] += outcome.created
         problems.extend(outcome.errors)
 
+    # Over `selected` rather than every plan: a full push names every orphan, a
+    # --path push names only the file just pushed, --only pages says nothing.
+    unlisted = publisher.unlisted(selected)
+    if unlisted:
+        console.print(
+            f"[yellow]![/yellow] {len(unlisted)} gradable item(s) in no \\[\\[module]]; "
+            f"students find their work through modules:"
+        )
+        for key in unlisted:
+            console.print(f"    [dim]{key}[/dim]")
+
     table = Table(title="📤 Canvas push", show_header=True, header_style="bold magenta")
     table.add_column("Outcome", style="cyan")
     table.add_column("Count", justify="right")
@@ -739,6 +750,7 @@ def verify_course(
         check_gradebook_total,
         check_identity,
         check_links,
+        check_module_membership,
         check_quiz_questions,
         known_link_targets,
         summarise,
@@ -830,6 +842,8 @@ def verify_course(
         expected_total = publisher.config.term.total_points
         if expected_total:
             failures.extend(check_gradebook_total(published_assignments, expected_total))
+
+    failures.extend(check_module_membership(publisher.unlisted(plans.values())))
 
     if not failures:
         console.print(

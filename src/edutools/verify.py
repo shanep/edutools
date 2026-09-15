@@ -213,6 +213,19 @@ def check_gradebook_total(assignments: list[dict[str, object]], expected: float)
     return []
 
 
+def check_module_membership(unlisted: list[str]) -> list[Failure]:
+    """Check 12: every gradable item is placed by some [[module]].
+
+    Students navigate a course through Modules, so an assignment that no table
+    lists is published and yet invisible. This is a fact about the repo rather
+    than about Canvas, so the caller computes it with no network at all.
+    """
+    return [
+        Failure(key, "module", "in no [[module]]; students will not find it")
+        for key in unlisted
+    ]
+
+
 def check_identity(key: str, entry: Entry, stored: dict[str, object] | None) -> list[Failure]:
     """Check 1: the object still exists and is still the one we created."""
     if stored is None:

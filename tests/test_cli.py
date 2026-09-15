@@ -348,3 +348,57 @@ def test_no_token_still_reaches_the_command(monkeypatch, canvas):
 
     assert "not configured" in result.output
     assert os.environ.get("CANVAS_TOKEN") is None
+
+
+class TestPushWarnsAboutUnlistedItems:
+    """A gradable file no [[module]] lists is named by push, and does not fail it."""
+
+    def _repo(self, tmp_path):
+        repo = tmp_path / "course"
+        (repo / "assignments").mkdir(parents=True)
+        (repo / "index.md").write_text("# S\n", encoding="utf-8")
+        (repo / "assignments" / "p0.md").write_text(
+            "# P0\n\n**Week 2 · 50 points · x**\n", encoding="utf-8"
+        )
+        (repo / "assignments" / "p1.md").write_text(
+            "# P1\n\n**Week 4 · 100 points · x**\n", encoding="utf-8"
+        )
+        (repo / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n'
+            '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n\n'
+            '[[module]]\ntitle = "Week 1"\nitems = ["assignments/p0.md"]\n',
+            encoding="utf-8",
+        )
+        return repo
+
+    def test_a_full_push_names_the_orphan_and_still_succeeds(self, tmp_path):
+        repo = self._repo(tmp_path)
+        result = runner.invoke(app, ["push", str(repo), "--course", "42", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert "in no [[module]]" in result.output
+        assert "assignments/p1.md" in result.output
+
+    def test_a_scoped_push_only_looks_at_what_it_pushed(self, tmp_path):
+        repo = self._repo(tmp_path)
+        result = runner.invoke(app, [
+            "push", str(repo), "--course", "42", "--dry-run", "--path", "assignments/p0.md",
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "in no [[module]]" not in result.output
+
+    def test_a_scoped_push_of_the_orphan_says_so(self, tmp_path):
+        repo = self._repo(tmp_path)
+        result = runner.invoke(app, [
+            "push", str(repo), "--course", "42", "--dry-run", "--path", "assignments/p1.md",
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "1 gradable item(s) in no [[module]]" in result.output
