@@ -1128,3 +1128,25 @@ class TestAssignmentOptions:
         sent = canvas.create_assignment.call_args.args[1]
         assert [v for k, v in sent if k == "assignment[submission_types][]"] == ["online_upload", "online_text_entry"]
         assert ("assignment[grading_type]", "pass_fail") in sent
+
+
+class TestRewriteThroughSymlinks:
+    def test_a_link_to_a_symlinked_file_resolves_to_its_manifest_key(self, tmp_path: Path):
+        """The website serves worksheets from docs/public; the course dir holds
+        symlinks to them. The manifest keys the file by the symlink's path."""
+        from edutools.publish import Manifest, rewrite_links
+
+        repo = tmp_path / "docs" / "cs425"
+        (repo / "activities").mkdir(parents=True)
+        public = tmp_path / "docs" / "public" / "cs425" / "activities"
+        public.mkdir(parents=True)
+        (public / "a1-worksheet.pdf").write_bytes(b"%PDF")
+        (repo / "activities" / "a1-worksheet.pdf").symlink_to(public / "a1-worksheet.pdf")
+        manifest = Manifest(repo / ".canvas" / "m.json")
+        manifest.entries["activities/a1-worksheet.pdf"] = Entry("file", "25109507", title="a1-worksheet.pdf")
+
+        html, unresolved = rewrite_links(
+            '<a href="./a1-worksheet.pdf">x</a>', repo / "activities" / "a1.md", repo, manifest, "48194"
+        )
+        assert unresolved == []
+        assert html == '<a href="/courses/48194/files/25109507">x</a>'

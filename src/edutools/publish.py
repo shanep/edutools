@@ -11,6 +11,7 @@ be exercised without a Canvas token.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -841,8 +842,12 @@ def rewrite_links(
         path_part, _, fragment = target.partition("#")
         if not path_part:
             return match.group(0)
+        # Normalised lexically, not with resolve(): a target may be a symlink
+        # to somewhere outside the repo (a PDF the website serves from its own
+        # public directory), and the manifest keys it by where the link points.
+        joined = os.path.normpath(os.path.join(os.path.abspath(source.parent), path_part))
         try:
-            key = (source.parent / path_part).resolve().relative_to(repo.resolve()).as_posix()
+            key = Path(joined).relative_to(os.path.abspath(repo)).as_posix()
         except ValueError:
             unresolved.append(target)
             return match.group(0)
