@@ -8,6 +8,7 @@ directions:
 
     stale      the manifest points at something Canvas no longer has
     untracked  Canvas has something no repo file produced
+    pending    canvas.toml declares a module the next push will create
 
 Modules are not in the manifest at all; the push pairs them with the
 ``[[module]]`` tables in canvas.toml by name, so they are compared by name here
@@ -23,7 +24,7 @@ from typing import Literal
 
 from edutools.publish import Manifest, NativeItem, parse_native_items
 
-Side = Literal["stale", "untracked"]
+Side = Literal["stale", "untracked", "pending"]
 
 
 @dataclass(frozen=True)
@@ -196,9 +197,14 @@ def audit_modules(
     live_by_name = {m.title: m for m in modules}
     declared_by_title = {d.title: d for d in declared}
 
+    # A declared module Canvas lacks is not an inconsistency: modules have no
+    # manifest entry, and the next push creates it. It is listed so nobody is
+    # surprised when it appears.
     for title in declared_by_title:
         if title not in live_by_name:
-            differences.append(Difference("stale", "module", "", title, "", "declared in canvas.toml, not in Canvas"))
+            differences.append(
+                Difference("pending", "module", "", title, "", "declared in canvas.toml; the next push creates it")
+            )
 
     tracked: set[tuple[str, str]] = set()
     for entry in manifest.entries.values():

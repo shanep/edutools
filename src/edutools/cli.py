@@ -882,7 +882,7 @@ def audit_course(
     table.add_column("Repo key", style="dim", no_wrap=False)
     table.add_column("Detail", no_wrap=False)
     for d in differences:
-        style = "red" if d.side == "stale" else ""
+        style = {"stale": "red", "pending": "green"}.get(d.side, "")
         table.add_row(d.side, d.kind, d.title, d.ident, d.key, d.detail, style=style)
     console.print(table)
     console.print(f"\n{len(differences)} difference(s): {summarise(differences)}")

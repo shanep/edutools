@@ -96,10 +96,10 @@ class TestLiveInventory:
 
 
 class TestModules:
-    def test_declared_module_missing_in_canvas_is_stale(self, tmp_path: Path):
+    def test_declared_module_missing_in_canvas_is_pending_not_stale(self, tmp_path: Path):
         result = audit_modules([DeclaredModule("Week 1")], [], {}, _manifest(tmp_path))
         assert result == [
-            Difference("stale", "module", "", "Week 1", "", "declared in canvas.toml, not in Canvas")
+            Difference("pending", "module", "", "Week 1", "", "declared in canvas.toml; the next push creates it")
         ]
 
     def test_module_nobody_declared_is_untracked(self, tmp_path: Path):

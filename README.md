@@ -132,7 +132,8 @@ edutools audit ./cs121 --course 12345 --json      # the same, for scripts
 ```
 
 Untracked objects are normal (a hand built exam quiz, a file uploaded in the UI)
-and are only reported. A stale manifest entry exits non-zero, because the next push
+and are only reported, as is a pending module, one that `canvas.toml` declares and
+the next push will create. A stale manifest entry exits non-zero, because the next push
 would try to update something that is gone; drop the entry from
 `.canvas/manifest-<id>.json` to have the push recreate it, or delete the repo file
 if the removal was deliberate. The audit also lists any item sitting in a
