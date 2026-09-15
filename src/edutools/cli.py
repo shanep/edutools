@@ -941,6 +941,55 @@ def audit_course(
         raise typer.Exit(1)
 
 
+@app.command("outline")
+def course_outline(
+    repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),
+    out: Optional[str] = typer.Option(None, "--out", help="Write the JSON here instead of printing a table"),
+):
+    """Print the module outline a push will build, computed from the repo alone.
+
+    Needs no Canvas token. This is what the course website renders so that its
+    schedule shows exactly what Canvas shows under Modules: the same modules,
+    the same items in the same order, with the due date and points of each
+    gradable one. --out writes the JSON the site commits.
+    """
+    from pathlib import Path
+
+    from edutools.outline import outline, to_json
+    from edutools.publisher import Publisher
+
+    repo_path = Path(repo).expanduser()
+    publisher = Publisher(repo_path, "", None)
+    with (repo_path / "canvas.toml").open("rb") as handle:
+        raw = tomllib.load(handle)
+    modules_raw = raw.get("module", [])
+    kinds = {p.key: p.kind for p in publisher.plan()}
+    modules = outline(
+        repo_path, modules_raw if isinstance(modules_raw, list) else [], kinds, publisher.dates
+    )
+
+    if out is not None:
+        target = Path(out).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_json.dumps(to_json(modules), indent=2) + "\n", encoding="utf-8")
+        console.print(f"[green]✓ wrote {target} ({len(modules)} modules)[/green]")
+        return
+
+    for module in modules:
+        table = Table(title=module.title, show_header=True, header_style="bold magenta", title_justify="left")
+        table.add_column("Kind", style="cyan")
+        table.add_column("Item", style="green")
+        table.add_column("Due", style="dim")
+        table.add_column("Points", justify="right")
+        for item in module.items:
+            table.add_row(
+                item.kind, item.title,
+                item.due_at[:10] if item.due_at else "",
+                f"{item.points:g}" if item.points is not None else "",
+            )
+        console.print(table)
+
+
 @app.command("dates")
 def course_dates(
     repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),

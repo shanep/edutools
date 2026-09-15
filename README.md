@@ -62,6 +62,7 @@ edutools ungraded <course_id> [--json]           list submissions still needing 
 edutools push <course_repo> --course <id>        publish a course repo into Canvas
 edutools verify <course_repo> --course <id>      read published content back and prove it landed
 edutools audit <course_repo> --course <id>       compare the manifest with the live course, both ways
+edutools outline <course_repo> [--out file]      the module outline a push builds, from the repo alone
 edutools dates <course_repo> [--show] [--shift]  compute due dates from canvas.toml
 
 edutools create <kind> --course <id> ...         create one page/assignment/discussion/quiz/module
@@ -140,6 +141,11 @@ would try to update something that is gone; drop the entry from
 if the removal was deliberate. The audit also lists any item sitting in a
 repo-managed module that neither the manifest nor the module's `canvas` list
 knows about, since the next push rebuilds that module without it.
+
+`outline` needs no token at all. It prints the modules a push will build, item by
+item with due dates and points, from `canvas.toml` and the files themselves; with
+`--out` it writes that as JSON, which is how a course website renders a schedule
+page that matches Canvas's Modules page exactly.
 
 ### Modules
 
