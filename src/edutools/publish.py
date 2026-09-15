@@ -157,10 +157,14 @@ def is_draft(markdown: str) -> bool:
 
 
 def path_is_draft(path: Path) -> bool:
-    """``is_draft`` for a file, treating anything unreadable as not a draft."""
+    """``is_draft`` for a file, treating anything unreadable as not a draft.
+
+    A file that is not UTF-8 text, such as a PDF matched by ``layout.files``,
+    has no front matter to read and is never a draft.
+    """
     try:
         return is_draft(path.read_text(encoding="utf-8"))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return False
 
 # "<!--@include: ../../parts/syllabus-boiler.md-->"

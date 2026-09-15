@@ -859,6 +859,12 @@ class TestDraftFrontmatter:
     def test_path_is_draft_on_a_missing_file(self, tmp_path: Path):
         assert not path_is_draft(tmp_path / "nope.md")
 
+    def test_path_is_draft_on_a_binary_file(self, tmp_path: Path):
+        """A PDF matched by layout.files has no front matter and is not a draft."""
+        path = tmp_path / "a1-worksheet.pdf"
+        path.write_bytes(b"%PDF-1.4\n\xd3\xf3\x0c\xe2\n")
+        assert not path_is_draft(path)
+
 
 class TestDraftsAreNotPushed:
     """A draft is invisible to the whole push: plan, modules and manifest."""
