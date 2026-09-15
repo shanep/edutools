@@ -791,7 +791,7 @@ class TestAssignmentGroupPlacement:
         item.item_kind = "project"
         publisher.create_or_update(item)
 
-        fields = canvas.create_assignment.call_args.args[1]
+        fields = dict(canvas.create_assignment.call_args.args[1])
         assert fields["assignment[assignment_group_id]"] == "5"
 
     def test_a_kind_in_no_group_sends_no_group_field(self, tmp_path: Path):
@@ -1063,3 +1063,68 @@ class TestNativeModuleItems:
         assert len(errors) == 1 and "Week 8" in errors[0] and "exactly one of" in errors[0]
         # The repo items still went in.
         assert [c.args[2]["module_item[type]"] for c in canvas.create_module_item.call_args_list] == ["Page"]
+
+
+class TestAssignmentOptions:
+    """submission: and grading: in the frontmatter set the two fields that vary."""
+
+    def test_defaults_when_there_is_no_frontmatter(self):
+        from edutools.publish import assignment_options
+
+        options = assignment_options("# P0\n")
+        assert options.submission_types == ("online_text_entry",) and options.grading_type is None
+
+    def test_comma_list_and_yaml_list_both_parse(self):
+        from edutools.publish import assignment_options
+
+        assert assignment_options("---\nsubmission: online_upload, online_text_entry\n---\n").submission_types == (
+            "online_upload", "online_text_entry",
+        )
+        assert assignment_options("---\nsubmission: [online_upload]\n---\n").submission_types == ("online_upload",)
+
+    def test_grading_type_parses(self):
+        from edutools.publish import assignment_options
+
+        assert assignment_options("---\ngrading: pass_fail\n---\n").grading_type == "pass_fail"
+
+    def test_a_value_canvas_would_reject_is_an_error_here(self):
+        import pytest
+
+        from edutools.publish import PublishError, assignment_options
+
+        with pytest.raises(PublishError, match="submission type"):
+            assignment_options("---\nsubmission: upload\n---\n")
+        with pytest.raises(PublishError, match="grading type"):
+            assignment_options("---\ngrading: pass/fail\n---\n")
+
+    def test_the_push_repeats_submission_types_and_sends_grading(self, tmp_path: Path):
+        from edutools.publisher import Plan, Publisher
+
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.extra]\ndue = "fri 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n'
+            '[layout.gradable]\nextra = "ec-*.md"\n',
+            encoding="utf-8",
+        )
+        source = tmp_path / "ec-typos.md"
+        source.write_text(
+            "---\nsubmission: online_upload, online_text_entry\ngrading: pass_fail\n---\n\n"
+            "# Typos\n\n**Week 16 · 10 points · extra credit**\n",
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.list_assignment_groups.return_value = []
+        canvas.create_assignment.return_value = {"id": "77"}
+        publisher = Publisher(tmp_path, "42", canvas)
+        item = Plan(key="ec-typos.md", kind="assignment", title="", source=source, points=10, item_kind="extra")
+        publisher.create_or_update(item)
+
+        sent = canvas.create_assignment.call_args.args[1]
+        assert [v for k, v in sent if k == "assignment[submission_types][]"] == ["online_upload", "online_text_entry"]
+        assert ("assignment[grading_type]", "pass_fail") in sent

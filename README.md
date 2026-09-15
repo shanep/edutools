@@ -54,6 +54,7 @@ edutools init                                    create ~/.config/edutools/confi
 edutools check                                   verify the Canvas token works
 edutools courses [--all/-a] [--json]             list courses where you are a teacher
 edutools assignments <course_id> [--json]        list assignments in a course
+edutools modules <course_id> [--json]            list modules and the items in each
 edutools students <course_id> [--json]           list students in a course
 edutools submissions <course_id> <assignment_id> [--json]
                                                  list submissions for one assignment
@@ -246,7 +247,7 @@ discussion = "discussions/*.md"
 
 Anything the section leaves out keeps its default. Page patterns are matched before
 gradable ones, so a file caught by both stays a page. The keys under
-`[layout.gradable]` are item kinds (`lab`, `project`, `quiz`, `discussion`, `exam`),
+`[layout.gradable]` are item kinds (`lab`, `project`, `extra`, `quiz`, `discussion`, `exam`),
 and each needs a matching `[term.policy.<kind>]` to compute its dates from.
 
 ### VitePress source
@@ -291,6 +292,30 @@ submissions against it.
 
 Hiding a draft from the website as well is the site generator's job, not this
 tool's. In VitePress that is `srcExclude`.
+
+### Submission and grading types
+
+Every assignment is created as `online_text_entry`, graded by points, which is
+what a project that submits a repository link wants. An assignment that takes a
+file, or is pass/fail, says so in its frontmatter:
+
+```markdown
+---
+submission: online_upload, online_text_entry
+grading: pass_fail
+---
+
+# Finding Typos, Bugs, and Improvements
+
+**Week 16 · 10 points · extra credit · submit in Canvas**
+```
+
+`submission` is one or more of Canvas's submission types (`online_text_entry`,
+`online_upload`, `online_url`, `media_recording`, `student_annotation`,
+`on_paper`, `external_tool`, `none`), separated by commas; `grading` is one of
+`points`, `pass_fail`, `percent`, `letter_grade`, `gpa_scale`, `not_graded`. A
+value Canvas would reject is reported by the push, naming the file, rather than
+as a 400. Both keys are ignored on anything that is not an assignment.
 
 ### Assignment groups
 

@@ -294,6 +294,56 @@ def list_assignments(
     console.print(f"\n[dim]Total: {len(assignments)} assignments[/dim]")
 
 
+@app.command("modules")
+def list_modules(
+    course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),
+    as_json: bool = typer.Option(False, "--json", help="Emit raw JSON instead of a table"),
+):
+    """List a course's modules and the items in each, in order.
+
+    --json emits each module with its items nested under "items", which is
+    how a module built by hand in Canvas gets read back into a repo.
+    """
+    init()
+    from edutools.canvas import CanvasLMS
+
+    if course_id is None:
+        course_id = _select_course()
+
+    with console.status(f"[bold green]Fetching modules for course {course_id}...", spinner="dots"):
+        canvas = CanvasLMS()
+        modules = canvas.list_modules(course_id)
+        for module in modules:
+            module["items"] = canvas.list_module_items(course_id, str(module["id"]))
+
+    if as_json:
+        _emit_json(modules)
+        return
+
+    if not modules:
+        console.print("[yellow]No modules found.[/yellow]")
+        return
+
+    table = Table(title=f"📚 Modules for Course {course_id}", show_header=True, header_style="bold magenta")
+    table.add_column("ID", style="cyan", justify="right")
+    table.add_column("Module", style="green")
+    table.add_column("State", style="dim")
+    table.add_column("Items")
+    for module in modules:
+        items = module.get("items")
+        lines = [
+            f"{str(i.get('type', '')).lower()} {i.get('content_id') or i.get('page_url') or ''}  {i.get('title', '')}"
+            for i in (items if isinstance(items, list) else [])
+        ]
+        table.add_row(
+            str(module["id"]), str(module.get("name", "")),
+            "published" if module.get("published") else "unpublished",
+            "\n".join(lines) or "[dim]empty[/dim]",
+        )
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(modules)} modules[/dim]")
+
+
 @app.command("groups")
 def list_assignment_groups(
     course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),

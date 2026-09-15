@@ -156,6 +156,72 @@ def is_draft(markdown: str) -> bool:
     return block is not None and _DRAFT_RE.search(block.group(0)) is not None
 
 
+# "submission: online_upload, online_text_entry" and "grading: pass_fail", also
+# top level keys of the frontmatter, for the two assignment fields that vary from
+# one assignment to the next. Everything else about an assignment comes from the
+# meta line and canvas.toml.
+_SUBMISSION_RE: Final[re.Pattern[str]] = re.compile(
+    r"^submission[ \t]*:[ \t]*(?P<value>[^\n]+?)[ \t]*$", re.M | re.I
+)
+_GRADING_RE: Final[re.Pattern[str]] = re.compile(
+    r"^grading[ \t]*:[ \t]*(?P<value>[^\n]+?)[ \t]*$", re.M | re.I
+)
+
+SUBMISSION_TYPES: Final[tuple[str, ...]] = (
+    "online_text_entry", "online_upload", "online_url", "media_recording",
+    "student_annotation", "on_paper", "external_tool", "none",
+)
+GRADING_TYPES: Final[tuple[str, ...]] = (
+    "points", "pass_fail", "percent", "letter_grade", "gpa_scale", "not_graded",
+)
+
+
+@dataclass(frozen=True)
+class AssignmentOptions:
+    """The per-assignment Canvas fields a course file may set in its frontmatter."""
+
+    submission_types: tuple[str, ...] = ("online_text_entry",)
+    grading_type: str | None = None
+
+
+def assignment_options(markdown: str) -> AssignmentOptions:
+    """Read ``submission:`` and ``grading:`` out of a file's frontmatter.
+
+    ``submission`` takes one or more Canvas submission types, separated by
+    commas or spaces, with or without YAML brackets; ``grading`` takes one
+    grading type. A value Canvas would reject is reported here, where the file
+    name is known, rather than as a 400 from the push.
+    """
+    block = _FRONTMATTER_RE.match(markdown)
+    if block is None:
+        return AssignmentOptions()
+    text = block.group(0)
+    options = AssignmentOptions()
+
+    match = _SUBMISSION_RE.search(text)
+    if match:
+        raw = match.group("value").strip("[]")
+        types = tuple(t.strip().strip("'\"") for t in re.split(r"[,\s]+", raw) if t.strip())
+        bad = [t for t in types if t not in SUBMISSION_TYPES]
+        if bad or not types:
+            raise PublishError(
+                f"submission: {match.group('value')!r} is not a Canvas submission type; "
+                f"use one or more of {', '.join(SUBMISSION_TYPES)}"
+            )
+        options = AssignmentOptions(submission_types=types, grading_type=options.grading_type)
+
+    match = _GRADING_RE.search(text)
+    if match:
+        grading = match.group("value").strip("'\"")
+        if grading not in GRADING_TYPES:
+            raise PublishError(
+                f"grading: {grading!r} is not a Canvas grading type; use one of {', '.join(GRADING_TYPES)}"
+            )
+        options = AssignmentOptions(submission_types=options.submission_types, grading_type=grading)
+
+    return options
+
+
 def path_is_draft(path: Path) -> bool:
     """``is_draft`` for a file, treating anything unreadable as not a draft.
 

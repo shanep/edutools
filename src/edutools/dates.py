@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 from edutools.publish import is_draft
 
-ItemKind = Literal["lab", "project", "quiz", "discussion", "exam"]
+ItemKind = Literal["lab", "project", "extra", "quiz", "discussion", "exam"]
 
 _WEEKDAY_OFFSET: Final[dict[str, int]] = {
     "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,

@@ -20,6 +20,7 @@ from edutools.publish import (
     Manifest,
     PublishError,
     assert_no_forbidden_tags,
+    assignment_options,
     decorate,
     inline_css,
     mark_table_rows,
@@ -41,6 +42,7 @@ Reporter = Callable[[str], None]
 KIND_TO_CANVAS: dict[str, str] = {
     "lab": "assignment",
     "project": "assignment",
+    "extra": "assignment",
     "quiz": "quiz",
     "discussion": "discussion",
     "exam": "page",
@@ -385,25 +387,29 @@ class Publisher:
                 result.created = 1
             self.manifest.put(item.key, Entry(kind="page", canvas_id=page_url, page_url=page_url, title=title))
         elif item.kind == "assignment":
-            fields = {
-                "assignment[name]": title,
-                "assignment[description]": html,
-                "assignment[points_possible]": f"{item.points or 0:g}",
-                "assignment[submission_types][]": "online_text_entry",
-                **self._group_fields("assignment", item),
-                **self._date_fields("assignment", item.dates),
-            }
+            options = assignment_options(item.source.read_text(encoding="utf-8"))
+            # A list rather than a dict: submission_types[] repeats once per type.
+            assignment_fields: list[tuple[str, str]] = [
+                ("assignment[name]", title),
+                ("assignment[description]", html),
+                ("assignment[points_possible]", f"{item.points or 0:g}"),
+                *[("assignment[submission_types][]", t) for t in options.submission_types],
+                *self._group_fields("assignment", item).items(),
+                *self._date_fields("assignment", item.dates).items(),
+            ]
+            if options.grading_type:
+                assignment_fields.append(("assignment[grading_type]", options.grading_type))
             if existing and canvas.exists(
                 f"/api/v1/courses/{self.course_id}/assignments/{existing.canvas_id}"
             ):
                 visible = self._visibility(True)
                 if visible is not None:
-                    fields["assignment[published]"] = str(visible).lower()
-                canvas.update_assignment(self.course_id, existing.canvas_id, fields)
+                    assignment_fields.append(("assignment[published]", str(visible).lower()))
+                canvas.update_assignment(self.course_id, existing.canvas_id, assignment_fields)
                 canvas_id, result.updated = existing.canvas_id, 1
             else:
-                fields["assignment[published]"] = str(self.publish).lower()
-                created = canvas.create_assignment(self.course_id, fields)
+                assignment_fields.append(("assignment[published]", str(self.publish).lower()))
+                created = canvas.create_assignment(self.course_id, assignment_fields)
                 canvas_id, result.created = str(created["id"]), 1
             self.manifest.put(item.key, Entry(kind="assignment", canvas_id=canvas_id, title=title))
         elif item.kind == "discussion":

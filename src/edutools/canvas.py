@@ -326,10 +326,10 @@ class CanvasLMS():
     def get_assignment_full(self, course_id: str, assignment_id: str) -> dict[str, object]:
         return self.get_json(f"/api/v1/courses/{course_id}/assignments/{assignment_id}")
 
-    def create_assignment(self, course_id: str, fields: dict[str, str]) -> dict[str, object]:
+    def create_assignment(self, course_id: str, fields: RequestData) -> dict[str, object]:
         return self._json("POST", f"/api/v1/courses/{course_id}/assignments", data=fields)
 
-    def update_assignment(self, course_id: str, assignment_id: str, fields: dict[str, str]) -> dict[str, object]:
+    def update_assignment(self, course_id: str, assignment_id: str, fields: RequestData) -> dict[str, object]:
         return self._json("PUT", f"/api/v1/courses/{course_id}/assignments/{assignment_id}", data=fields)
 
     # -- discussions ----------------------------------------------------
