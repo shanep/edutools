@@ -1,5 +1,5 @@
 import { app, type BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
-import { NAVIGATE_CHANNEL } from "../shared/ipc";
+import { sendEvent } from "../shared/ipc";
 import { SCREENS, type ScreenId } from "../shared/screens";
 
 /**
@@ -9,7 +9,12 @@ import { SCREENS, type ScreenId } from "../shared/screens";
  */
 export function buildMenu(getWindow: () => BrowserWindow | null): Menu {
   const isMac = process.platform === "darwin";
-  const go = (screen: ScreenId) => () => getWindow()?.webContents.send(NAVIGATE_CHANNEL, screen);
+  const go = (screen: ScreenId) => () => {
+    const window = getWindow();
+    if (window) {
+      sendEvent(window.webContents, "navigate", screen);
+    }
+  };
 
   const screenItems: MenuItemConstructorOptions[] = SCREENS.filter((s) => s.id !== "settings").map((s, i) => ({
     label: s.available ? s.title : `${s.title} (not yet available)`,

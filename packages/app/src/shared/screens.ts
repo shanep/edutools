@@ -8,7 +8,16 @@
  * life, flip `available` and swap the Placeholder for the real component.
  */
 
-export type ScreenId = "courses" | "snapshot" | "publish" | "verify" | "audit" | "outline" | "edit" | "settings";
+export type ScreenId =
+  | "courses"
+  | "overview"
+  | "snapshot"
+  | "publish"
+  | "verify"
+  | "audit"
+  | "outline"
+  | "edit"
+  | "settings";
 
 export interface ScreenInfo {
   readonly id: ScreenId;
@@ -26,7 +35,14 @@ export const SCREENS: readonly ScreenInfo[] = [
     id: "courses",
     title: "Courses",
     group: "Canvas",
-    summary: "The courses you teach on the default Canvas site.",
+    summary: "The courses you teach on the default Canvas site. Open one to work on it.",
+    available: true,
+  },
+  {
+    id: "overview",
+    title: "Course overview",
+    group: "Canvas",
+    summary: "The current course's assignments, modules, pages and assignment groups, as Canvas has them.",
     available: true,
   },
   {
@@ -34,7 +50,7 @@ export const SCREENS: readonly ScreenInfo[] = [
     title: "Snapshot",
     group: "Course repository",
     summary: "Pull a whole course to disk: pages, assignments, modules and files.",
-    available: false,
+    available: true,
   },
   {
     id: "publish",

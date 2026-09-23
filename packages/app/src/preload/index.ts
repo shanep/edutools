@@ -1,20 +1,19 @@
 /**
  * The bridge between the sandboxed page and the main process. It exposes exactly
  * EdutoolsBridge on `window.edutools` and nothing of ipcRenderer itself, so the
- * page can call the listed methods and no others.
+ * page can call the listed methods, hear the listed events, and nothing else.
  */
 
-import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 import {
   API_METHODS,
   type ApiMethod,
   channelOf,
   type EdutoolsApi,
   type EdutoolsBridge,
-  NAVIGATE_CHANNEL,
   type Reply,
+  subscribe,
 } from "../shared/ipc";
-import { isScreenId, type ScreenId } from "../shared/screens";
 
 async function invoke(method: ApiMethod, args: unknown[]): Promise<unknown> {
   // The main process registers every channel with a handler returning Reply (see
@@ -35,17 +34,9 @@ const bridge: EdutoolsBridge = {
   // API_METHODS lists every EdutoolsApi method (enforced in shared/ipc.ts), and
   // each entry forwards to the main-process method of the same name.
   ...(methods as unknown as EdutoolsApi),
-  onNavigate(listener: (screen: ScreenId) => void) {
-    const handler = (_event: IpcRendererEvent, screen: unknown) => {
-      if (isScreenId(screen)) {
-        listener(screen);
-      }
-    };
-    ipcRenderer.on(NAVIGATE_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(NAVIGATE_CHANNEL, handler);
-    };
-  },
+  // subscribe checks each payload against EVENT_GUARDS, so the page only ever
+  // receives what EdutoolsEvents says, and only on the event channels.
+  on: (event, listener) => subscribe(ipcRenderer, event, listener),
 };
 
 contextBridge.exposeInMainWorld("edutools", bridge);

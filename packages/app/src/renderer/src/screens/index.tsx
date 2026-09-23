@@ -1,8 +1,10 @@
 import type { ComponentType } from "react";
 import type { ScreenId } from "../../../shared/screens";
 import { Courses } from "./Courses";
+import { Overview } from "./Overview";
 import { placeholder } from "./Placeholder";
 import { Settings } from "./Settings";
+import { Snapshot } from "./Snapshot";
 import type { ScreenProps } from "./types";
 
 /**
@@ -11,7 +13,8 @@ import type { ScreenProps } from "./types";
  */
 export const SCREEN_COMPONENTS: Record<ScreenId, ComponentType<ScreenProps>> = {
   courses: Courses,
-  snapshot: placeholder("snapshot"),
+  overview: Overview,
+  snapshot: Snapshot,
   publish: placeholder("publish"),
   verify: placeholder("verify"),
   audit: placeholder("audit"),

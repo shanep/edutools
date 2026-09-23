@@ -1,9 +1,10 @@
 import path from "node:path";
-import { keychainStore } from "@edutools/core/credentials";
-import { app, BrowserWindow, Menu, shell } from "electron";
-import { createApi } from "./api";
+import { app, BrowserWindow, dialog, Menu, type OpenDialogOptions, shell } from "electron";
+import { type Emit, sendEvent } from "../shared/ipc";
+import { type ApiDeps, createApi } from "./api";
 import { registerApi } from "./ipc";
 import { buildMenu } from "./menu";
+import { seedSmoke, smokeDeps, smokeTest } from "./smoke";
 
 // electron-vite sets this in `dev` so the renderer is served with hot reload.
 const devServer = process.env.ELECTRON_RENDERER_URL;
@@ -12,10 +13,40 @@ const here = import.meta.dirname;
 app.setName("edutools");
 app.setAboutPanelOptions({ applicationName: "edutools", applicationVersion: app.getVersion() });
 // Electron's own data (caches, local storage) lives in a subfolder, so the
-// edutools config directory holds only our site list and stays readable.
+// edutools config directory holds only our site list and settings, and stays readable.
 app.setPath("userData", path.join(app.getPath("appData"), "edutools", "app-data"));
 
 let mainWindow: BrowserWindow | null = null;
+
+const smoke = process.env.EDUTOOLS_SMOKE_TEST === "1";
+
+const emit: Emit = (event, payload) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    sendEvent(window.webContents, event, payload);
+  }
+};
+
+async function chooseFolder(defaultPath: string): Promise<string | null> {
+  const options: OpenDialogOptions = {
+    title: "Choose a snapshot folder",
+    buttonLabel: "Choose",
+    defaultPath,
+    properties: ["openDirectory", "createDirectory", "promptToCreate"],
+  };
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+function realDeps(): ApiDeps {
+  return {
+    version: app.getVersion(),
+    credentials: {},
+    openExternal: (url) => shell.openExternal(url),
+    documentsDir: app.getPath("documents"),
+    chooseFolder,
+    showItemInFolder: (fullPath) => shell.showItemInFolder(fullPath),
+  };
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -64,46 +95,6 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-/**
- * EDUTOOLS_SMOKE_TEST=1 opens the window, checks that the bridge reached the page
- * and that the native keychain module loads, prints the outcome and quits. CI and
- * a packaged-build check run it; a user never sees it.
- */
-async function smokeTest(window: BrowserWindow): Promise<void> {
-  const timer = setTimeout(() => {
-    console.error("SMOKE FAIL: timed out");
-    app.exit(2);
-  }, 30_000);
-  try {
-    await new Promise<void>((resolve) => window.webContents.once("did-finish-load", () => resolve()));
-    const bridge: unknown = await window.webContents.executeJavaScript(
-      "typeof window.edutools === 'object' && typeof window.edutools.listSites === 'function' && typeof require === 'undefined'",
-    );
-    if (bridge !== true) {
-      throw new Error("the preload bridge is missing, or node leaked into the page");
-    }
-    let rendered = false;
-    for (let attempt = 0; attempt < 50 && !rendered; attempt++) {
-      rendered = (await window.webContents.executeJavaScript("!!document.querySelector('.window .sidebar')")) === true;
-      if (!rendered) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
-    if (!rendered) {
-      throw new Error("the page loaded but the app did not render");
-    }
-    // A read of an account that does not exist: loads the native module and asks
-    // the keychain without writing anything.
-    await keychainStore("edutools-smoke-test").get("https://smoke-test.invalid");
-    console.log("SMOKE OK");
-    clearTimeout(timer);
-    app.exit(0);
-  } catch (error) {
-    console.error(`SMOKE FAIL: ${error instanceof Error ? error.message : String(error)}`);
-    app.exit(1);
-  }
-}
-
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -116,18 +107,15 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(() => {
-    registerApi(
-      createApi({
-        version: app.getVersion(),
-        credentials: {},
-        openExternal: (url) => shell.openExternal(url),
-      }),
-      devServer ? [devServer] : [],
-    );
+  app.whenReady().then(async () => {
+    const api = createApi({ ...(smoke ? smokeDeps(app.getVersion()) : realDeps()), emit });
+    if (smoke) {
+      await seedSmoke(api);
+    }
+    registerApi(api, devServer ? [devServer] : []);
     Menu.setApplicationMenu(buildMenu(() => mainWindow));
     mainWindow = createWindow();
-    if (process.env.EDUTOOLS_SMOKE_TEST === "1") {
+    if (smoke) {
       void smokeTest(mainWindow);
     }
 
