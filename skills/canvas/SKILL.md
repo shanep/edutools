@@ -37,7 +37,9 @@ Canvas writes are immediate and land on real courses with real students.
    ambiguous, list courses and ask which one. Do not guess from a name match.
 2. **Create unpublished.** `create` and `push` leave objects invisible to students
    unless `--publish` is passed. Keep that default; publish as a separate,
-   deliberate step once the user has seen what was made.
+   deliberate step once the user has seen what was made. The one exception is a
+   `[[module]]` the repo marks `publish = true` (see Module tables below): the
+   user decided that once, in `canvas.toml`, and every push honours it.
 3. **Dry run first for anything bulk.** `grade --dry-run` and `push --dry-run`
    print exactly what would be sent and write nothing. Show that output before
    writing.
@@ -245,6 +247,46 @@ first thing to show a user who is changing the schedule or the module layout.
 - **A gradable file that no `[[module]]` lists** is published but invisible to
   students, who find work through Modules. The push warns about each one; tell
   the user rather than letting the warning scroll by.
+- **Retitling a page changes its Canvas url slug.** The push records the new one,
+  so a module still finds it. A page created while an old page of the same title
+  exists gets a `-2` slug; delete the old one (after confirming) if that matters.
+
+### Module tables
+
+A `[[module]]` table can do more than list files. Read the README before
+writing one; the short version:
+
+```toml
+[[module]]
+title = "Module 5: Authentication"
+week  = 5                          # name gets " (February 8 - February 14)"
+page  = "notes/week-05-overview.md"
+items = [
+    { header = "Due by Thursday at 11:59 p.m. Mountain Time" },   # a text header
+    "notes/week-05-notes.md",
+    "discussions/d03.md",
+    { header = "Due by Sunday at 11:59 p.m. Mountain Time" },
+    "reminders/d03-replies.md",    # the `reminder` kind: an ungraded nudge
+    { quiz = 393733, title = "5.04 Survey" },   # a Canvas-native item, kept in place
+]
+```
+
+- **`week`** dates the module name from the term skeleton (`"finals"` for finals
+  week). Modules are matched by name, and a module with the same title but other
+  dates, or none, is renamed in place, so a new term does not duplicate them. A
+  module whose title changes some other way is created fresh: rename the old one
+  with `edutools update module <id> --set 'module[name]=...'` before pushing.
+- **`never_publish = true`** is for instructor-only modules. Every push writes the
+  module and all it lists unpublished, whatever the flags, pulls back anything
+  published in the Canvas UI (the one time a push rewrites published content),
+  and locks the module until 2099. `verify` fails if any of it is published, and
+  `outline` leaves it out. Never work around it with `publish` or `update`.
+- **`publish = true`** is the opposite, for Course Resources and the like: the
+  module and its contents are published on every push. A published module is
+  still only rebuilt with `--update-published`, per rule 5.
+- **`[icons]`** maps heading text to an image in the repo; the push uploads it and
+  puts it in front of each matching h2/h3. Style it through `.cs-icon` in the
+  repo's `canvas.css`, which the push inlines into every page.
 
 ### `verify` and `audit`
 
