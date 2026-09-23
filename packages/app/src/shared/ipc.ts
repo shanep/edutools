@@ -165,6 +165,133 @@ export interface SnapshotSummary {
   readonly problems: readonly string[];
 }
 
+/**
+ * The course repository chosen for the current course: a folder of markdown with
+ * a canvas.toml. `problem` is set, in plain words, when canvas.toml does not load.
+ */
+export interface RepoInfo {
+  readonly path: string;
+  readonly problem: string | null;
+  readonly weeks: number | null;
+  readonly timezone: string | null;
+}
+
+export interface OutlineItemRow {
+  /** page, assignment, discussion, quiz, file or header. */
+  readonly kind: string;
+  readonly title: string;
+  /** Repo path without .md; empty for an item that already lives in Canvas. */
+  readonly path: string;
+  /** ISO 8601 with offset. */
+  readonly dueAt: string | null;
+  readonly points: number | null;
+  readonly canvasId: string;
+}
+
+export interface OutlineModuleRow {
+  readonly title: string;
+  readonly items: readonly OutlineItemRow[];
+}
+
+export interface CourseOutline {
+  readonly repo: string;
+  readonly modules: readonly OutlineModuleRow[];
+}
+
+export interface DateRow {
+  readonly path: string;
+  readonly title: string;
+  readonly kind: string;
+  /** Null for a finals-week item. */
+  readonly week: number | null;
+  readonly points: number;
+  readonly unlockAt: string | null;
+  readonly dueAt: string;
+  readonly lockAt: string;
+  /** The three dates as `edutools dates --show` prints them, in the term's time zone. */
+  readonly unlockText: string;
+  readonly dueText: string;
+  readonly lockText: string;
+}
+
+export interface CourseSchedule {
+  readonly repo: string;
+  readonly weeks: number;
+  readonly timezone: string;
+  readonly shiftDays: number;
+  readonly items: readonly DateRow[];
+  readonly totalPoints: number;
+  /** Empty when the schedule is coherent. */
+  readonly problems: readonly string[];
+}
+
+/** What Edit object works on: objects.ts's KINDS. */
+export type EditKind = "page" | "assignment" | "discussion" | "quiz" | "module";
+
+export const EDIT_KINDS: readonly EditKind[] = ["page", "assignment", "discussion", "quiz", "module"];
+
+export interface ObjectSummary {
+  /** The url slug for a page, the numeric id for everything else. */
+  readonly id: string;
+  readonly title: string;
+  readonly published: boolean;
+}
+
+export interface ObjectDetail {
+  readonly kind: EditKind;
+  readonly id: string;
+  readonly title: string;
+  /** Null for a module, which has no body. */
+  readonly body: string | null;
+  readonly points: number | null;
+  readonly dueAt: string | null;
+  readonly unlockAt: string | null;
+  readonly lockAt: string | null;
+  readonly published: boolean;
+  readonly htmlUrl: string;
+  /** The repo path the current repository's manifest tracks this object under, if any. */
+  readonly managedBy: string | null;
+}
+
+export type BodyInput = { readonly kind: "html"; readonly html: string } | { readonly kind: "markdown"; readonly file: string };
+
+/**
+ * Only what the designer changed. A field left out is not sent, so a save never
+ * clears what it did not mention. An empty date string clears that date.
+ */
+export interface ObjectChanges {
+  readonly title?: string;
+  readonly body?: BodyInput;
+  readonly points?: number;
+  readonly dueAt?: string;
+  readonly unlockAt?: string;
+  readonly lockAt?: string;
+}
+
+export interface SaveObjectRequest {
+  readonly courseId: string;
+  readonly kind: EditKind;
+  /** Null creates a new, unpublished object. */
+  readonly id: string | null;
+  readonly changes: ObjectChanges;
+  /**
+   * The designer ticked "This is visible to students; change it anyway". Without
+   * it, a save to an object Canvas reports as published is refused.
+   */
+  readonly changeVisible: boolean;
+}
+
+export interface ObjectTarget {
+  readonly courseId: string;
+  readonly kind: EditKind;
+  readonly id: string;
+}
+
+export interface RenderedBody {
+  readonly title: string;
+  readonly html: string;
+}
+
 export interface AppInfo {
   readonly version: string;
   readonly configPath: string;
@@ -206,6 +333,27 @@ export interface EdutoolsApi {
   startSnapshot(request: SnapshotRequest): Promise<SnapshotSummary>;
   /** Reveal a snapshot folder in Finder or Explorer. */
   showFolder(folder: string): Promise<void>;
+  /** The repository chosen for this course on the default site, checked again now. */
+  getCourseRepo(courseId: string): Promise<RepoInfo | null>;
+  /** Pick the repository folder with the native dialog; null when the user cancels. */
+  chooseCourseRepo(courseId: string): Promise<RepoInfo | null>;
+  forgetCourseRepo(courseId: string): Promise<void>;
+  /** The module outline a push will build, from the repository alone. */
+  courseOutline(courseId: string): Promise<CourseOutline>;
+  /** Write the outline JSON through a save dialog; the path written, or null when cancelled. */
+  exportOutline(courseId: string): Promise<string | null>;
+  /** The semester's computed dates, optionally previewed shifted by whole days. Writes nothing. */
+  courseSchedule(courseId: string, shiftDays: number): Promise<CourseSchedule>;
+  listObjects(courseId: string, kind: EditKind): Promise<ObjectSummary[]>;
+  getObjectDetail(target: ObjectTarget): Promise<ObjectDetail>;
+  /** Pick a markdown file for a body, starting in the course repository. */
+  chooseMarkdownFile(courseId: string): Promise<string | null>;
+  /** Render a markdown file the way a push would, to preview it. */
+  renderMarkdownBody(courseId: string, file: string): Promise<RenderedBody>;
+  saveObject(request: SaveObjectRequest): Promise<ObjectDetail>;
+  setObjectPublished(target: ObjectTarget, published: boolean): Promise<ObjectDetail>;
+  /** Delete after the renderer has confirmed; resolves with the title of what went. */
+  deleteObject(target: ObjectTarget): Promise<string>;
 }
 
 export type ApiMethod = keyof EdutoolsApi;
@@ -237,6 +385,19 @@ const METHODS = {
   chooseFolder: true,
   startSnapshot: true,
   showFolder: true,
+  getCourseRepo: true,
+  chooseCourseRepo: true,
+  forgetCourseRepo: true,
+  courseOutline: true,
+  exportOutline: true,
+  courseSchedule: true,
+  listObjects: true,
+  getObjectDetail: true,
+  chooseMarkdownFile: true,
+  renderMarkdownBody: true,
+  saveObject: true,
+  setObjectPublished: true,
+  deleteObject: true,
 } as const satisfies Record<ApiMethod, true>;
 
 // Object.keys widens to string[]; the satisfies clause above guarantees every key is an ApiMethod.

@@ -12,9 +12,19 @@ export const SETTINGS_FILENAME = "app-settings.json";
 
 export interface AppSettings {
   readonly currentCourse: CurrentCourse | null;
+  /** Course repository folder per course, keyed by `repoKey`. */
+  readonly repos: Readonly<Record<string, string>>;
 }
 
-const EMPTY: AppSettings = { currentCourse: null };
+const EMPTY: AppSettings = { currentCourse: null, repos: {} };
+
+/**
+ * Repositories are remembered per site and course: a course id means nothing on
+ * another Canvas site, and one designer may keep a repo per course.
+ */
+export function repoKey(endpoint: string, courseId: string): string {
+  return `${endpoint}#${courseId}`;
+}
 
 export function settingsPath(options: CredentialOptions): string {
   return path.join(configDir(options), SETTINGS_FILENAME);
@@ -52,10 +62,20 @@ export function loadSettings(options: CredentialOptions): AppSettings {
   // Checked to be a non-null object just above.
   const record = data as Record<string, unknown>;
   const course = record.currentCourse;
+  const rawRepos = record.repos;
+  const repos: Record<string, string> = {};
+  if (typeof rawRepos === "object" && rawRepos !== null && !Array.isArray(rawRepos)) {
+    for (const [key, value] of Object.entries(rawRepos)) {
+      if (typeof value === "string") {
+        repos[key] = value;
+      }
+    }
+  }
   return {
     currentCourse: isCourse(course)
       ? { id: course.id, name: course.name, code: course.code, endpoint: course.endpoint }
       : null,
+    repos,
   };
 }
 

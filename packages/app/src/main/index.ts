@@ -1,7 +1,7 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, Menu, type OpenDialogOptions, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, type OpenDialogOptions, type SaveDialogOptions, shell } from "electron";
 import { type Emit, sendEvent } from "../shared/ipc";
-import { type ApiDeps, createApi } from "./api";
+import { type ApiDeps, createApi, type FileFilter } from "./api";
 import { registerApi } from "./ipc";
 import { buildMenu } from "./menu";
 import { seedSmoke, smokeDeps, smokeTest } from "./smoke";
@@ -26,15 +26,28 @@ const emit: Emit = (event, payload) => {
   }
 };
 
-async function chooseFolder(defaultPath: string): Promise<string | null> {
-  const options: OpenDialogOptions = {
-    title: "Choose a snapshot folder",
+async function open(options: OpenDialogOptions): Promise<string | null> {
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+function chooseFolder(defaultPath: string, title = "Choose a folder"): Promise<string | null> {
+  return open({
+    title,
     buttonLabel: "Choose",
     defaultPath,
     properties: ["openDirectory", "createDirectory", "promptToCreate"],
-  };
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
-  return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+}
+
+function chooseOpenFile(defaultPath: string, title: string, filters: FileFilter[]): Promise<string | null> {
+  return open({ title, buttonLabel: "Choose", defaultPath, filters, properties: ["openFile"] });
+}
+
+async function chooseSaveFile(defaultPath: string, title: string, filters: FileFilter[]): Promise<string | null> {
+  const options: SaveDialogOptions = { title, defaultPath, filters };
+  const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+  return result.canceled || !result.filePath ? null : result.filePath;
 }
 
 function realDeps(): ApiDeps {
@@ -44,6 +57,8 @@ function realDeps(): ApiDeps {
     openExternal: (url) => shell.openExternal(url),
     documentsDir: app.getPath("documents"),
     chooseFolder,
+    chooseOpenFile,
+    chooseSaveFile,
     showItemInFolder: (fullPath) => shell.showItemInFolder(fullPath),
   };
 }

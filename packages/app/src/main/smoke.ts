@@ -1,13 +1,13 @@
 /**
  * EDUTOOLS_SMOKE_TEST=1 opens the window, checks that the bridge reached the page,
  * that every working screen mounts and draws from the api, that a snapshot streams
- * progress events and finishes, and that the native keychain module loads. It
- * prints the outcome and quits. CI and a packaged-build check run it; a user never
- * sees it.
+ * progress events and finishes, and that both native modules (the keychain and the
+ * CSS inliner) load. It prints the outcome and quits. CI and a packaged-build
+ * check run it; a user never sees it.
  *
- * It runs against a throwaway config directory, an in-memory token store and a
- * fake Canvas client, so it never reads the real site list or keychain token and
- * never reaches a Canvas server.
+ * It runs against a throwaway config directory, an in-memory token store, a fake
+ * Canvas client and a sample course repository, so it never reads the real site
+ * list or keychain token and never reaches a Canvas server.
  */
 
 import { mkdtempSync } from "node:fs";
@@ -19,6 +19,8 @@ import type { Payload } from "@edutools/core/types";
 import { app, type BrowserWindow } from "electron";
 import type { EdutoolsApi } from "../shared/ipc";
 import type { ApiDeps, CanvasClient } from "./api";
+import { renderBody } from "./repo";
+import { writeSampleRepo } from "./sampleRepo";
 
 const COURSE = { id: "101", name: "Smoke Test Course", code: "SMOKE 101" };
 const ENDPOINT = "https://smoke-test.invalid";
@@ -40,12 +42,21 @@ function fakeCanvas(): CanvasClient {
   const page: Payload = {
     url: "smoke-page",
     title: "Smoke Page",
-    published: false,
+    // Published, so Edit object has to show its "visible to students" guard.
+    published: true,
     updated_at: "2026-09-01T12:00:00Z",
     html_url: url("pages/smoke-page"),
     body: "<p>Hello.</p>",
   };
   const list = async (items: Payload[]) => items.map((i) => ({ ...i }));
+  const objects: Record<string, Payload[]> = { page: [page], assignment: [assignment] };
+  const find = async (kind: string, id: string): Promise<Payload> => {
+    const found = (objects[kind] ?? []).find((o) => String(kind === "page" ? o.url : o.id) === id);
+    if (!found) {
+      throw new Error(`Canvas API error 404: no ${kind} ${id}`);
+    }
+    return { ...found };
+  };
   return {
     getCourses: async () => [course],
     getCourse: async () => course,
@@ -73,27 +84,42 @@ function fakeCanvas(): CanvasClient {
       await writeFile(dest, "smoke\n");
       return 6;
     },
+    getObject: (kind, _course, id) => find(kind, id),
+    // The smoke test never saves or deletes; these only complete the client.
+    createObject: async () => ({ id: 1, title: "New", published: false }),
+    updateObject: (kind, _course, id) => find(kind, id),
+    deleteObject: (kind, _course, id) => find(kind, id),
   };
 }
+
+let sampleRepo = "";
 
 /** Api dependencies that keep the smoke test away from the user's real setup. */
 export function smokeDeps(version: string): ApiDeps {
   const dir = mkdtempSync(path.join(os.tmpdir(), "edutools-smoke-"));
+  sampleRepo = writeSampleRepo(path.join(dir, "repo"));
   return {
     version,
     credentials: { dir, secrets: memoryStore(), legacyPath: path.join(dir, "config.toml") },
     canvas: () => fakeCanvas(),
     openExternal: async () => {},
     documentsDir: dir,
-    chooseFolder: async () => null,
+    // The repository dialog "picks" the sample repository; any other dialog is cancelled.
+    chooseFolder: async (_default, title) => (title?.includes("repository") ? sampleRepo : null),
+    chooseOpenFile: async () => null,
+    chooseSaveFile: async () => null,
     showItemInFolder: () => {},
   };
 }
 
-/** Put a site and a current course in the throwaway config, as a user would. */
+/** Put a site, a current course and its repository in the throwaway config, as a user would. */
 export async function seedSmoke(api: EdutoolsApi): Promise<void> {
   await api.addSite({ name: "Smoke", endpoint: ENDPOINT, token: "smoke-token" });
   await api.setCurrentCourse(COURSE);
+  const info = await api.chooseCourseRepo(COURSE.id);
+  if (!info || info.problem) {
+    throw new Error(`the sample repository did not load: ${info?.problem ?? "not chosen"}`);
+  }
 }
 
 async function waitFor(window: BrowserWindow, expression: string, what: string): Promise<void> {
@@ -119,7 +145,7 @@ export async function smokeTest(window: BrowserWindow): Promise<void> {
   const timer = setTimeout(() => {
     console.error("SMOKE FAIL: timed out");
     app.exit(2);
-  }, 60_000);
+  }, 90_000);
   try {
     await new Promise<void>((resolve) => window.webContents.once("did-finish-load", () => resolve()));
     const bridge: unknown = await window.webContents.executeJavaScript(
@@ -148,6 +174,29 @@ export async function smokeTest(window: BrowserWindow): Promise<void> {
     await waitFor(window, "document.querySelector('.snapshot-summary')", "the snapshot to finish");
     await waitFor(window, has(".snapshot-log", "Downloading"), "progress events in the log");
     await waitFor(window, has(".snapshot-problems", "rubrics"), "the snapshot's problems to be listed");
+
+    await click(window, '.nav-item[data-screen="outline"]');
+    await waitFor(window, has(".outline-table td", "Lab 1: Hello"), "the Outline screen");
+    if ((await window.webContents.executeJavaScript(has(".outline-table td", "Instructor notes"))) === true) {
+      throw new Error("the outline shows a never_publish module");
+    }
+
+    await click(window, '.nav-item[data-screen="dates"]');
+    await waitFor(window, has(".dates-table td", "Lab 1: Hello"), "the Dates screen");
+    await waitFor(window, has(".screen-body .message.ok", "consistent"), "the Dates screen to find no problems");
+
+    await click(window, '.nav-item[data-screen="edit"]');
+    await waitFor(window, has(".object-list td", "Smoke Page"), "the Edit object list");
+    await click(window, ".object-list tbody tr");
+    await waitFor(window, "document.querySelector('#edit-title')?.value === 'Smoke Page'", "the Edit object form");
+    await waitFor(window, "document.querySelector('.visible-guard')", "the published guard");
+    await waitFor(window, "document.querySelector('button.save-object')?.disabled === true", "Save to stay disabled");
+
+    // The repo's canvas.css is inlined by the native CSS inliner, so this loads it.
+    const rendered = renderBody(path.join(sampleRepo, "modules", "week-01.md"), sampleRepo);
+    if (!rendered.html.includes("style=")) {
+      throw new Error("canvas.css was not inlined into the rendered body");
+    }
 
     // A read of an account that does not exist: loads the native module and asks
     // the keychain without writing anything.

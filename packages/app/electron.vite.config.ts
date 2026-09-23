@@ -4,7 +4,7 @@ import { defineConfig } from "electron-vite";
 
 export default defineConfig({
   main: {
-    // Only package.json `dependencies` stay external (the native keychain module);
+    // Only package.json `dependencies` stay external (the native modules);
     // @edutools/core and everything else is bundled into out/main.
     build: { externalizeDeps: true },
   },
