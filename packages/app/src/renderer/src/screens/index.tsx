@@ -1,6 +1,9 @@
 import type { ComponentType } from "react";
 import type { ScreenId } from "../../../shared/screens";
 import { Courses } from "./Courses";
+import { Dates } from "./Dates";
+import { EditObject } from "./EditObject";
+import { Outline } from "./Outline";
 import { Overview } from "./Overview";
 import { placeholder } from "./Placeholder";
 import { Settings } from "./Settings";
@@ -18,7 +21,8 @@ export const SCREEN_COMPONENTS: Record<ScreenId, ComponentType<ScreenProps>> = {
   publish: placeholder("publish"),
   verify: placeholder("verify"),
   audit: placeholder("audit"),
-  outline: placeholder("outline"),
-  edit: placeholder("edit"),
+  outline: Outline,
+  dates: Dates,
+  edit: EditObject,
   settings: Settings,
 };

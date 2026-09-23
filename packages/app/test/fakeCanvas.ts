@@ -67,13 +67,13 @@ export class FakeCanvas implements CanvasClient {
     return this.answer("listAssignments", [courseId], this.assignments);
   }
   listDiscussions(courseId: string) {
-    return this.answer("listDiscussions", [courseId], [] as Payload[]);
+    return this.answer("listDiscussions", [courseId], this.discussions);
   }
   listAnnouncements(courseId: string) {
     return this.answer("listAnnouncements", [courseId], [] as Payload[]);
   }
   listQuizzes(courseId: string) {
-    return this.answer("listQuizzes", [courseId], [] as Payload[]);
+    return this.answer("listQuizzes", [courseId], this.quizzes);
   }
   listQuizQuestions(courseId: string, quizId: string) {
     return this.answer("listQuizQuestions", [courseId, quizId], [] as Payload[]);
@@ -106,6 +106,51 @@ export class FakeCanvas implements CanvasClient {
     mkdirSync(path.dirname(dest), { recursive: true });
     writeFileSync(dest, "x".repeat(size));
     return size;
+  }
+
+  discussions: Payload[] = [];
+  quizzes: Payload[] = [];
+
+  private collection(kind: string): Payload[] {
+    const lists: Record<string, Payload[]> = {
+      page: this.pages,
+      assignment: this.assignments,
+      discussion: this.discussions,
+      quiz: this.quizzes,
+      module: this.modules,
+    };
+    return lists[kind] ?? [];
+  }
+
+  private find(kind: string, objectId: string): Payload {
+    const found = this.collection(kind).find((o) => String(kind === "page" ? o.url : o.id) === objectId);
+    if (!found) {
+      throw new Error(`Canvas API error 404: no ${kind} ${objectId}`);
+    }
+    return found;
+  }
+
+  getObject(kind: string, courseId: string, objectId: string) {
+    return this.answer("getObject", [kind, courseId, objectId], null).then(() => structuredClone(this.find(kind, objectId)));
+  }
+  createObject(kind: string, courseId: string, fields: Record<string, string>) {
+    const created: Payload =
+      kind === "page" ? { url: "new-page", title: "New", published: false } : { id: 900, name: "New", title: "New", published: false };
+    return this.answer("createObject", [kind, courseId, fields], created);
+  }
+  /** Echoes the stored object, with `published` changed when the fields say so. */
+  updateObject(kind: string, courseId: string, objectId: string, fields: Record<string, string>) {
+    return this.answer("updateObject", [kind, courseId, objectId, fields], null).then(() => {
+      const stored = this.find(kind, objectId);
+      const published = Object.entries(fields).find(([k]) => k === "published" || k.endsWith("[published]"));
+      if (published) {
+        stored.published = published[1] === "true";
+      }
+      return structuredClone(stored);
+    });
+  }
+  deleteObject(kind: string, courseId: string, objectId: string) {
+    return this.answer("deleteObject", [kind, courseId, objectId], null).then(() => structuredClone(this.find(kind, objectId)));
   }
 
   /** The methods called, in order. */

@@ -16,6 +16,7 @@ export type ScreenId =
   | "verify"
   | "audit"
   | "outline"
+  | "dates"
   | "edit"
   | "settings";
 
@@ -77,15 +78,22 @@ export const SCREENS: readonly ScreenInfo[] = [
     id: "outline",
     title: "Outline",
     group: "Course repository",
-    summary: "Preview the module outline and the semester's due dates.",
-    available: false,
+    summary: "The modules a push will build from the course repository, item by item.",
+    available: true,
+  },
+  {
+    id: "dates",
+    title: "Dates",
+    group: "Course repository",
+    summary: "The semester's schedule computed from canvas.toml, with any problems. Read only.",
+    available: true,
   },
   {
     id: "edit",
     title: "Edit object",
     group: "Canvas",
-    summary: "Create, update, publish or delete a single page, assignment, quiz or module.",
-    available: false,
+    summary: "Create, update, publish or delete a single page, assignment, discussion, quiz or module.",
+    available: true,
   },
   {
     id: "settings",

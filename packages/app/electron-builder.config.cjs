@@ -22,15 +22,15 @@ module.exports = {
     output: "release",
     buildResources: "resources",
   },
-  // Everything but the native keychain module is bundled into out/ by
+  // Everything but the native modules (keychain, CSS inliner) is bundled into out/ by
   // electron-vite, so the app needs only out/ and package.json.
   files: ["out/**/*", "package.json"],
-  // @napi-rs/keyring is a prebuilt N-API binary: it is ABI-stable across Node and
+  // Both native modules are prebuilt N-API binaries: ABI-stable across Node and
   // Electron versions, so there is nothing to rebuild, and a .node file cannot be
   // loaded from inside an asar archive.
   npmRebuild: false,
   asar: true,
-  asarUnpack: ["**/*.node", "node_modules/@napi-rs/**"],
+  asarUnpack: ["**/*.node", "node_modules/@napi-rs/**", "node_modules/@css-inline/**"],
   mac: {
     target: [{ target: "dmg", arch: ["arm64", "x64"] }],
     category: "public.app-category.education",

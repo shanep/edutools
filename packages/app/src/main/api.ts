@@ -6,7 +6,7 @@
  * store and a fake Canvas client.
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CanvasLMS, DEFAULT_ENDPOINT } from "@edutools/core/canvas";
@@ -28,11 +28,32 @@ import { INDEX_NAME, KINDS, type PullCanvas } from "@edutools/core/pull";
 import { toCourseRow } from "../shared/courses";
 import type { CourseChoice, CurrentCourse, Emit, EdutoolsApi, SiteView, TestResult } from "../shared/ipc";
 import { groupNames, toAssignmentGroupList, toAssignmentRow, toModuleRow, toPageRow } from "../shared/overview";
-import { loadSettings, saveSettings } from "./settings";
+import {
+  deleteObject,
+  type EditContext,
+  getDetail,
+  listObjects,
+  requireKind,
+  requireObjectId,
+  saveObject,
+  setPublished,
+} from "./editing";
+import { buildOutline, buildSchedule, inspectRepo, outlineJsonText, renderBody } from "./repo";
+import { loadSettings, repoKey, saveSettings } from "./settings";
 import { checkKinds, defaultSnapshotFolder, runSnapshot } from "./snapshot";
 
-/** The part of CanvasLMS the app uses: the course reads, and everything a pull calls. */
-export type CanvasClient = PullCanvas & Pick<CanvasLMS, "getCourses" | "getCourse">;
+/**
+ * The part of CanvasLMS the app uses: the course reads, everything a pull calls,
+ * and the four single-object calls Edit object makes.
+ */
+export type CanvasClient = PullCanvas &
+  Pick<CanvasLMS, "getCourses" | "getCourse" | "getObject" | "createObject" | "updateObject" | "deleteObject">;
+
+/** A file type a dialog offers, as Electron's FileFilter. */
+export interface FileFilter {
+  readonly name: string;
+  readonly extensions: string[];
+}
 
 export interface ApiDeps {
   readonly version: string;
@@ -44,7 +65,11 @@ export interface ApiDeps {
   /** Where a snapshot goes by default, under `edutools/`. Defaults to ~/Documents. */
   readonly documentsDir?: string;
   /** The native folder dialog. */
-  readonly chooseFolder?: (defaultPath: string) => Promise<string | null>;
+  readonly chooseFolder?: (defaultPath: string, title?: string) => Promise<string | null>;
+  /** The native open-file dialog. */
+  readonly chooseOpenFile?: (defaultPath: string, title: string, filters: FileFilter[]) => Promise<string | null>;
+  /** The native save dialog. */
+  readonly chooseSaveFile?: (defaultPath: string, title: string, filters: FileFilter[]) => Promise<string | null>;
   /** Reveal a path in Finder or Explorer. */
   readonly showItemInFolder?: (fullPath: string) => void;
 }
@@ -127,6 +152,48 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
   const connect = async (): Promise<{ client: CanvasClient; endpoint: string }> => {
     const resolved = await resolveCredentials(undefined, options);
     return { client: canvas(resolved.endpoint, resolved.token), endpoint: resolved.endpoint };
+  };
+
+  const siteEndpoint = (): string => {
+    const site = defaultSite(options);
+    if (!site) {
+      throw new Error("No Canvas site is set up. Add one in Settings.");
+    }
+    return site.endpoint;
+  };
+
+  /** The repository remembered for this course on the default site, or null. */
+  const repoOf = (courseId: string): string | null => {
+    const site = defaultSite(options);
+    return site ? (loadSettings(options).repos[repoKey(site.endpoint, courseId)] ?? null) : null;
+  };
+
+  const requireRepo = (courseId: string): string => {
+    const repo = repoOf(courseId);
+    if (repo === null) {
+      throw new Error("No course repository is chosen for this course. Choose the folder that holds its canvas.toml.");
+    }
+    if (!existsSync(repo)) {
+      throw new Error(`The course repository ${repo} is not there any more. Choose it again.`);
+    }
+    return repo;
+  };
+
+  const editContext = async (courseId: string): Promise<EditContext> => {
+    const { client, endpoint } = await connect();
+    return { client, endpoint, courseId, repo: repoOf(courseId) };
+  };
+
+  const editTarget = async (target: unknown) => {
+    if (typeof target !== "object" || target === null) {
+      throw new Error("Say which object.");
+    }
+    // A non-null object from the renderer: its three fields are checked below.
+    const t = target as Record<string, unknown>;
+    const courseId = requireCourseId(t.courseId);
+    const kind = requireKind(t.kind);
+    const id = requireObjectId(kind, t.id);
+    return { ctx: await editContext(courseId), kind, id };
   };
 
   return {
@@ -272,7 +339,7 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
         throw new Error("Choosing a folder is not available here.");
       }
       const start = typeof defaultPath === "string" && path.isAbsolute(defaultPath) ? defaultPath : documents;
-      return deps.chooseFolder(existingAncestor(start));
+      return deps.chooseFolder(existingAncestor(start), "Choose a snapshot folder");
     },
 
     async startSnapshot(request) {
@@ -305,6 +372,115 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
       // the folder would open its parent with the folder selected.
       const index = path.join(target, INDEX_NAME);
       deps.showItemInFolder(existsSync(index) ? index : target);
+    },
+
+    async getCourseRepo(courseId) {
+      const folder = repoOf(requireCourseId(courseId));
+      return folder === null ? null : inspectRepo(folder);
+    },
+
+    async chooseCourseRepo(courseId) {
+      const id = requireCourseId(courseId);
+      if (!deps.chooseFolder) {
+        throw new Error("Choosing a folder is not available here.");
+      }
+      const endpoint = siteEndpoint();
+      const picked = await deps.chooseFolder(
+        existingAncestor(repoOf(id) ?? documents),
+        "Choose the course repository (the folder with canvas.toml)",
+      );
+      if (picked === null) {
+        return null;
+      }
+      const info = inspectRepo(path.normalize(picked));
+      // A folder with no canvas.toml is not remembered: it can never become a
+      // repository by editing, whereas a canvas.toml with a mistake can.
+      if (!existsSync(path.join(info.path, "canvas.toml"))) {
+        return info;
+      }
+      const settings = loadSettings(options);
+      saveSettings({ ...settings, repos: { ...settings.repos, [repoKey(endpoint, id)]: info.path } }, options);
+      return info;
+    },
+
+    async forgetCourseRepo(courseId) {
+      const key = repoKey(siteEndpoint(), requireCourseId(courseId));
+      const settings = loadSettings(options);
+      const { [key]: _gone, ...repos } = settings.repos;
+      saveSettings({ ...settings, repos }, options);
+    },
+
+    async courseOutline(courseId) {
+      const repo = requireRepo(requireCourseId(courseId));
+      return { repo, modules: buildOutline(repo) };
+    },
+
+    async exportOutline(courseId) {
+      const repo = requireRepo(requireCourseId(courseId));
+      if (!deps.chooseSaveFile) {
+        throw new Error("Saving a file is not available here.");
+      }
+      // Built before the dialog, so a broken repo says so rather than after a save.
+      const text = outlineJsonText(repo);
+      const target = await deps.chooseSaveFile(path.join(repo, "outline.json"), "Export the module outline", [
+        { name: "JSON", extensions: ["json"] },
+      ]);
+      if (target === null) {
+        return null;
+      }
+      writeFileSync(target, text, "utf8");
+      return target;
+    },
+
+    async courseSchedule(courseId, shiftDays) {
+      const repo = requireRepo(requireCourseId(courseId));
+      const days = shiftDays ?? 0;
+      if (typeof days !== "number" || !Number.isInteger(days) || Math.abs(days) > 366) {
+        throw new Error("Shift by a whole number of days, at most a year either way.");
+      }
+      return buildSchedule(repo, days);
+    },
+
+    async listObjects(courseId, kind) {
+      const id = requireCourseId(courseId);
+      const { client } = await connect();
+      return listObjects(client, id, requireKind(kind));
+    },
+
+    async getObjectDetail(target) {
+      const { ctx, kind, id } = await editTarget(target);
+      return getDetail(ctx, kind, id);
+    },
+
+    async chooseMarkdownFile(courseId) {
+      const id = requireCourseId(courseId);
+      if (!deps.chooseOpenFile) {
+        throw new Error("Choosing a file is not available here.");
+      }
+      return deps.chooseOpenFile(existingAncestor(repoOf(id) ?? documents), "Choose a markdown file for the body", [
+        { name: "Markdown", extensions: ["md", "markdown"] },
+      ]);
+    },
+
+    async renderMarkdownBody(courseId, file) {
+      const id = requireCourseId(courseId);
+      return renderBody(requireText(file, "The markdown file"), repoOf(id));
+    },
+
+    async saveObject(request) {
+      const courseId = requireCourseId(request?.courseId);
+      const ctx = await editContext(courseId);
+      return saveObject(ctx, request);
+    },
+
+    async setObjectPublished(target, published) {
+      const { ctx, kind, id } = await editTarget(target);
+      return setPublished(ctx, kind, id, published);
+    },
+
+    async deleteObject(target) {
+      const { ctx, kind, id } = await editTarget(target);
+      return deleteObject(ctx, kind, id);
     },
   };
 }

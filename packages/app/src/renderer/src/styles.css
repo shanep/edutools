@@ -459,3 +459,59 @@ table.grid.compact {
 .snapshot-problems {
   color: var(--warn);
 }
+
+.narrow-input {
+  width: 80px;
+}
+
+.form-grid textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+}
+
+.form-grid {
+  grid-template-columns: max-content minmax(200px, 1fr);
+}
+
+.check-row,
+.date-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.link-button {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: LinkText;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.visible-guard {
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.buttons .spacer {
+  flex: 1;
+}
+
+table.grid td.strong {
+  font-weight: 600;
+}
+
+table.grid td.indented {
+  padding-left: 22px;
+}
+
+.outline-heading {
+  font-style: italic;
+}
+
+.repo-bar code {
+  word-break: break-all;
+}
