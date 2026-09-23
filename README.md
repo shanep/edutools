@@ -74,13 +74,16 @@ The first site added becomes the default.
 
 ```bash
 edutools site list [--json]        # every site, which is the default, and a masked hint of each token
+edutools site token <name>         # replace a site's token, e.g. after it expires
 edutools site default <name>       # the site commands use when --site is not given
 edutools site remove <name>        # drop a site and delete its token from the keychain
 edutools --site <name> <command>   # use another site for one command
 ```
 
-The CLI has no command that replaces a token in place: `site remove` and then
-`site add` again, or use the desktop app's Settings screen.
+`site token` reads the new token the same way `site add` does, at a hidden prompt
+or from the first line of stdin (`pbpaste | edutools site token bsu`), and keeps
+the site's name and endpoint. The desktop app's Settings screen can replace a
+token too.
 
 ### Moving from the old config.toml
 
@@ -117,6 +120,7 @@ edutools init                                      import an old config.toml tok
 edutools check [--json]                            verify the credentials work
 edutools site list [--json]                        list sites and token hints
 edutools site add <name> --endpoint <url>          add a site; the token is prompted for or piped
+edutools site token <name>                         replace a site's token; prompted for or piped
 edutools site remove <name>                        remove a site and its keychain token
 edutools site default <name>                       make a site the default
 
@@ -132,10 +136,11 @@ edutools pull [course_id] [-o|--out <dir>] [--only <kind>]... [--json]
                                                    snapshot the whole course to disk
 
 edutools push <repo> --course <id> [options]       publish a course repo into Canvas
-edutools verify <repo> --course <id>               read published content back and prove it landed
+edutools verify <repo> --course <id> [--json]      read published content back and prove it landed
 edutools audit <repo> --course <id> [--json]       compare the manifest with the live course, both ways
 edutools outline <repo> [--out <file>]             the module outline a push builds, from the repo alone
-edutools dates <repo> [--show] [--shift <Nd>]      due dates computed from canvas.toml
+edutools dates <repo> [--show] [--shift <Nd>] [--json]
+                                                   due dates computed from canvas.toml
 
 edutools create <kind> -c <id> [options]           create one page/assignment/discussion/quiz/module
 edutools update <kind> <object_id> -c <id> [options]
@@ -174,7 +179,7 @@ usage error such as a missing required option.
 --path <file>          limit to specific repo files, exact or glob (repeatable)
 --verify               read everything back afterwards (the default)
 --no-verify            skip that read-back
---preview <dir>        also write the rendered HTML to a directory for inspection
+--preview <dir>        also write the rendered HTML to a directory; still pushes unless --dry-run
 --clean                start of term: delete what the repo does not own, then push all
 -y, --yes              with --clean, skip the confirmation prompt
 ```
@@ -234,10 +239,12 @@ Without `--json` these print a table meant for humans. With `--json` they print
 the API payload verbatim, which is the mode to use when another program is
 consuming the output.
 
-`check --json` prints `{"endpoint", "source", "site", "courses"}`: where the
-credentials came from (`env` or `keychain`), which site, and how many courses the
-token can see. When the credentials are missing or rejected it prints nothing on
-stdout, explains on stderr, and exits 1.
+`check --json` always prints one object on stdout. On success it is
+`{"ok": true, "endpoint", "source", "site", "courses"}`: where the credentials came
+from (`env` or `keychain`), which site, and how many courses the token can see.
+When the credentials are missing or rejected it is
+`{"ok": false, "endpoint", "error"}` (`endpoint` is null when no site is set up),
+with the explanation on stderr too, and it exits 1.
 
 ### Snapshotting a course
 
@@ -308,12 +315,14 @@ exception, since listing what to delete means reading the course.
 
 A push that hits a problem (a malformed `canvas.toml`, a `--path` that matches
 nothing, a file that fails to render, a Canvas error on one object) lists every
-problem and exits 1. `--preview <dir>` writes each rendered page as an HTML file
-to look at in a browser; combine it with `--dry-run` to render without writing to
-Canvas.
+problem and exits 1. `--preview <dir>` also writes each rendered page as an HTML
+file to look at in a browser. It does not stop the push: without `--dry-run` the
+push still writes to Canvas, so combine the two to render without writing.
 
 `verify` walks the manifest and proves each tracked object is still in Canvas and
-intact. `audit` asks the other question too: what does Canvas hold that no repo
+intact, exiting 1 when anything failed. `verify --json` prints
+`{"checked", "drafts", "failures": [{"key", "check", "detail"}]}` instead of the
+table, with the same exit code. `audit` asks the other question too: what does Canvas hold that no repo
 file produced, and what does the manifest still track that Canvas no longer has.
 
 ```bash
@@ -454,9 +463,16 @@ semantically against what the repo says it should be, so a partial or stale publ
 is visible instead of silent.
 
 `dates` computes assignment due dates from the term skeleton in the repo's
-`canvas.toml`, and needs no token. `--show` prints the computed schedule;
-`--shift 7d` (or `-3d`) previews the whole term moved. Any inconsistency with the
-syllabus schedule is listed and exits 1.
+`canvas.toml`, and needs no token. It only prints: the dates reach Canvas when
+`push` writes each item. `--show` prints the computed schedule; `--shift 7d` (or
+`-3d`) previews the whole term moved. Any inconsistency with the syllabus schedule
+is listed and exits 1.
+
+`dates --json` prints `{"items": [...], "problems": [...]}`. Each item has `path`,
+`title`, `kind`, `week` (null in finals week), `points`, and `unlock_at`, `due_at`
+and `lock_at` as the ISO 8601 strings `push` sends Canvas
+(`2026-10-14T23:59:00-06:00`; `unlock_at` is null when there is none). It exits 1
+when `problems` is not empty.
 
 ### Course repository layout
 

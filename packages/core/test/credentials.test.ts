@@ -170,13 +170,17 @@ describe("resolveCredentials", () => {
     ).rejects.toThrow(/no token is saved/);
   });
 
-  it("explains what to do when nothing is configured", async () => {
-    await expect(resolveCredentials(undefined, opts)).rejects.toThrow(/Add one in Settings or run 'edutools init'/);
+  it("explains what to do when nothing is configured, in the app and the CLI", async () => {
+    await expect(resolveCredentials(undefined, opts)).rejects.toThrow(
+      "No Canvas site is set up. Add one in the app's Settings, or run 'edutools site add'.",
+    );
   });
 
-  it("says which site is missing its token", async () => {
+  it("says which site is missing its token, and how to add one from either side", async () => {
     await addSite({ name: "BSU", endpoint: BSU }, opts);
-    await expect(resolveCredentials(undefined, opts)).rejects.toThrow("No token is saved for the site 'BSU'.");
+    await expect(resolveCredentials(undefined, opts)).rejects.toThrow(
+      "No token is saved for the site 'BSU'. Add one in the app's Settings, or run 'edutools site token BSU'.",
+    );
   });
 });
 

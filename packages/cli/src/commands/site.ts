@@ -2,8 +2,8 @@
  * `site`: manage Canvas sites and their keychain tokens without the desktop app.
  *
  * A token is never taken as a flag, so it never lands in shell history or a
- * process listing: `site add` reads it from a hidden prompt, or from stdin when
- * piped (`pbpaste | edutools site add bsu --endpoint https://...`).
+ * process listing: `site add` and `site token` read it from a hidden prompt, or
+ * from stdin when piped (`pbpaste | edutools site add bsu --endpoint https://...`).
  */
 
 import {
@@ -11,9 +11,11 @@ import {
   CredentialsError,
   configPath,
   listSites,
+  loadSites,
   maskToken,
   removeSite,
   setDefaultSite,
+  setToken,
 } from "@edutools/core/credentials";
 import type { Cli, Register } from "../cli";
 import { printTable } from "../format";
@@ -84,6 +86,27 @@ export const register: Register = (program, cli) => {
       );
       const { c } = cli;
       cli.print(`${c.green("✓")} added site ${c.bold(added.name)} (${added.endpoint}), token ${maskToken(token)}`);
+      cli.print(c.dim("Run 'edutools check' to verify the token works."));
+    });
+
+  site
+    .command("token")
+    .description(
+      "Replace the token saved for a Canvas site, e.g. after it expires or is revoked.\n\n" +
+        "The token is read from a hidden prompt, or from the first line of stdin when\n" +
+        "piped, never from a flag. The site's name and endpoint are unchanged.",
+    )
+    .argument("<name>", "The site whose token to replace")
+    .action(async (name: string) => {
+      const opts = cli.deps.credentials;
+      // Checked before the prompt, so a typo is not discovered after pasting a token.
+      const known = await guarded(cli, () => loadSites(opts).sites.some((s) => s.name === name));
+      if (!known) throw cli.fail(`No Canvas site named '${name}'.`);
+      const token = (await cli.secret(`New Canvas token for ${name}: `))?.trim();
+      if (!token) throw cli.fail("No token given; nothing was changed.");
+      await guarded(cli, () => setToken(name, token, opts));
+      const { c } = cli;
+      cli.print(`${c.green("✓")} replaced the token of site ${c.bold(name)}, now ${maskToken(token)}`);
       cli.print(c.dim("Run 'edutools check' to verify the token works."));
     });
 

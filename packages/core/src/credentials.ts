@@ -113,7 +113,7 @@ export function configPath(options: CredentialOptions = {}): string {
   return path.join(configDir(options), CONFIG_FILENAME);
 }
 
-/** The Python CLI's config file, which held the token in plain text. */
+/** The legacy config file, which held the token in plain text. */
 export function legacyConfigPath(options: CredentialOptions = {}): string {
   return options.legacyPath ?? path.join(options.home ?? os.homedir(), ".config", "edutools", "config.toml");
 }
@@ -346,7 +346,13 @@ export function defaultSite(options: CredentialOptions = {}): Site | null {
 // Resolution
 // ============================================================================
 
-const NOT_CONFIGURED = "No Canvas site is set up. Add one in Settings or run 'edutools init'.";
+/** A site name as it would be typed at a shell; imported names such as `host (2)` need quotes. */
+function shellWord(name: string): string {
+  return /^[\w.@:+-]+$/.test(name) ? name : JSON.stringify(name);
+}
+
+// Shared by the app and the CLI, so it names the way in from each.
+const NOT_CONFIGURED = "No Canvas site is set up. Add one in the app's Settings, or run 'edutools site add'.";
 
 /**
  * The endpoint and token to build a CanvasLMS with.
@@ -388,7 +394,10 @@ export async function resolveCredentials(
   }
   const token = await secrets.get(chosen.endpoint);
   if (!token) {
-    throw new CredentialsError(`No token is saved for the site '${chosen.name}'. Add one in Settings.`);
+    throw new CredentialsError(
+      `No token is saved for the site '${chosen.name}'. ` +
+        `Add one in the app's Settings, or run 'edutools site token ${shellWord(chosen.name)}'.`,
+    );
   }
   return { endpoint: chosen.endpoint, token, source: "keychain", site: chosen.name };
 }
@@ -405,13 +414,12 @@ export interface LegacyImport {
 }
 
 /**
- * Read the Python CLI's `~/.config/edutools/config.toml` `[canvas]` table and move
- * its token into the keychain. The endpoint defaults as it did there. When a site
+ * Read the legacy `~/.config/edutools/config.toml` `[canvas]` table and move its
+ * token into the keychain. The endpoint defaults as it did there. When a site
  * already uses that endpoint its token is replaced; otherwise a site named after
  * the host is added. Returns null when there is no file or no token in it.
  *
- * The old file is left alone: the Python CLI still reads it until the port lands,
- * and deleting a plain-text token is for the user to decide.
+ * The old file is left alone: deleting a plain-text token is for the user to decide.
  */
 export async function importLegacyConfig(options: CredentialOptions = {}): Promise<LegacyImport | null> {
   const file = legacyConfigPath(options);

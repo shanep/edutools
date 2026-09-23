@@ -1,5 +1,5 @@
 import { type CourseDates, courseDates } from "@edutools/core/course";
-import { DateConfigError } from "@edutools/core/dates";
+import { DateConfigError, isoformat } from "@edutools/core/dates";
 import { formatG } from "@edutools/core/objects";
 import type { DateTime } from "luxon";
 import { CliExit, type Register } from "../cli";
@@ -18,12 +18,13 @@ export const register: Register = (program, cli) => {
         "Reads the term skeleton and per-type date policies from <repo>/canvas.toml and\n" +
         "derives the three Canvas date fields for every gradable item. --show needs no\n" +
         "Canvas token: it prints the whole semester so it can be reviewed before anything\n" +
-        "is written.",
+        "is written. The dates reach Canvas when 'edutools push' writes the items.",
     )
     .argument("<repo>", "Course repository containing canvas.toml")
     .option("--show", "Print the generated schedule and exit")
     .option("--shift <days>", "Shift the whole term, e.g. '7d' or '-3d'")
-    .action((repo: string, options: { show?: boolean; shift?: string }) => {
+    .option("--json", "Emit {items, problems} as JSON; exits 1 when there are problems")
+    .action((repo: string, options: { show?: boolean; shift?: string; json?: boolean }) => {
       const { c } = cli;
       let shiftDays = 0;
       if (options.shift) {
@@ -40,6 +41,23 @@ export const register: Register = (program, cli) => {
       } catch (error) {
         if (error instanceof DateConfigError) throw cli.fail(`Date configuration error: ${error.message}`);
         throw error;
+      }
+      if (options.json) {
+        cli.json({
+          items: schedule.items.map((item) => ({
+            path: item.path,
+            title: item.title,
+            kind: item.kind,
+            week: item.week,
+            points: item.points,
+            unlock_at: item.unlockAt ? isoformat(item.unlockAt) : null,
+            due_at: isoformat(item.dueAt),
+            lock_at: isoformat(item.lockAt),
+          })),
+          problems: schedule.problems,
+        });
+        if (schedule.problems.length > 0) throw new CliExit(1);
+        return;
       }
       if (options.shift) {
         cli.print(c.yellow(`Showing the term shifted by ${shiftDays >= 0 ? "+" : ""}${shiftDays} days.\n`));
@@ -81,7 +99,7 @@ export const register: Register = (program, cli) => {
           "dates consistent with the syllabus schedule",
       );
       if (!options.show) {
-        cli.print(c.dim("--show only prints. Writing dates to Canvas arrives with 'edutools push'."));
+        cli.print(c.dim("This only prints. 'edutools push' writes these dates to Canvas with the items."));
       }
     });
 };

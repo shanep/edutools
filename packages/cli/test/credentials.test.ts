@@ -83,6 +83,55 @@ describe("site add", () => {
   });
 });
 
+describe("site token", () => {
+  const NEW = "5678~zyxwvutsrqponmlk";
+
+  it("replaces the saved token from stdin and leaves the site alone", async () => {
+    await addSite({ name: "bsu", endpoint: BSU, token: TOKEN }, credentials);
+    const result = await keychainOnly(["site", "token", "bsu"], `${NEW}\n`);
+
+    expect(result.code, result.output).toBe(0);
+    expect(secrets.entries.get(BSU)).toBe(NEW);
+    expect(loadSites(credentials)).toEqual({ defaultSite: "bsu", sites: [{ name: "bsu", endpoint: BSU }] });
+    expect(result.output).not.toContain(NEW);
+    expect(result.stdout).toContain("****nmlk");
+  });
+
+  it("sets a token on a site added without one", async () => {
+    await addSite({ name: "bsu", endpoint: BSU }, credentials);
+    const result = await keychainOnly(["site", "token", "bsu"], `${NEW}\n`);
+
+    expect(result.code, result.output).toBe(0);
+    expect(secrets.entries.get(BSU)).toBe(NEW);
+  });
+
+  it("an empty stdin changes nothing", async () => {
+    await addSite({ name: "bsu", endpoint: BSU, token: TOKEN }, credentials);
+    const result = await keychainOnly(["site", "token", "bsu"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("No token given");
+    expect(secrets.entries.get(BSU)).toBe(TOKEN);
+  });
+
+  it("an unknown site is refused before asking for a token", async () => {
+    const result = await keychainOnly(["site", "token", "nowhere"], `${NEW}\n`);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("No Canvas site named 'nowhere'");
+    expect(result.stderr).not.toContain("New Canvas token");
+    expect(secrets.entries.size).toBe(0);
+  });
+
+  it("the token is never a flag", async () => {
+    await addSite({ name: "bsu", endpoint: BSU, token: TOKEN }, credentials);
+    const result = await keychainOnly(["site", "token", "bsu", "--token", NEW]);
+
+    expect(result.code).toBe(2);
+    expect(secrets.entries.get(BSU)).toBe(TOKEN);
+  });
+});
+
 describe("site list, default and remove", () => {
   it("list --json gives token hints, never tokens", async () => {
     await addSite({ name: "bsu", endpoint: BSU, token: TOKEN }, credentials);
@@ -185,7 +234,31 @@ describe("check", () => {
     canvas.getCourses.mockResolvedValue([{ id: 1 }]);
     const result = await invoke(["check", "--json"], { client: canvas });
 
-    expect(JSON.parse(result.stdout)).toEqual({ endpoint: BSU, source: "env", site: null, courses: 1 });
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, endpoint: BSU, source: "env", site: null, courses: 1 });
+  });
+
+  it("json reports a rejected token on stdout and exits 1", async () => {
+    canvas.getCourses.mockRejectedValue(new Error("Canvas API error 401: Invalid access token."));
+    const result = await invoke(["check", "--json"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      endpoint: BSU,
+      error: "Canvas API error 401: Invalid access token.",
+    });
+  });
+
+  it("json reports nothing set up on stdout and exits 1", async () => {
+    const result = await keychainOnly(["check", "--json"]);
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      endpoint: null,
+      error: "No Canvas site is set up. Add one in the app's Settings, or run 'edutools site add'.",
+    });
+    expect(result.stderr).toContain("not configured");
   });
 
   it("a rejected token exits 1 with the error", async () => {
