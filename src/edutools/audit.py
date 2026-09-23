@@ -22,7 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from edutools.publish import Manifest, NativeItem, parse_native_items
+from edutools.dates import Term, module_title
+from edutools.publish import Manifest, NativeItem, module_entries, parse_native_items
 
 Side = Literal["stale", "untracked", "pending"]
 
@@ -35,7 +36,7 @@ class DeclaredModule:
     native: tuple[NativeItem, ...] = ()
 
 
-def declared_modules(raw: dict[str, object]) -> list[DeclaredModule]:
+def declared_modules(raw: dict[str, object], term: Term | None = None) -> list[DeclaredModule]:
     """The [[module]] tables of a parsed canvas.toml.
 
     A malformed ``canvas`` list is the push's problem to report; here it just
@@ -51,9 +52,11 @@ def declared_modules(raw: dict[str, object]) -> list[DeclaredModule]:
             continue
         try:
             native = tuple(parse_native_items(module))
+            native += tuple(e.native for e in module_entries(module) if e.native is not None)
         except ValueError:
             native = ()
-        out.append(DeclaredModule(str(module.get("title", "")), native))
+        title = module_title(module, term) if term is not None else str(module.get("title", ""))
+        out.append(DeclaredModule(title, native))
     return out
 
 

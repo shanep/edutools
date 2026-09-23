@@ -13,17 +13,19 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from edutools.canvas import CanvasLMS, as_number
-from edutools.dates import Group, ItemDates, compute, load_config
+from edutools.dates import DateConfigError, Group, ItemDates, compute, load_config, module_title
 from edutools.publish import (
     Entry,
     canvas_path,
     Manifest,
     PublishError,
+    add_heading_icons,
     assert_no_forbidden_tags,
     assignment_options,
     decorate,
     inline_css,
     mark_table_rows,
+    module_entries,
     module_keys,
     parse_native_items,
     parse_quiz,
@@ -47,6 +49,7 @@ KIND_TO_CANVAS: dict[str, str] = {
     "quiz": "quiz",
     "discussion": "discussion",
     "exam": "page",
+    "reminder": "assignment",
 }
 
 # What the module items API calls each kind of object.
@@ -56,7 +59,40 @@ _MODULE_ITEM_TYPES: dict[str, str] = {
     "discussion": "Discussion",
     "quiz": "Quiz",
     "file": "File",
+    "header": "SubHeader",
 }
+
+
+# What a `never_publish` module is written with on every push. Unpublished is the
+# real guard; the far-off unlock date is the second one, for a publish clicked in
+# the Canvas UI between pushes: students would see a module locked until 2099,
+# not its contents.
+_NEVER_PUBLISH_FIELDS: dict[str, str] = {
+    "module[published]": "false",
+    "module[unlock_at]": "2099-12-31T23:59:00Z",
+}
+
+
+def _find_module(
+    stored: list[dict[str, object]], name: str, base: str
+) -> dict[str, object] | None:
+    """The Canvas module a [[module]] table builds into, if it exists yet.
+
+    The exact name wins. Failing that, a module with the same title and some
+    other date span, "Module 3: Risk (January 25 - January 31)" from last term,
+    is the same module and is renamed rather than duplicated.
+    """
+    for module in stored:
+        if str(module.get("name")) == name:
+            return module
+    for module in stored:
+        if str(module.get("name")) == base:
+            return module
+    if base != name:
+        for module in stored:
+            if str(module.get("name")).startswith(f"{base} ("):
+                return module
+    return None
 
 
 @dataclass
@@ -129,6 +165,8 @@ class Publisher:
         self.groups: dict[str, str] = {}
         self._groups_synced = False
         self.dropped_css: set[str] = set()
+        self._never_published: set[str] | None = None
+        self._always_published: set[str] | None = None
 
     # -- rendering ------------------------------------------------------
 
@@ -136,6 +174,8 @@ class Publisher:
         """Markdown -> decorated, styled, Canvas-safe HTML."""
         title, html = render_markdown(source, self.repo)
         html = wrap_tables(mark_table_rows(decorate(html)))
+        icons = [(icon.pattern, icon.path) for icon in self.config.icons]
+        html = add_heading_icons(html, icons, source, self.repo)
         if self.css:
             html, dropped = inline_css(html, self.css)
             self.dropped_css.update(dropped)
@@ -173,6 +213,14 @@ class Publisher:
                 if path.is_file() and not skip(path) and key_of(path) not in claimed:
                     claimed.add(key_of(path))
                     plans.append(Plan(key=key_of(path), kind="file", title=path.name, source=path))
+
+        # Heading icons are course files too. Uploading them from the [icons]
+        # table means a repo names each image once, not again under [layout].
+        for icon in self.config.icons:
+            path = self.repo / icon.path
+            if path.is_file() and key_of(path) not in claimed:
+                claimed.add(key_of(path))
+                plans.append(Plan(key=key_of(path), kind="file", title=path.name, source=path))
 
         # Pages before gradable items: a file matched by both, such as an exam guide
         # sitting under assignments/, stays a page.
@@ -212,15 +260,44 @@ class Publisher:
 
     # -- helpers --------------------------------------------------------
 
-    def _visibility(self, exists: bool) -> bool | None:
+    def _visibility(self, exists: bool, key: str = "") -> bool | None:
         """What to say about visibility, or None to say nothing at all.
 
         On create there is no prior state, so the flag decides it. On update,
         --publish still publishes, but its absence must leave the object alone:
         pushing a correction to a live assignment should not pull it out from
         under the class currently reading it.
+
+        An object in a `never_publish` module is the exception both ways: it is
+        written unpublished every time, whatever the flag, so a push also takes
+        back a publish someone clicked in the Canvas UI.
         """
+        if key in self.never_published:
+            return False
+        if key in self.always_published:
+            return True
         return self.publish if (not exists or self.publish) else None
+
+    @property
+    def always_published(self) -> set[str]:
+        """Repo keys placed in a [[module]] marked `publish = true`.
+
+        For content every student needs from day one, such as Course Resources:
+        it is published whether or not the push was given --publish. A key that
+        is also in a never_publish module stays hidden; hiding wins.
+        """
+        if self._always_published is None:
+            shown = [m for m in self.module_tables() if m.get("publish") is True]
+            self._always_published = module_keys(shown) - self.never_published
+        return self._always_published
+
+    @property
+    def never_published(self) -> set[str]:
+        """Repo keys placed in a [[module]] marked `never_publish = true`."""
+        if self._never_published is None:
+            hidden = [m for m in self.module_tables() if m.get("never_publish") is True]
+            self._never_published = module_keys(hidden)
+        return self._never_published
 
     def _date_fields(self, prefix: str, item: ItemDates | None) -> dict[str, str]:
         if item is None:
@@ -366,7 +443,9 @@ class Publisher:
         canvas = self._client()
         existing = self.manifest.get(item.key)
 
-        if self._is_live(existing):
+        # A never_publish object that is somehow live is the one case where a
+        # push must rewrite published content: that is how it comes back down.
+        if item.key not in self.never_published and self._is_live(existing):
             self.protected.add(item.key)
             result.skipped = 1
             return result
@@ -377,13 +456,17 @@ class Publisher:
             result.updated = 1
         elif item.kind == "page":
             if existing and canvas.exists(f"/api/v1/courses/{self.course_id}/pages/{existing.page_url}"):
-                canvas.update_page(
-                    self.course_id, existing.page_url, title, html, self._visibility(True)
+                stored = canvas.update_page(
+                    self.course_id, existing.page_url, title, html, self._visibility(True, item.key)
                 )
                 result.updated = 1
-                page_url = existing.page_url
+                # Canvas re-slugs a page whose title changes, and the old slug
+                # stops working as a module item's page_url. Keep the new one.
+                page_url = str(stored.get("url") or existing.page_url)
             else:
-                created = canvas.create_page(self.course_id, title, html, self.publish)
+                created = canvas.create_page(
+                    self.course_id, title, html, bool(self._visibility(False, item.key))
+                )
                 page_url = str(created.get("url", _slug(title)))
                 result.created = 1
             self.manifest.put(item.key, Entry(kind="page", canvas_id=page_url, page_url=page_url, title=title))
@@ -403,13 +486,14 @@ class Publisher:
             if existing and canvas.exists(
                 f"/api/v1/courses/{self.course_id}/assignments/{existing.canvas_id}"
             ):
-                visible = self._visibility(True)
+                visible = self._visibility(True, item.key)
                 if visible is not None:
                     assignment_fields.append(("assignment[published]", str(visible).lower()))
                 canvas.update_assignment(self.course_id, existing.canvas_id, assignment_fields)
                 canvas_id, result.updated = existing.canvas_id, 1
             else:
-                assignment_fields.append(("assignment[published]", str(self.publish).lower()))
+                visible = bool(self._visibility(False, item.key))
+                assignment_fields.append(("assignment[published]", str(visible).lower()))
                 created = canvas.create_assignment(self.course_id, assignment_fields)
                 canvas_id, result.created = str(created["id"]), 1
             self.manifest.put(item.key, Entry(kind="assignment", canvas_id=canvas_id, title=title))
@@ -424,13 +508,13 @@ class Publisher:
             if existing and canvas.exists(
                 f"/api/v1/courses/{self.course_id}/discussion_topics/{existing.canvas_id}"
             ):
-                visible = self._visibility(True)
+                visible = self._visibility(True, item.key)
                 if visible is not None:
                     fields["published"] = str(visible).lower()
                 stored = canvas.update_discussion(self.course_id, existing.canvas_id, fields)
                 canvas_id, result.updated = existing.canvas_id, 1
             else:
-                fields["published"] = str(self.publish).lower()
+                fields["published"] = str(bool(self._visibility(False, item.key))).lower()
                 stored = canvas.create_discussion(self.course_id, fields)
                 canvas_id, result.created = str(stored["id"]), 1
             extra = {"assignment_id": str(stored.get("assignment_id", ""))}
@@ -467,7 +551,8 @@ class Publisher:
             self._push_questions(item, canvas_id)
             # was_live: the write above forced published=false to let the question
             # set be rebuilt, so a quiz that arrived published has to go back.
-            if self.publish or was_live:
+            wanted = self.publish or was_live or item.key in self.always_published
+            if wanted and item.key not in self.never_published:
                 canvas.update_quiz(self.course_id, canvas_id, {"quiz[published]": "true"})
         return result
 
@@ -569,40 +654,64 @@ class Publisher:
 
         canvas = self._client()
         stored_modules = canvas.list_modules(self.course_id)
-        existing = {str(m.get("name")): str(m.get("id")) for m in stored_modules}
-        live = {
-            str(m.get("name")) for m in stored_modules if m.get("published")
-        } if not self.update_published else set()
 
         for position, module in enumerate(modules, start=1):
-            name = str(module.get("title", f"Module {position}"))
-            if name in live:
+            base = str(module.get("title", f"Module {position}"))
+            try:
+                name = module_title(module, self.config.term)
+            except DateConfigError as error:
+                result.errors.append(str(error))
+                continue
+            hidden = module.get("never_publish") is True
+            shown = module.get("publish") is True and not hidden
+            stored = _find_module(stored_modules, name, base)
+            if stored is not None and stored.get("published") and not self.update_published and not hidden:
                 result.skipped += 1
                 continue
-            module_id = existing.get(name)
-            if module_id is None:
-                created = canvas.create_module(self.course_id, name, position, self.publish)
+            if stored is None:
+                created = canvas.create_module(
+                    self.course_id, name, position, (self.publish or shown) and not hidden
+                )
                 module_id = str(created["id"])
                 result.created += 1
+                if hidden:
+                    canvas.update_module(self.course_id, module_id, dict(_NEVER_PUBLISH_FIELDS))
             else:
-                canvas.update_module(self.course_id, module_id, {"module[position]": str(position)})
+                module_id = str(stored.get("id"))
+                fields = {"module[position]": str(position)}
+                if hidden:
+                    fields.update(_NEVER_PUBLISH_FIELDS)
+                # A new term moves every date, so the same module comes back
+                # under a new name; renaming it keeps one module, not two.
+                if str(stored.get("name")) != name:
+                    fields["module[name]"] = name
+                canvas.update_module(self.course_id, module_id, fields)
                 result.updated += 1
 
             for current in canvas.list_module_items(self.course_id, module_id):
                 canvas.delete_module_item(self.course_id, module_id, str(current["id"]))
 
-            # Repo items first, in the order written, then the Canvas-native
-            # ones named under `canvas`: a hand built quiz or an uploaded file
-            # that has no repo file but still belongs in the module.
-            items = module.get("items", [])
-            keys = [str(module.get("page", ""))]
-            keys += [str(k) for k in items] if isinstance(items, list) else []
-            listed = [k for k in keys if k and not self.is_draft_key(k)]
+            # Repo items and text headers first, in the order written, then the
+            # Canvas-native ones named under `canvas`: a hand built quiz or an
+            # uploaded file that has no repo file but still belongs in the module.
+            try:
+                entries = module_entries(module)
+            except ValueError as error:
+                result.errors.append(f"module {name!r}: {error}")
+                entries = []
             placed: list[tuple[str, str, str]] = []
-            for key in listed:
-                entry = self.manifest.get(key)
+            for line in entries:
+                if line.header:
+                    placed.append(("header", "", line.header))
+                    continue
+                if line.native is not None:
+                    placed.append((line.native.kind, line.native.ident, line.native.title))
+                    continue
+                if self.is_draft_key(line.key):
+                    continue
+                entry = self.manifest.get(line.key)
                 if entry is None:
-                    result.errors.append(f"module {name!r}: {key} has not been published")
+                    result.errors.append(f"module {name!r}: {line.key} has not been published")
                     continue
                 if entry.kind in ("page", "assignment", "discussion", "quiz", "file"):
                     ident = entry.page_url if entry.kind == "page" else entry.canvas_id
@@ -625,11 +734,11 @@ class Publisher:
                     fields["module_item[title]"] = title
                 if kind == "page":
                     fields["module_item[page_url]"] = ident
-                else:
+                elif kind != "header":
                     fields["module_item[content_id]"] = ident
                 canvas.create_module_item(self.course_id, module_id, fields)
 
-            if self.publish:
+            if (self.publish or shown) and not hidden:
                 canvas.update_module(self.course_id, module_id, {"module[published]": "true"})
         return result
 

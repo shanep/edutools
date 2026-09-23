@@ -515,3 +515,40 @@ class TestDraftsTakeNoDates:
             encoding="utf-8",
         )
         assert [item.path for item in compute(repo)] == ["activities/a2-sockets.md"]
+
+
+class TestModuleTitle:
+    def test_no_week_leaves_the_title_alone(self):
+        from edutools.dates import module_title
+
+        assert module_title({"title": "Course Resources"}, _term()) == "Course Resources"
+
+    def test_a_week_appends_monday_to_sunday(self):
+        from edutools.dates import module_title
+
+        title = module_title({"title": "Module 1: Intro", "week": 1}, _term())
+        assert title == "Module 1: Intro (January 11 - January 17)"
+
+    def test_the_break_week_is_skipped(self):
+        from edutools.dates import module_title
+
+        # Week 10 follows the break after week 9, so it starts a week late.
+        assert module_title({"title": "M", "week": 10}, _term()) == "M (March 22 - March 28)"
+
+    def test_the_last_week_stops_at_the_last_day_of_instruction(self):
+        from edutools.dates import module_title
+
+        assert module_title({"title": "M", "week": 15}, _term()) == "M (April 26 - April 30)"
+
+    def test_finals_uses_the_finals_window(self):
+        from edutools.dates import module_title
+
+        assert module_title({"title": "F", "week": "finals"}, _term()) == "F (May 3 - May 7)"
+
+    def test_a_bad_week_is_a_config_error(self):
+        from edutools.dates import module_title
+
+        with pytest.raises(DateConfigError):
+            module_title({"title": "M", "week": "three"}, _term())
+        with pytest.raises(DateConfigError):
+            module_title({"title": "M", "week": 16}, _term())

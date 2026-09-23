@@ -1255,3 +1255,359 @@ class TestRewriteThroughSymlinks:
         )
         assert unresolved == []
         assert html == '<a href="/courses/48194/files/25109507">x</a>'
+
+
+class TestImageLinks:
+    def test_an_image_points_at_the_preview(self, tmp_path: Path):
+        """The bare file URL is an HTML page about the file; an <img> needs /preview."""
+        (tmp_path / "notes").mkdir()
+        (tmp_path / "icons").mkdir()
+        (tmp_path / "icons" / "task.svg").write_text("<svg/>")
+        manifest = Manifest(tmp_path / ".canvas" / "m.json")
+        manifest.entries["icons/task.svg"] = Entry("file", "9", title="task.svg")
+
+        html, unresolved = rewrite_links(
+            '<img src="../icons/task.svg"><a href="../icons/task.svg">x</a>',
+            tmp_path / "notes" / "w.md", tmp_path, manifest, "42",
+        )
+        assert unresolved == []
+        assert '<img src="/courses/42/files/9/preview">' in html
+        assert '<a href="/courses/42/files/9">' in html
+
+
+class TestHeadingIcons:
+    ICONS = [("learning objectives", "icons/list.svg"), ("due by *", "icons/task.svg")]
+
+    def _add(self, html: str, tmp_path: Path, source: str = "notes/w.md") -> str:
+        from edutools.publish import add_heading_icons
+
+        return add_heading_icons(html, self.ICONS, tmp_path / source, tmp_path)
+
+    def test_a_matching_h2_gets_its_icon_first(self, tmp_path: Path):
+        out = self._add('<h2 id="lo">Learning Objectives</h2>', tmp_path)
+        assert out == (
+            '<h2 id="lo"><img class="cs-icon" src="../icons/list.svg" alt="" '
+            'role="presentation" width="45" height="35">Learning Objectives</h2>'
+        )
+
+    def test_matching_ignores_case_and_inline_markup(self, tmp_path: Path):
+        out = self._add("<h3>Due by <em>Thursday</em> at 11:59 p.m.</h3>", tmp_path)
+        assert 'src="../icons/task.svg"' in out
+
+    def test_the_src_is_relative_to_the_source_file(self, tmp_path: Path):
+        out = self._add("<h2>Learning Objectives</h2>", tmp_path, source="home.md")
+        assert 'src="icons/list.svg"' in out
+
+    def test_other_headings_are_untouched(self, tmp_path: Path):
+        html = "<h2>Readings</h2><h4>Due by Sunday</h4><p>Learning Objectives</p>"
+        assert self._add(html, tmp_path) == html
+
+    def test_no_icons_is_a_no_op(self, tmp_path: Path):
+        from edutools.publish import add_heading_icons
+
+        html = "<h2>Learning Objectives</h2>"
+        assert add_heading_icons(html, [], tmp_path / "w.md", tmp_path) == html
+
+
+class TestIconFilesArePlanned:
+    def _publisher(self, tmp_path: Path, icons: str):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "icons").mkdir()
+        (tmp_path / "icons" / "list.svg").write_text("<svg/>", encoding="utf-8")
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n'
+            f"{icons}",
+            encoding="utf-8",
+        )
+        return Publisher(tmp_path, "42", MagicMock())
+
+    def test_an_icon_is_uploaded_without_a_layout_entry(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path, '[icons]\n"Learning Objectives" = "icons/list.svg"\n')
+        files = [plan for plan in publisher.plan() if plan.kind == "file"]
+        assert [plan.key for plan in files] == ["icons/list.svg"]
+        assert publisher.config.icons[0].pattern == "learning objectives"
+
+    def test_two_patterns_sharing_an_icon_upload_it_once(self, tmp_path: Path):
+        publisher = self._publisher(
+            tmp_path, '[icons]\n"a" = "icons/list.svg"\n"b" = "icons/list.svg"\n'
+        )
+        assert [p.key for p in publisher.plan() if p.kind == "file"] == ["icons/list.svg"]
+
+    def test_a_missing_icon_is_a_config_error(self, tmp_path: Path):
+        from edutools.dates import DateConfigError
+
+        with pytest.raises(DateConfigError, match="does not exist"):
+            self._publisher(tmp_path, '[icons]\n"x" = "icons/gone.svg"\n')
+
+    def test_rendering_inserts_the_icon(self, tmp_path: Path):
+        publisher = self._publisher(tmp_path, '[icons]\n"learning objectives" = "icons/list.svg"\n')
+        page = tmp_path / "page.md"
+        page.write_text("# Page\n\n## Learning Objectives\n\nText.\n", encoding="utf-8")
+        _, html = publisher.render(page)
+        assert '<img class="cs-icon" src="icons/list.svg"' in html
+
+
+class TestModuleEntries:
+    def test_page_then_items_with_headers_in_place(self):
+        from edutools.publish import ModuleEntry, module_entries
+
+        entries = module_entries({
+            "page": "o.md",
+            "items": [{"header": "Due by Thursday"}, "a.md", {"header": "Due by Sunday"}, "b.md"],
+        })
+        assert entries == [
+            ModuleEntry(key="o.md"), ModuleEntry(header="Due by Thursday"), ModuleEntry(key="a.md"),
+            ModuleEntry(header="Due by Sunday"), ModuleEntry(key="b.md"),
+        ]
+
+    def test_a_malformed_item_is_an_error(self):
+        from edutools.publish import module_entries
+
+        with pytest.raises(ValueError, match="item 1"):
+            module_entries({"items": [{"heading": "x"}]})
+
+    def test_module_keys_skip_headers(self):
+        from edutools.publish import module_keys
+
+        assert module_keys([{"page": "o.md", "items": [{"header": "H"}, "a.md"]}]) == {"o.md", "a.md"}
+
+
+class TestModuleHeadersAndDates:
+    def _publisher(self, tmp_path: Path, stored: list[dict[str, object]]):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "o.md").write_text("# Module 1 Overview\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["o.md"]\nfiles = []\n\n'
+            '[[module]]\ntitle = "Module 1: Intro"\nweek = 1\npage = "o.md"\n'
+            'items = [{ header = "Due by Sunday at 11:59 p.m." }]\n',
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.list_modules.return_value = stored
+        canvas.create_module.return_value = {"id": "9"}
+        canvas.list_module_items.return_value = []
+        publisher = Publisher(tmp_path, "42", canvas)
+        publisher.manifest.put("o.md", Entry(kind="page", canvas_id="o", page_url="o", title="Module 1 Overview"))
+        return publisher, canvas
+
+    def test_a_header_becomes_a_subheader_item(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, [])
+        assert publisher.push_modules().errors == []
+        sent = [call.args[2] for call in canvas.create_module_item.call_args_list]
+        assert [f["module_item[type]"] for f in sent] == ["Page", "SubHeader"]
+        assert sent[1]["module_item[title]"] == "Due by Sunday at 11:59 p.m."
+        assert "module_item[content_id]" not in sent[1]
+
+    def test_a_new_module_is_named_with_its_dates(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, [])
+        publisher.push_modules()
+        assert canvas.create_module.call_args.args[1] == "Module 1: Intro (August 24 - August 30)"
+
+    def test_last_terms_module_is_renamed_not_duplicated(self, tmp_path: Path):
+        stored: list[dict[str, object]] = [
+            {"id": "5", "name": "Module 1: Intro (January 11 - January 17)", "published": False}
+        ]
+        publisher, canvas = self._publisher(tmp_path, stored)
+        publisher.push_modules()
+        canvas.create_module.assert_not_called()
+        fields = canvas.update_module.call_args_list[0].args[2]
+        assert fields["module[name]"] == "Module 1: Intro (August 24 - August 30)"
+
+    def test_the_undated_title_is_adopted_too(self, tmp_path: Path):
+        stored: list[dict[str, object]] = [{"id": "5", "name": "Module 1: Intro", "published": False}]
+        publisher, canvas = self._publisher(tmp_path, stored)
+        publisher.push_modules()
+        canvas.create_module.assert_not_called()
+        assert canvas.update_module.call_args_list[0].args[1] == "5"
+
+    def test_outline_shows_the_header_and_the_dated_title(self, tmp_path: Path):
+        from edutools.outline import outline
+
+        publisher, _ = self._publisher(tmp_path, [])
+        import tomllib
+
+        raw = tomllib.loads((tmp_path / "canvas.toml").read_text(encoding="utf-8"))
+        modules = outline(tmp_path, raw["module"], {"o.md": "page"}, {}, publisher.config.term)
+        assert modules[0].title == "Module 1: Intro (August 24 - August 30)"
+        assert [i.kind for i in modules[0].items] == ["page", "header"]
+
+
+class TestNativeItemsInPlace:
+    def test_a_native_table_in_items_keeps_its_position(self):
+        from edutools.publish import NativeItem, module_entries
+
+        entries = module_entries({"items": ["a.md", {"quiz": 7, "title": "Survey"}, "b.md"]})
+        assert [e.key or e.native for e in entries] == [
+            "a.md", NativeItem(kind="quiz", ident="7", title="Survey"), "b.md",
+        ]
+
+    def test_a_header_with_extra_keys_is_an_error(self):
+        from edutools.publish import module_entries
+
+        with pytest.raises(ValueError, match="header"):
+            module_entries({"items": [{"header": "x", "quiz": 1}]})
+
+
+class TestRetitledPageKeepsItsNewSlug:
+    def test_the_manifest_takes_the_slug_canvas_returns(self, tmp_path: Path):
+        """Canvas re-slugs a retitled page; a module item needs the new slug."""
+        from edutools.publisher import Publisher
+
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "guide.md").write_text("# 9.02 Midterm Exam Guide\n\nText.\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["guide.md"]\nfiles = []\n',
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.exists.return_value = True
+        canvas.get_json.return_value = {"published": False}
+        canvas.update_page.return_value = {"url": "9-dot-02-midterm-exam-guide"}
+        publisher = Publisher(tmp_path, "42", canvas)
+        publisher.manifest.put(
+            "guide.md", Entry(kind="page", canvas_id="midterm-exam-guide",
+                              page_url="midterm-exam-guide", title="Midterm Exam Guide"),
+        )
+        plan = next(p for p in publisher.plan() if p.key == "guide.md")
+        publisher.create_or_update(plan)
+        entry = publisher.manifest.get("guide.md")
+        assert entry is not None and entry.page_url == "9-dot-02-midterm-exam-guide"
+
+
+class TestNeverPublish:
+    """A [[module]] with never_publish = true stays unpublished, whatever the flags."""
+
+    def _publisher(self, tmp_path: Path, publish: bool, stored_modules: list[dict[str, object]]):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "guide.md").write_text("# Instructor Guide\n\nText.\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["guide.md"]\nfiles = []\n\n'
+            '[[module]]\ntitle = "Instructor Resources"\nnever_publish = true\n'
+            'items = ["guide.md"]\n',
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.list_modules.return_value = stored_modules
+        canvas.create_module.return_value = {"id": "9"}
+        canvas.list_module_items.return_value = []
+        canvas.create_page.return_value = {"url": "instructor-guide"}
+        canvas.update_page.return_value = {"url": "instructor-guide"}
+        return Publisher(tmp_path, "42", canvas, publish=publish), canvas
+
+    def _plan(self, publisher):
+        return next(p for p in publisher.plan() if p.key == "guide.md")
+
+    def test_a_page_is_created_unpublished_even_with_publish(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, True, [])
+        publisher.create_or_update(self._plan(publisher))
+        assert canvas.create_page.call_args.args[3] is False
+
+    def test_a_published_page_is_pulled_back_not_protected(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, False, [])
+        publisher.manifest.put("guide.md", Entry(kind="page", canvas_id="g", page_url="g", title="Instructor Guide"))
+        canvas.exists.return_value = True
+        canvas.get_json.return_value = {"published": True}
+        publisher.create_or_update(self._plan(publisher))
+        assert "guide.md" not in publisher.protected
+        assert canvas.update_page.call_args.args[4] is False
+
+    def test_the_module_is_unpublished_and_locked(self, tmp_path: Path):
+        stored: list[dict[str, object]] = [{"id": "5", "name": "Instructor Resources", "published": True}]
+        publisher, canvas = self._publisher(tmp_path, True, stored)
+        publisher.manifest.put("guide.md", Entry(kind="page", canvas_id="g", page_url="g", title="Instructor Guide"))
+        assert publisher.push_modules().skipped == 0
+        fields = canvas.update_module.call_args_list[0].args[2]
+        assert fields["module[published]"] == "false"
+        assert fields["module[unlock_at]"].startswith("2099")
+        # --publish never republishes it afterwards.
+        assert all(c.args[2].get("module[published]") != "true" for c in canvas.update_module.call_args_list)
+
+    def test_a_new_module_is_created_unpublished(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, True, [])
+        publisher.manifest.put("guide.md", Entry(kind="page", canvas_id="g", page_url="g", title="Instructor Guide"))
+        publisher.push_modules()
+        assert canvas.create_module.call_args.args[3] is False
+
+
+class TestOutlineHidesNeverPublish:
+    def test_a_never_publish_module_is_left_out(self, tmp_path: Path):
+        from edutools.outline import outline
+
+        (tmp_path / "a.md").write_text("# A\n", encoding="utf-8")
+        modules: list[dict[str, object]] = [
+            {"title": "Instructor Resources", "never_publish": True, "items": ["a.md"]},
+            {"title": "Module 1", "items": ["a.md"]},
+        ]
+        assert [m.title for m in outline(tmp_path, modules, {}, {})] == ["Module 1"]
+
+
+class TestAlwaysPublish:
+    def _publisher(self, tmp_path: Path, both: bool = False):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "tech.md").write_text("# Technology Support\n\nText.\n", encoding="utf-8")
+        hidden = '\n[[module]]\ntitle = "Hidden"\nnever_publish = true\nitems = ["tech.md"]\n' if both else ""
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["tech.md"]\nfiles = []\n\n'
+            '[[module]]\ntitle = "Course Resources"\npublish = true\nitems = ["tech.md"]\n' + hidden,
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.list_modules.return_value = []
+        canvas.create_module.return_value = {"id": "9"}
+        canvas.list_module_items.return_value = []
+        canvas.create_page.return_value = {"url": "technology-support"}
+        return Publisher(tmp_path, "42", canvas, publish=False), canvas
+
+    def test_a_page_is_published_without_the_flag(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path)
+        publisher.create_or_update(next(p for p in publisher.plan() if p.key == "tech.md"))
+        assert canvas.create_page.call_args.args[3] is True
+
+    def test_the_module_is_published_without_the_flag(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path)
+        publisher.manifest.put("tech.md", Entry(kind="page", canvas_id="t", page_url="t", title="Technology Support"))
+        publisher.push_modules()
+        assert canvas.create_module.call_args.args[3] is True
+
+    def test_never_publish_wins(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path, both=True)
+        publisher.create_or_update(next(p for p in publisher.plan() if p.key == "tech.md"))
+        assert canvas.create_page.call_args.args[3] is False

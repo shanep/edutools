@@ -227,6 +227,50 @@ the object's own name. Ids come from `edutools assignments`, `edutools audit`, o
 address bar. A malformed entry is reported as an error for that module rather than
 built around.
 
+A module can also carry text headers, and a native item can sit at a particular
+point instead of after the repo items. Both go straight into `items`:
+
+```toml
+[[module]]
+title = "Module 5: Authentication and Credentials"
+week  = 5
+page  = "notes/week-05-overview.md"
+items = [
+    { header = "Due by Thursday at 11:59 p.m. Mountain Time" },
+    "notes/week-05-authentication-and-credentials.md",
+    "discussions/d03-authentication-policy-critique.md",
+    { header = "Due by Sunday at 11:59 p.m. Mountain Time" },
+    "reminders/d03-replies.md",
+    { quiz = 393733, title = "5.04 Survey" },
+]
+```
+
+A `{ header = "..." }` becomes a Canvas text header (a SubHeader item). `week`
+names the module with its dates, as the Boise State Online shell does:
+`Module 5: Authentication and Credentials (February 8 - February 14)`, Monday to
+Sunday from the term skeleton, skipping the break and stopping at the last day of
+instruction; `week = "finals"` uses the finals window. The dates move every term,
+so a push that finds the same title with other dates, or with none, renames that
+module rather than building a second one beside it.
+
+A module for instructors only, such as the shell's Instructor Resources, says
+`never_publish = true`. Every push then writes the module and everything it lists
+unpublished, ignoring `--publish`; takes back anything someone published in the
+Canvas UI, even though a push otherwise never rewrites published content; and
+sets the module's unlock date to 2099, so a publish clicked between pushes still
+shows students a locked module rather than its pages. `verify` fails on any of
+it found published, and `outline` leaves the module out of the site's copy.
+
+The opposite, `publish = true`, is for a module every student needs from day one,
+such as Course Resources: the module and everything it lists are published by
+every push, with or without `--publish`. If a file is in both kinds of module,
+it stays hidden.
+
+The `reminder` item kind is for the shell's ungraded "Replies" assignment that
+sits under a later header than its discussion. Give it a
+`[term.policy.reminder]`, a glob under `[layout.gradable]`, and
+`grading: not_graded` in its frontmatter.
+
 Students find their work through Modules, so a gradable file that no `[[module]]`
 lists is published and yet invisible. A push names every such file it handled as a
 warning, and `verify` reports each one as a `module` failure. A repo with no
@@ -312,6 +356,28 @@ Anything the section leaves out keeps its default. Page patterns are matched bef
 gradable ones, so a file caught by both stays a page. The keys under
 `[layout.gradable]` are item kinds (`lab`, `project`, `extra`, `quiz`, `discussion`, `exam`),
 and each needs a matching `[term.policy.<kind>]` to compute its dates from.
+
+### Heading icons
+
+The Boise State Online course shell puts a small icon in front of each section
+heading. Canvas keeps `<img>` but strips CSS generated content, so the icon has
+to be markup, and it has to point at a file in the course being pushed to.
+An `[icons]` table names one image per heading:
+
+```toml
+[icons]
+"learning objectives"   = "icons/list.svg"
+"assignments and tasks" = "icons/task.svg"
+"due by *"              = "icons/task.svg"
+```
+
+Each key is matched, ignoring case, against the visible text of every `h2` and
+`h3` (`*` and `?` work as in a shell glob), and the first match wins. The push
+uploads each image as a course file without a `[layout] files` entry, inserts
+`<img class="cs-icon">` at the start of the heading, and points it at the
+uploaded file's `/preview` URL, so the icons follow the course through a copy.
+A path that does not exist fails the push. Style the image through `.cs-icon`
+in `canvas.css`.
 
 ### VitePress source
 

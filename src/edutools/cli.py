@@ -876,6 +876,11 @@ def verify_course(
                 continue
 
             failures.extend(check_identity(key, entry, stored))
+            if key in publisher.never_published and stored.get("published"):
+                failures.append(Failure(
+                    key, "visibility",
+                    "published, but its module is never_publish; the next push unpublishes it",
+                ))
 
             if entry.kind == "file" and plan and plan.source:
                 failures.extend(check_file(key, plan.source.stat().st_size, stored))
@@ -968,7 +973,7 @@ def audit_course(
     drafts = {key for key in manifest.entries if publisher.is_draft_key(key)}
 
     with (repo_path / "canvas.toml").open("rb") as handle:
-        declared = declared_modules(tomllib.load(handle))
+        declared = declared_modules(tomllib.load(handle), publisher.config.term)
 
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                   console=console, transient=True) as progress:
@@ -1045,7 +1050,8 @@ def course_outline(
     modules_raw = raw.get("module", [])
     kinds = {p.key: p.kind for p in publisher.plan()}
     modules = outline(
-        repo_path, modules_raw if isinstance(modules_raw, list) else [], kinds, publisher.dates
+        repo_path, modules_raw if isinstance(modules_raw, list) else [], kinds, publisher.dates,
+        publisher.config.term,
     )
 
     if out is not None:

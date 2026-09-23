@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 from edutools.publish import is_draft
 
-ItemKind = Literal["lab", "project", "extra", "quiz", "discussion", "exam"]
+ItemKind = Literal["lab", "project", "extra", "quiz", "discussion", "exam", "reminder"]
 
 _WEEKDAY_OFFSET: Final[dict[str, int]] = {
     "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
@@ -230,6 +230,16 @@ def title_of(text: str, fallback: str) -> str:
 
 
 @dataclass(frozen=True)
+class HeadingIcon:
+    """One entry of the [icons] table: headings matching `pattern` get `path`."""
+
+    # Lower case, matched with fnmatch against the heading's visible text.
+    pattern: str
+    # Repo-relative path to the image, uploaded to Canvas as a course file.
+    path: str
+
+
+@dataclass(frozen=True)
 class DateConfig:
     """Everything canvas.toml says about scheduling."""
 
@@ -238,6 +248,7 @@ class DateConfig:
     overrides: dict[str, dict[str, object]]
     layout: Layout = DEFAULT_LAYOUT
     groups: tuple[Group, ...] = ()
+    icons: tuple[HeadingIcon, ...] = ()
 
     def group_for(self, kind: str) -> Group | None:
         """The assignment group an item of this kind belongs in, if any."""
@@ -310,8 +321,59 @@ def load_config(repo: Path) -> DateConfig:
     }
     return DateConfig(
         term=term, policies=policies, overrides=overrides,
-        layout=load_layout(raw), groups=load_groups(raw),
+        layout=load_layout(raw), groups=load_groups(raw), icons=load_icons(raw, repo),
     )
+
+
+def _day(date: dt.date) -> str:
+    return f"{date:%B} {date.day}"
+
+
+def module_title(module: dict[str, object], term: Term) -> str:
+    """A [[module]] table's Canvas name, with its dates when it declares a week.
+
+    The Boise State Online shell names modules "Module 3: Title (start date -
+    end date)". Writing the dates into canvas.toml would mean editing every
+    title each term, so a module says `week = 3` (or `week = "finals"`) and the
+    span comes from the term skeleton: Monday to Sunday, skipping the break,
+    clipped to the last day of instruction.
+    """
+    title = str(module.get("title", ""))
+    week = module.get("week")
+    if week is None:
+        return title
+    if week == "finals":
+        start, end = term.finals_start, term.finals_end
+    elif isinstance(week, int) and not isinstance(week, bool):
+        start = term.monday_of(week)
+        end = min(start + dt.timedelta(days=6), term.last_day_of_instruction)
+    else:
+        raise DateConfigError(
+            f"[[module]] {title!r}: week must be a week number or \"finals\", got {week!r}"
+        )
+    return f"{title} ({_day(start)} - {_day(end)})"
+
+
+def load_icons(raw: dict[str, object], repo: Path) -> tuple[HeadingIcon, ...]:
+    """Read the optional [icons] table of heading pattern = image path.
+
+    Order is kept, and the first pattern that matches a heading wins, so a
+    specific pattern belongs above a catch-all one. A path that does not exist is
+    an error here rather than a broken image on every page later.
+    """
+    section = raw.get("icons")
+    if section is None:
+        return ()
+    if not isinstance(section, dict):
+        raise DateConfigError("canvas.toml [icons] must be a table of heading = image path")
+    icons: list[HeadingIcon] = []
+    for pattern, path in cast(dict[str, object], section).items():
+        if not isinstance(path, str) or not path:
+            raise DateConfigError(f"[icons] {pattern!r} must name an image path, got {path!r}")
+        if not (repo / path).is_file():
+            raise DateConfigError(f"[icons] {pattern!r}: {path} does not exist")
+        icons.append(HeadingIcon(pattern=pattern.strip().lower(), path=path))
+    return tuple(icons)
 
 
 def load_groups(raw: dict[str, object]) -> tuple[Group, ...]:

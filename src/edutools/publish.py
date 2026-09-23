@@ -18,7 +18,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from pathlib import Path
-from typing import Final, Literal, Sequence
+from typing import Final, Literal, Sequence, cast
 
 # ---------------------------------------------------------------------------
 # Canvas's HTML sanitizer allowlist.
@@ -419,6 +419,45 @@ def wrap_tables(html: str) -> str:
     ).replace("</table>", "</table></div>")
 
 
+_SECTION_HEADING_RE: Final[re.Pattern[str]] = re.compile(
+    r"<(?P<tag>h[23])\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>", re.S
+)
+
+
+def add_heading_icons(
+    html: str, icons: Sequence[tuple[str, str]], source: Path, repo: Path
+) -> str:
+    """Put an icon image in front of each h2 and h3 whose text matches a pattern.
+
+    `icons` is (lower case fnmatch pattern, repo-relative image path), first match
+    wins. Canvas keeps <img> but not CSS generated content, so a heading icon has
+    to be real markup. The src is written relative to `source`, exactly as a
+    hand-written image link would be, so rewrite_links turns it into the uploaded
+    course file and the icon follows the course through a copy.
+    """
+    if not icons:
+        return html
+    import fnmatch
+
+    def per_heading(match: re.Match[str]) -> str:
+        text = _plain(match.group("body")).lower()
+        for pattern, path in icons:
+            if not fnmatch.fnmatchcase(text, pattern):
+                continue
+            target = os.path.relpath(
+                os.path.join(os.path.abspath(repo), path), os.path.abspath(source.parent)
+            ).replace(os.sep, "/")
+            image = (
+                f'<img class="cs-icon" src="{target}" alt="" role="presentation" '
+                f'width="45" height="35">'
+            )
+            tag, attrs, body = match.group("tag"), match.group("attrs"), match.group("body")
+            return f"<{tag}{attrs}>{image}{body}</{tag}>"
+        return match.group(0)
+
+    return _SECTION_HEADING_RE.sub(per_heading, html)
+
+
 # ---------------------------------------------------------------------------
 # Styling: one authored stylesheet, inlined into style attributes
 # ---------------------------------------------------------------------------
@@ -744,23 +783,26 @@ def parse_native_items(module: dict[str, object]) -> list[NativeItem]:
     raw = module.get("canvas", [])
     if not isinstance(raw, list):
         raise ValueError("'canvas' must be a list of tables such as { quiz = 123 }")
-    items: list[NativeItem] = []
-    for index, entry in enumerate(raw, start=1):
-        if not isinstance(entry, dict):
-            raise ValueError(f"canvas item {index}: expected a table such as {{ quiz = 123 }}")
-        kinds: list[NativeKind] = [k for k in _NATIVE_KINDS if k in entry]
-        unknown = [k for k in entry if k not in _NATIVE_KINDS and k != "title"]
-        if len(kinds) != 1 or unknown:
-            raise ValueError(
-                f"canvas item {index}: name exactly one of {', '.join(_NATIVE_KINDS)}, "
-                f"plus an optional title"
-            )
-        kind = kinds[0]
-        ident = str(entry[kind]).strip()
-        if not ident:
-            raise ValueError(f"canvas item {index}: {kind} needs an id")
-        items.append(NativeItem(kind=kind, ident=ident, title=str(entry.get("title", ""))))
-    return items
+    return [_native_item(entry, index) for index, entry in enumerate(raw, start=1)]
+
+
+def _native_item(entry: object, index: int) -> NativeItem:
+    """One `{ quiz = 123, title = "..." }` table, checked."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"canvas item {index}: expected a table such as {{ quiz = 123 }}")
+    table = cast(dict[str, object], entry)
+    kinds: list[NativeKind] = [k for k in _NATIVE_KINDS if k in table]
+    unknown = [k for k in table if k not in _NATIVE_KINDS and k != "title"]
+    if len(kinds) != 1 or unknown:
+        raise ValueError(
+            f"canvas item {index}: name exactly one of {', '.join(_NATIVE_KINDS)}, "
+            f"plus an optional title"
+        )
+    kind = kinds[0]
+    ident = str(table[kind]).strip()
+    if not ident:
+        raise ValueError(f"canvas item {index}: {kind} needs an id")
+    return NativeItem(kind=kind, ident=ident, title=str(table.get("title", "")))
 
 
 def module_keys(modules: Sequence[object]) -> set[str]:
@@ -779,8 +821,54 @@ def module_keys(modules: Sequence[object]) -> set[str]:
             keys.add(page)
         items = module.get("items", [])
         if isinstance(items, list):
-            keys.update(str(k) for k in items if str(k))
+            keys.update(str(k) for k in items if isinstance(k, str) and k)
     return keys
+
+
+@dataclass(frozen=True)
+class ModuleEntry:
+    """One line of a [[module]]'s `page` and `items`.
+
+    Exactly one field is set: a repo path, the text of a header, or a
+    Canvas-native object placed at this point rather than after the repo items.
+    """
+
+    key: str = ""
+    header: str = ""
+    native: NativeItem | None = None
+
+
+def module_entries(module: dict[str, object]) -> list[ModuleEntry]:
+    """The `page` then the `items` of one [[module]] table, in order.
+
+    An item is a repo path; a table `{ header = "Due by Sunday ..." }`, which
+    becomes a Canvas text header (a SubHeader item) at that point in the module;
+    or a Canvas-native table such as `{ quiz = 123, title = "Survey" }`, which is
+    the same as listing it under `canvas` except that it keeps its place.
+    Anything else is a mistake in canvas.toml and is reported as one.
+    """
+    entries: list[ModuleEntry] = []
+    page = module.get("page")
+    if page:
+        entries.append(ModuleEntry(key=str(page)))
+    items = module.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError("'items' must be a list")
+    for index, item in enumerate(items, start=1):
+        if isinstance(item, str):
+            if item:
+                entries.append(ModuleEntry(key=item))
+        elif isinstance(item, dict) and "header" in item:
+            table = cast(dict[str, object], item)
+            text = str(table["header"]).strip()
+            if set(table) != {"header"} or not text:
+                raise ValueError(f"item {index}: a header is {{ header = \"text\" }} and nothing else")
+            entries.append(ModuleEntry(header=text))
+        elif isinstance(item, dict):
+            entries.append(ModuleEntry(native=_native_item(item, index)))
+        else:
+            raise ValueError(f"item {index}: expected a repo path or {{ header = \"...\" }}, got {item!r}")
+    return entries
 
 
 class Manifest:
@@ -876,6 +964,11 @@ def rewrite_links(
             unresolved.append(target)
             return match.group(0)
         url = canvas_path(entry, course_id)
+        if attribute == "src" and entry.kind == "file":
+            # The bare file URL is Canvas's HTML page about the file, which an
+            # <img> cannot display. /preview serves the bytes, and it is what the
+            # rich content editor itself writes for an embedded image.
+            url = f"{url}/preview"
         if fragment and entry.kind == "page":
             url = f"{url}#{fragment}"
         return f'{attribute}="{url}"'

@@ -15,15 +15,15 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from edutools.dates import ItemDates
-from edutools.publish import is_draft, parse_native_items, strip_title
+from edutools.dates import ItemDates, Term, module_title
+from edutools.publish import is_draft, module_entries, parse_native_items, strip_title
 
 
 @dataclass(frozen=True)
 class OutlineItem:
     """One row under a module, as Canvas will show it."""
 
-    kind: str                    # page, assignment, discussion, quiz, file
+    kind: str                    # page, assignment, discussion, quiz, file, header
     title: str
     path: str = ""               # repo path without .md, for the site to link; "" for a native item
     due_at: str | None = None    # ISO 8601 with offset
@@ -47,25 +47,38 @@ def outline(
     modules: list[dict[str, object]],
     kinds: dict[str, str],
     dates: dict[str, ItemDates],
+    term: Term | None = None,
 ) -> list[OutlineModule]:
     """Build the outline.
 
     ``modules`` are the raw ``[[module]]`` tables, ``kinds`` maps a repo key to
     the Canvas kind the push gives it (page, assignment, quiz, ...), and
     ``dates`` holds the computed dates of every gradable item. A draft is left
-    out, the same as the push leaves it out of its module.
+    out, the same as the push leaves it out of its module. With ``term``, a
+    module that declares a week is titled with its dates, as Canvas names it.
     """
     out: list[OutlineModule] = []
     for module in modules:
-        if not isinstance(module, dict):
+        # A never_publish module is instructor-only; students never see it in
+        # Canvas, so the site's copy of the module list leaves it out too.
+        if not isinstance(module, dict) or module.get("never_publish") is True:
             continue
         rows: list[OutlineItem] = []
-        listed = module.get("items", [])
-        keys = [str(module.get("page", ""))]
-        keys += [str(k) for k in listed] if isinstance(listed, list) else []
-        for key in keys:
-            if not key:
+        try:
+            entries = module_entries(module)
+        except ValueError:
+            entries = []
+        for line in entries:
+            if line.header:
+                rows.append(OutlineItem(kind="header", title=line.header))
                 continue
+            if line.native is not None:
+                n = line.native
+                rows.append(
+                    OutlineItem(kind=n.kind, title=n.title or f"{n.kind} {n.ident}", canvas_id=n.ident)
+                )
+                continue
+            key = line.key
             source = repo / key
             if not source.is_file() or is_draft(source.read_text(encoding="utf-8")):
                 continue
@@ -89,7 +102,8 @@ def outline(
                     kind=n.kind, title=n.title or f"{n.kind} {n.ident}", canvas_id=n.ident
                 )
             )
-        out.append(OutlineModule(str(module.get("title", "")), tuple(rows)))
+        title = module_title(module, term) if term is not None else str(module.get("title", ""))
+        out.append(OutlineModule(title, tuple(rows)))
     return out
 
 
