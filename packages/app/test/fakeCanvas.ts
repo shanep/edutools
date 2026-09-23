@@ -107,6 +107,11 @@ export class FakeCanvas implements CanvasClient {
     writeFileSync(dest, "x".repeat(size));
     return size;
   }
+  async downloadBytes(url: string, label: string): Promise<Buffer> {
+    await this.answer("downloadBytes", [url, label], null);
+    const file = this.files.find((f) => f.url === url);
+    return Buffer.from("x".repeat(typeof file?.size === "number" ? file.size : 0));
+  }
 
   discussions: Payload[] = [];
   quizzes: Payload[] = [];

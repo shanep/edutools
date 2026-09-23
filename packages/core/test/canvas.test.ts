@@ -471,6 +471,28 @@ describe("gradeSubmission", () => {
   });
 });
 
+describe("downloadBytes", () => {
+  it("follows the redirect to storage without the token and returns the bytes", async () => {
+    const fake = fakeFetch((url) => {
+      if (url === "https://c.test/files/1/download") {
+        return new Response(null, { status: 302, headers: { Location: "https://blobs.example.com/a" } });
+      }
+      return new Response("<svg/>", { status: 200 });
+    });
+    const bytes = await client(fake.fetch, "secret").downloadBytes("https://c.test/files/1/download", "a.svg");
+    expect(bytes.toString("utf-8")).toBe("<svg/>");
+    expect(JSON.stringify(fake.calls[0]?.headers)).toContain("secret");
+    expect(JSON.stringify(fake.calls[1]?.headers)).not.toContain("secret");
+  });
+
+  it("names the file when the download fails", async () => {
+    const fake = always(() => text("", 404));
+    await expect(client(fake.fetch).downloadBytes("https://files.test/x", "list.svg")).rejects.toThrow(
+      /list\.svg: HTTP 404/,
+    );
+  });
+});
+
 describe("downloadAttachment", () => {
   function tmp(): string {
     return mkdtempSync(path.join(os.tmpdir(), "edutools-"));

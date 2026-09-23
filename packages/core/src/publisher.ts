@@ -81,6 +81,8 @@ export type PublisherCanvas = Pick<
   | "createQuizQuestion"
   | "deleteQuizQuestion"
   | "uploadFile"
+  | "listFiles"
+  | "downloadBytes"
   | "listModules"
   | "createModule"
   | "updateModule"
@@ -245,6 +247,8 @@ export class Publisher {
   readonly droppedCss = new Set<string>();
   private groupsSynced = false;
   private neverPublishedKeys: Set<string> | null = null;
+  // The course's files, listed once per push by courseFiles().
+  private courseFileList: Payload[] | null = null;
   private alwaysPublishedKeys: Set<string> | null = null;
 
   constructor(
@@ -732,19 +736,69 @@ export class Publisher {
       result.skipped = 1;
       return result;
     }
+    const reused = await this.matchingCourseFile(item);
+    if (reused !== null) {
+      this.recordFile(item.key, reused);
+      result.skipped = 1;
+      return result;
+    }
     const folder = `course files/${path.basename(path.dirname(item.source))}`;
     const stored = await this.client().uploadFile(this.courseId, item.source, folder);
+    this.recordFile(item.key, stored);
+    (await this.courseFiles()).push(stored);
+    result.created = 1;
+    return result;
+  }
+
+  private recordFile(key: string, stored: Payload): void {
     this.manifest.put(
-      item.key,
+      key,
       new Entry({
         kind: "file",
         canvasId: String(stored.id),
-        title: path.basename(item.source),
+        title: path.basename(key),
         extra: { size: idOf(stored.size) },
       }),
     );
-    result.created = 1;
-    return result;
+  }
+
+  private async courseFiles(): Promise<Payload[]> {
+    if (this.courseFileList === null) {
+      this.courseFileList = await this.client().listFiles(this.courseId);
+    }
+    return this.courseFileList;
+  }
+
+  /**
+   * A file already in the course with exactly the repo file's bytes, if any.
+   *
+   * A course copied from a shell arrives with the shell's files, such as its icon
+   * set, often under other names ("AI Allowed.svg" for ai-allowed.svg), so the
+   * match is on content, never on name. Uploading anyway leaves two copies of
+   * every icon side by side. The file the manifest already records is tried
+   * first so a course that has been pushed keeps pointing where it did; after
+   * that the oldest wins, which is the shell's original. Only files of the same
+   * size are downloaded, and a hidden or locked one is passed over because
+   * students could not load it.
+   */
+  private async matchingCourseFile(item: Plan): Promise<Payload | null> {
+    if (item.source === null) return null;
+    const bytes = readFileSync(item.source);
+    const tracked = this.manifest.get(item.key)?.canvasId ?? "";
+    const candidates = (await this.courseFiles())
+      .filter((file) => asNumber(file.size) === bytes.length && typeof file.url === "string" && file.url !== "")
+      .filter((file) => file.hidden !== true && file.locked !== true)
+      .sort((a, b) => {
+        const trackedFirst = Number(idOf(b.id) === tracked) - Number(idOf(a.id) === tracked);
+        return trackedFirst || asNumber(a.id) - asNumber(b.id);
+      });
+    for (const file of candidates) {
+      const label = typeof file.display_name === "string" ? file.display_name : idOf(file.id);
+      // The filter above kept only files whose url is a non-empty string.
+      const stored = await this.client().downloadBytes(file.url as string, label);
+      if (stored.equals(bytes)) return file;
+    }
+    return null;
   }
 
   /** Replace a quiz's questions so a re-push never duplicates them. */

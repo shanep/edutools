@@ -799,38 +799,10 @@ export class CanvasLMS {
 
   /**
    * Stream a submission attachment or a course file to disk, return its size.
-   *
-   * Canvas download URLs redirect to blob storage. Redirects are followed by hand
-   * so the Authorization header is dropped as soon as the host changes, as
-   * requests does: the token must never reach the storage host.
    */
   async downloadAttachment(url: string, dest: string): Promise<number> {
     mkdirSync(path.dirname(dest), { recursive: true });
-    let current = new URL(url);
-    const origin = current.hostname;
-    let withToken = true;
-    let response: Response | undefined;
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      response = await this.fetchImpl(current.toString(), {
-        method: "GET",
-        headers: withToken ? this.headers : {},
-        redirect: "manual",
-        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
-      });
-      const location = response.headers.get("Location");
-      if (!isRedirect(response.status) || !location) break;
-      await response.body?.cancel();
-      current = new URL(location, current);
-      if (current.hostname !== origin) withToken = false;
-      if (hop === MAX_REDIRECTS) {
-        throw new Error(`Canvas download failed for ${path.basename(dest)}: too many redirects`);
-      }
-    }
-    if (response === undefined || !response.ok) {
-      throw new Error(
-        `Canvas download failed for ${path.basename(dest)}: HTTP ${response?.status ?? "none"}`,
-      );
-    }
+    const response = await this.openDownload(url, path.basename(dest));
 
     let written = 0;
     if (response.body === null) {
@@ -850,6 +822,46 @@ export class CanvasLMS {
       createWriteStream(dest),
     );
     return written;
+  }
+
+  /** Read a course file's bytes into memory, for comparing with a repo file. */
+  async downloadBytes(url: string, label: string): Promise<Buffer> {
+    const response = await this.openDownload(url, label);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  /**
+   * GET a download url, following its redirects to a successful response.
+   *
+   * Canvas download URLs redirect to blob storage. Redirects are followed by hand
+   * so the Authorization header is dropped as soon as the host changes, as
+   * requests does: the token must never reach the storage host.
+   */
+  private async openDownload(url: string, label: string): Promise<Response> {
+    let current = new URL(url);
+    const origin = current.hostname;
+    let withToken = true;
+    let response: Response | undefined;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      response = await this.fetchImpl(current.toString(), {
+        method: "GET",
+        headers: withToken ? this.headers : {},
+        redirect: "manual",
+        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      });
+      const location = response.headers.get("Location");
+      if (!isRedirect(response.status) || !location) break;
+      await response.body?.cancel();
+      current = new URL(location, current);
+      if (current.hostname !== origin) withToken = false;
+      if (hop === MAX_REDIRECTS) {
+        throw new Error(`Canvas download failed for ${label}: too many redirects`);
+      }
+    }
+    if (response === undefined || !response.ok) {
+      throw new Error(`Canvas download failed for ${label}: HTTP ${response?.status ?? "none"}`);
+    }
+    return response;
   }
 
   // -- rubrics --------------------------------------------------------

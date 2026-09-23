@@ -606,6 +606,14 @@ uploaded file's `/preview` URL, so the icons follow the course through a copy.
 A path that does not exist fails the push. Style the image through `.cs-icon`
 in `canvas.css`.
 
+A push never uploads a second copy of a file the course already holds. Before
+uploading an icon or any other repo file, it looks for a course file with exactly
+the same bytes, whatever its name or folder, and records that one instead. A course
+copied from a shell arrives with the shell's icon set, often under other names
+(`AI Allowed.svg` for `ai-allowed.svg`), and its pages then use those. The file the
+manifest already records is kept while it still matches; otherwise the oldest match
+wins. A hidden or locked file is never reused, since students could not load it.
+
 ### VitePress source
 
 A course directory can be served as a website and pushed to Canvas at the same

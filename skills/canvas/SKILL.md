@@ -378,6 +378,15 @@ items = [
 - **`[icons]`** maps heading text to an image in the repo; the push uploads it and
   puts it in front of each matching h2/h3. Style it through `.cs-icon` in the
   repo's `canvas.css`, which the push inlines into every page.
+- **Files are matched by content before they are uploaded.** A repo file whose
+  exact bytes are already in the course (a shell's icon set, under any name or
+  folder) is recorded against that copy rather than uploaded again. The copy the
+  manifest already records is kept while it matches, so switching an
+  already-pushed course over to the shell's copies means deleting the pushed
+  duplicates first (rule 4). `audit` reports them `stale` until the next push,
+  which adopts the shell's files and relinks every page it rewrites. A published
+  page is only rewritten with `--update-published` (rule 5), so it points at a
+  deleted file until then.
 
 ### `verify` and `audit`
 

@@ -108,6 +108,7 @@ function fakeCanvas(): Fake & { maxInFlight: () => number } {
     createQuizQuestion: created,
     deleteQuizQuestion: () => undefined,
     uploadFile: created,
+    downloadBytes: () => Buffer.alloc(0),
     listModules: () => [],
     createModule: () => ({ id: "9" }),
     updateModule: () => ({}),

@@ -62,6 +62,8 @@ function fakeCanvas(): Fake {
     createQuizQuestion: vi.fn<CanvasLMS["createQuizQuestion"]>(created),
     deleteQuizQuestion: vi.fn<CanvasLMS["deleteQuizQuestion"]>(async () => undefined),
     uploadFile: vi.fn<CanvasLMS["uploadFile"]>(created),
+    listFiles: vi.fn<CanvasLMS["listFiles"]>(async () => []),
+    downloadBytes: vi.fn<CanvasLMS["downloadBytes"]>(async () => Buffer.alloc(0)),
     listModules: vi.fn<CanvasLMS["listModules"]>(async () => []),
     createModule: vi.fn<CanvasLMS["createModule"]>(async () => ({ id: "9" })),
     updateModule: vi.fn<CanvasLMS["updateModule"]>(async () => ({})),
@@ -789,6 +791,83 @@ describe("icon files are planned", () => {
     expect((await pub.createOrUpdate(plan)).created).toBe(1);
     expect(canvas.uploadFile).toHaveBeenCalledWith("42", path.join(pub.repo, "icons/list.svg"), "course files/icons");
     expect(pub.manifest.get("icons/list.svg")?.extra).toEqual({ size: "6" });
+  });
+
+  // What a course copied from a shell already holds: the shell's own icon set.
+  function shellFile(id: number, name: string, extra: Payload = {}): Payload {
+    return { id, display_name: name, size: 6, url: `https://c.test/files/${id}/download`, ...extra };
+  }
+
+  function withFiles(files: Payload[], bytes: Record<string, string>): [Publisher, Fake] {
+    const pub = publisher('[icons]\n"a" = "icons/list.svg"\n');
+    const canvas = pub.canvas as Fake; // built by fakeCanvas() above
+    canvas.listFiles.mockResolvedValue(files);
+    canvas.downloadBytes.mockImplementation(async (url) => Buffer.from(bytes[url] ?? ""));
+    return [pub, canvas];
+  }
+
+  it("reuses a course file with the same bytes under another name", async () => {
+    const [pub, canvas] = withFiles([shellFile(5, "List Icon.svg")], {
+      "https://c.test/files/5/download": "<svg/>",
+    });
+    expect((await pub.createOrUpdate(planFor(pub, "icons/list.svg"))).skipped).toBe(1);
+    expect(canvas.uploadFile).not.toHaveBeenCalled();
+    expect(pub.manifest.get("icons/list.svg")?.canvasId).toBe("5");
+    expect(pub.manifest.get("icons/list.svg")?.extra).toEqual({ size: "6" });
+  });
+
+  it("uploads when a file of the same size has other bytes", async () => {
+    const [pub, canvas] = withFiles([shellFile(5, "list.svg")], {
+      "https://c.test/files/5/download": "<svg->",
+    });
+    canvas.uploadFile.mockResolvedValue({ id: 12, size: 6 });
+    expect((await pub.createOrUpdate(planFor(pub, "icons/list.svg"))).created).toBe(1);
+    expect(pub.manifest.get("icons/list.svg")?.canvasId).toBe("12");
+  });
+
+  it("downloads only files of the same size", async () => {
+    const [pub, canvas] = withFiles([shellFile(5, "big.svg", { size: 9000 })], {});
+    await pub.createOrUpdate(planFor(pub, "icons/list.svg"));
+    expect(canvas.downloadBytes).not.toHaveBeenCalled();
+    expect(canvas.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes over a hidden or locked copy students could not load", async () => {
+    const [pub, canvas] = withFiles(
+      [shellFile(5, "list.svg", { hidden: true }), shellFile(6, "list.svg", { locked: true })],
+      { "https://c.test/files/5/download": "<svg/>", "https://c.test/files/6/download": "<svg/>" },
+    );
+    await pub.createOrUpdate(planFor(pub, "icons/list.svg"));
+    expect(canvas.downloadBytes).not.toHaveBeenCalled();
+    expect(canvas.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the copy the manifest records, then prefers the oldest", async () => {
+    const same = { "https://c.test/files/5/download": "<svg/>", "https://c.test/files/9/download": "<svg/>" };
+    const [fresh] = withFiles([shellFile(9, "b.svg"), shellFile(5, "a.svg")], same);
+    await fresh.createOrUpdate(planFor(fresh, "icons/list.svg"));
+    expect(fresh.manifest.get("icons/list.svg")?.canvasId).toBe("5");
+
+    const [pushed] = withFiles([shellFile(5, "a.svg"), shellFile(9, "b.svg")], same);
+    pushed.manifest.put("icons/list.svg", new Entry({ kind: "file", canvasId: "9", title: "list.svg" }));
+    await pushed.createOrUpdate(planFor(pushed, "icons/list.svg"));
+    expect(pushed.manifest.get("icons/list.svg")?.canvasId).toBe("9");
+  });
+
+  it("lists the course's files once per push", async () => {
+    const [pub, canvas] = withFiles([], {});
+    await pub.createOrUpdate(planFor(pub, "icons/list.svg"));
+    await pub.createOrUpdate(planFor(pub, "icons/list.svg"));
+    expect(canvas.listFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it("touches nothing in a dry run", async () => {
+    const repo = publisher('[icons]\n"a" = "icons/list.svg"\n').repo;
+    const canvas = fakeCanvas();
+    const pub = new Publisher(repo, "42", canvas, { dryRun: true });
+    await pub.createOrUpdate(planFor(pub, "icons/list.svg"));
+    expect(canvas.listFiles).not.toHaveBeenCalled();
+    expect(canvas.uploadFile).not.toHaveBeenCalled();
   });
 });
 
