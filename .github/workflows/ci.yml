@@ -155,6 +155,13 @@ jobs:
           WIN_SIGNED: ${{ secrets.WIN_CSC_LINK != '' }}
         run: |
           version="${TAG#v}"
+          # Also attach each installer under a name with no version in it, so
+          # releases/latest/download/<name> is a link that never changes (the README
+          # uses these). GitHub's "latest" skips prereleases, so a beta never
+          # replaces what those links serve.
+          for name in mac-arm64.dmg mac-x64.dmg windows-x64-setup.exe; do
+            cp "installers/edutools-${version}-${name}" "installers/edutools-${name}"
+          done
           {
             echo "## Installers"
             echo

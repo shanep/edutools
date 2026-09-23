@@ -17,6 +17,30 @@ and [the designer guide](docs/designer-guide.md).
 Both the CLI and the app are TypeScript on Node, and run on macOS, Windows and
 Linux. Nothing shells out to an external program: markdown is rendered in process.
 
+## Download the desktop app
+
+These links always point at the newest release:
+
+- [macOS, Apple Silicon (M1 and later)](https://github.com/shanep/edutools/releases/latest/download/edutools-mac-arm64.dmg)
+- [macOS, Intel](https://github.com/shanep/edutools/releases/latest/download/edutools-mac-x64.dmg)
+- [Windows](https://github.com/shanep/edutools/releases/latest/download/edutools-windows-x64-setup.exe)
+
+Not sure which Mac you have? Open the Apple menu, choose About This Mac, and look
+at the Chip line: Apple M-anything is Apple Silicon, Intel is Intel.
+
+On a Mac, open the `.dmg` and drag edutools into Applications. On Windows, run the
+installer. The builds are not signed yet, so the first launch needs one extra step:
+
+- **macOS** says the app cannot be verified. Click Done, open System Settings ->
+  Privacy & Security, scroll down to the message about edutools, and click Open
+  Anyway.
+- **Windows** SmartScreen says it protected your PC. Click More info, then Run
+  anyway.
+
+Older versions and release notes are on the
+[releases page](https://github.com/shanep/edutools/releases). Then see
+[Desktop app](#desktop-app) and [the designer guide](docs/designer-guide.md).
+
 ## Install the CLI
 
 You need Node 22.14 or newer, and npm. From a checkout of this repository:
@@ -862,7 +886,9 @@ gh run download <run id>
 
 A run started from the Actions tab stops there. A pushed `v*` tag goes on to
 publish a GitHub release with the three installers attached, once every check and
-both self-tests pass. A tag with a prerelease part (`v2.1.0-beta.1`) is published as
+both self-tests pass. Each installer is attached twice: once with the version in its
+name, and once without (`edutools-mac-arm64.dmg`), which is what the
+[download links](#download-the-desktop-app) at the top point at. A tag with a prerelease part (`v2.1.0-beta.1`) is published as
 a prerelease, and re-running the workflow for a tag replaces its release's
 installers.
 
