@@ -23,10 +23,13 @@ You need Node 22.14 or newer, and npm. From a checkout of this repository:
 
 ```bash
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci        # the CLI never needs the Electron binary
-npm run build --workspace @edutools/cli       # bundles packages/cli/dist/edutools.js
-npm install -g ./packages/cli                 # puts edutools on PATH
+npm run install:cli                           # builds the bundle and puts edutools on PATH
 edutools --version
 ```
+
+`npm run install:cli` runs the two steps you would otherwise type by hand:
+`npm run build --workspace @edutools/cli`, which bundles
+`packages/cli/dist/edutools.js`, then `npm install -g ./packages/cli`.
 
 `npm install -g` of a folder links it rather than copying it (`cd packages/cli &&
 npm link` does the same thing), so the `edutools` on `PATH` is this checkout. Two
@@ -922,6 +925,7 @@ npm run test                                # vitest
 npm run check                               # all three
 npm run edutools -- courses --json          # run the CLI from source
 npm run build --workspace @edutools/cli     # bundle the CLI into packages/cli/dist/edutools.js
+npm run install:cli                         # build the bundle and put edutools on PATH
 ```
 
 CI runs lint, typecheck and test on macOS, Windows and Linux for every push and

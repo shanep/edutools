@@ -15,7 +15,8 @@
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && npm run typecheck --workspace @edutools/app --if-present",
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm run test",
-    "edutools": "tsx packages/cli/src/main.ts"
+    "edutools": "tsx packages/cli/src/main.ts",
+    "install:cli": "npm run build --workspace @edutools/cli && npm install -g ./packages/cli"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
