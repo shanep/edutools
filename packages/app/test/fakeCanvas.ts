@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Payload } from "@edutools/core/types";
+import type { Payload, RequestData } from "@edutools/core/types";
 import type { CanvasClient } from "../src/main/api";
 
 export interface FakeCall {
@@ -151,6 +151,118 @@ export class FakeCanvas implements CanvasClient {
   }
   deleteObject(kind: string, courseId: string, objectId: string) {
     return this.answer("deleteObject", [kind, courseId, objectId], null).then(() => structuredClone(this.find(kind, objectId)));
+  }
+
+  // -- what a push, verify, audit and clean sync call -----------------
+
+  /**
+   * GET responses by API path, for getJson and exists: a published object the
+   * push must leave alone is `json.set("/api/v1/courses/20/pages/x", { published: true })`.
+   */
+  readonly json = new Map<string, Payload>();
+  private nextId = 1000;
+
+  private created(method: string, args: unknown[], extra: Payload = {}) {
+    this.nextId += 1;
+    return this.answer(method, args, { id: this.nextId, ...extra });
+  }
+
+  getJson(urlPath: string) {
+    const found = this.json.get(urlPath);
+    return this.answer("getJson", [urlPath], null).then(() => {
+      if (!found) throw new Error(`Canvas API error 404: ${urlPath}`);
+      return structuredClone(found);
+    });
+  }
+  exists(urlPath: string) {
+    return this.answer("exists", [urlPath], this.json.has(urlPath));
+  }
+  listJson(urlPath: string) {
+    return this.answer("listJson", [urlPath], urlPath.endsWith("/assignments") ? this.assignments : []);
+  }
+  updateSyllabus(courseId: string, body: string) {
+    return this.answer("updateSyllabus", [courseId, body], {});
+  }
+  createAssignmentGroup(courseId: string, fields: Record<string, string>) {
+    return this.created("createAssignmentGroup", [courseId, fields]);
+  }
+  updateAssignmentGroup(courseId: string, groupId: string, fields: Record<string, string>) {
+    return this.answer("updateAssignmentGroup", [courseId, groupId, fields], {});
+  }
+  setGroupWeighting(courseId: string, enabled: boolean) {
+    return this.answer("setGroupWeighting", [courseId, enabled], {});
+  }
+  createPage(courseId: string, title: string, body: string, published = false) {
+    return this.created("createPage", [courseId, title, body, published], { url: title.toLowerCase().replace(/\W+/g, "-") });
+  }
+  updatePage(courseId: string, pageUrl: string, changes: { title?: string; body?: string; published?: boolean } = {}) {
+    return this.answer("updatePage", [courseId, pageUrl, changes], { url: pageUrl });
+  }
+  createAssignment(courseId: string, fields: RequestData) {
+    return this.created("createAssignment", [courseId, fields]);
+  }
+  updateAssignment(courseId: string, assignmentId: string, fields: RequestData) {
+    return this.answer("updateAssignment", [courseId, assignmentId, fields], {});
+  }
+  createDiscussion(courseId: string, fields: Record<string, string>) {
+    return this.created("createDiscussion", [courseId, fields]);
+  }
+  updateDiscussion(courseId: string, topicId: string, fields: Record<string, string>) {
+    return this.answer("updateDiscussion", [courseId, topicId, fields], {});
+  }
+  createQuiz(courseId: string, fields: Record<string, string>) {
+    return this.created("createQuiz", [courseId, fields]);
+  }
+  updateQuiz(courseId: string, quizId: string, fields: Record<string, string>) {
+    return this.answer("updateQuiz", [courseId, quizId, fields], {});
+  }
+  createQuizQuestion(courseId: string, quizId: string, fields: Array<[string, string]>) {
+    return this.created("createQuizQuestion", [courseId, quizId, fields]);
+  }
+  async deleteQuizQuestion(courseId: string, quizId: string, questionId: string): Promise<void> {
+    await this.answer("deleteQuizQuestion", [courseId, quizId, questionId], null);
+  }
+  uploadFile(courseId: string, filePath: string) {
+    return this.created("uploadFile", [courseId, filePath]);
+  }
+  createModule(courseId: string, name: string, position: number, published = false) {
+    return this.created("createModule", [courseId, name, position, published]);
+  }
+  updateModule(courseId: string, moduleId: string, fields: Record<string, string>) {
+    return this.answer("updateModule", [courseId, moduleId, fields], {});
+  }
+  createModuleItem(courseId: string, moduleId: string, fields: Record<string, string>) {
+    return this.created("createModuleItem", [courseId, moduleId, fields]);
+  }
+  async deleteModuleItem(courseId: string, moduleId: string, itemId: string): Promise<void> {
+    await this.answer("deleteModuleItem", [courseId, moduleId, itemId], null);
+  }
+  createRubric(courseId: string, fields: Array<[string, string]>) {
+    return this.created("createRubric", [courseId, fields]);
+  }
+  getAssignments(courseId: string) {
+    return this.answer("getAssignments", [courseId], this.assignments);
+  }
+  getAssignmentFull(courseId: string, assignmentId: string) {
+    return this.answer("getAssignmentFull", [courseId, assignmentId], null).then(() =>
+      structuredClone(this.find("assignment", assignmentId)),
+    );
+  }
+  getDiscussion(courseId: string, topicId: string) {
+    return this.answer("getDiscussion", [courseId, topicId], null).then(() =>
+      structuredClone(this.find("discussion", topicId)),
+    );
+  }
+  getQuiz(courseId: string, quizId: string) {
+    return this.answer("getQuiz", [courseId, quizId], null).then(() => structuredClone(this.find("quiz", quizId)));
+  }
+  getFile(fileId: string) {
+    return this.answer("getFile", [fileId], this.files.find((f) => String(f.id) === fileId) ?? {});
+  }
+
+  /** The Canvas writes made, in order: every call that creates, changes or deletes. */
+  writes(): string[] {
+    return this.methods().filter((m) => /^(create|update|delete|set|upload)/.test(m));
   }
 
   /** The methods called, in order. */

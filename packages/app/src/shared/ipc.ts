@@ -292,6 +292,86 @@ export interface RenderedBody {
   readonly html: string;
 }
 
+/** What the Publish screen sends for a preview or a push. */
+export interface PushRequest {
+  readonly courseId: string;
+  /** Make objects student-visible; without it, new objects are unpublished. */
+  readonly publish: boolean;
+  /** Also rewrite content students can already see. */
+  readonly updatePublished: boolean;
+  /** Limit to these groups (PUSH_GROUPS); empty means everything. */
+  readonly only: readonly string[];
+  /** Limit to these repo files, exact or glob; empty means everything. */
+  readonly paths: readonly string[];
+  /** Read everything back afterwards. */
+  readonly verify: boolean;
+}
+
+/** One manifest-versus-course difference, as audit and the clean sync report it. */
+export interface DifferenceRow {
+  readonly side: "stale" | "untracked" | "pending";
+  readonly kind: string;
+  readonly ident: string;
+  readonly title: string;
+  readonly key: string;
+  readonly detail: string;
+}
+
+export interface VerifyFailure {
+  readonly key: string;
+  readonly check: string;
+  readonly detail: string;
+}
+
+export interface VerifySummary {
+  readonly checked: number;
+  readonly drafts: readonly string[];
+  readonly failures: readonly VerifyFailure[];
+}
+
+export interface PushSummary {
+  readonly dryRun: boolean;
+  readonly publish: boolean;
+  /** What the clean sync deleted and forgot, when this push carried one out. */
+  readonly clean: { readonly deleted: readonly DifferenceRow[]; readonly forgotten: readonly DifferenceRow[] } | null;
+  readonly drafts: readonly string[];
+  readonly orphanedDrafts: readonly string[];
+  readonly selected: readonly string[];
+  readonly created: number;
+  readonly updated: number;
+  readonly skipped: number;
+  readonly problems: readonly string[];
+  readonly unresolved: readonly { readonly key: string; readonly link: string }[];
+  readonly droppedCss: readonly string[];
+  readonly unlisted: readonly string[];
+  readonly protected: readonly string[];
+  /** How many bodies were rendered, which "Preview HTML..." writes out. */
+  readonly rendered: number;
+  readonly verify: VerifySummary | null;
+}
+
+export interface CleanPlanView {
+  readonly courseId: string;
+  readonly targets: readonly DifferenceRow[];
+  readonly stale: readonly DifferenceRow[];
+  readonly kept: number;
+  readonly refused: readonly { readonly target: DifferenceRow; readonly reason: string }[];
+  /** What the designer must type to confirm: the course code, or its id when it has none. */
+  readonly confirmText: string;
+}
+
+export interface CleanRequest {
+  readonly courseId: string;
+  /** Typed by the designer; must equal the plan's confirmText. */
+  readonly confirmText: string;
+  readonly publish: boolean;
+}
+
+export interface AuditSummary {
+  readonly tracked: number;
+  readonly differences: readonly DifferenceRow[];
+}
+
 export interface AppInfo {
   readonly version: string;
   readonly configPath: string;
@@ -354,6 +434,20 @@ export interface EdutoolsApi {
   setObjectPublished(target: ObjectTarget, published: boolean): Promise<ObjectDetail>;
   /** Delete after the renderer has confirmed; resolves with the title of what went. */
   deleteObject(target: ObjectTarget): Promise<string>;
+  /** The groups a push can be limited to, core's PUSH_GROUPS. */
+  pushGroups(): Promise<string[]>;
+  /** The dry run: renders everything, writes nothing, needs no token. */
+  previewPush(request: PushRequest): Promise<PushSummary>;
+  /** The real push. Refused unless these exact options were previewed first. */
+  runPush(request: PushRequest): Promise<PushSummary>;
+  /** Write the last preview's HTML into a chosen folder and reveal it; null when cancelled. */
+  writePushPreview(courseId: string): Promise<string | null>;
+  /** What a start-of-term clean sync would delete. Reads only. */
+  planCleanSync(courseId: string): Promise<CleanPlanView>;
+  /** Carry out the last plan for this course, then push everything. */
+  runCleanSync(request: CleanRequest): Promise<PushSummary>;
+  verifyCourse(courseId: string): Promise<VerifySummary>;
+  auditCourse(courseId: string): Promise<AuditSummary>;
 }
 
 export type ApiMethod = keyof EdutoolsApi;
@@ -398,6 +492,14 @@ const METHODS = {
   saveObject: true,
   setObjectPublished: true,
   deleteObject: true,
+  pushGroups: true,
+  previewPush: true,
+  runPush: true,
+  writePushPreview: true,
+  planCleanSync: true,
+  runCleanSync: true,
+  verifyCourse: true,
+  auditCourse: true,
 } as const satisfies Record<ApiMethod, true>;
 
 // Object.keys widens to string[]; the satisfies clause above guarantees every key is an ApiMethod.
@@ -424,6 +526,30 @@ export interface SnapshotProgress {
   readonly message: string;
 }
 
+export type CourseJob = "push" | "clean" | "verify" | "audit";
+
+const COURSE_JOBS: readonly string[] = ["push", "clean", "verify", "audit"];
+
+/**
+ * One line from a push, clean sync, verify or audit. A `report` line is worth
+ * keeping in the log (core's notes, markup already stripped); a `progress` line
+ * says where the run is up to and replaces the last one.
+ */
+export interface JobProgress {
+  readonly job: CourseJob;
+  readonly courseId: string;
+  readonly kind: "report" | "progress";
+  readonly message: string;
+  /** Core marked the line [dim]: a detail rather than news. */
+  readonly dim: boolean;
+  readonly done: number | null;
+  readonly total: number | null;
+}
+
+function isCount(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
 /**
  * Every event the main process sends, and the payload each carries. Like
  * EdutoolsApi, this is the one definition: the sender in main, the preload's
@@ -433,6 +559,7 @@ export interface EdutoolsEvents {
   /** The application menu asked for a screen. */
   navigate: ScreenId;
   snapshotProgress: SnapshotProgress;
+  jobProgress: JobProgress;
 }
 
 export type EventName = keyof EdutoolsEvents;
@@ -453,7 +580,31 @@ export const EVENT_GUARDS: { readonly [E in EventName]: (value: unknown) => valu
   navigate: isScreenId,
   snapshotProgress: (value): value is SnapshotProgress =>
     isRecord(value) && typeof value.courseId === "string" && typeof value.message === "string",
+  jobProgress: (value): value is JobProgress =>
+    isRecord(value) &&
+    typeof value.job === "string" &&
+    COURSE_JOBS.includes(value.job) &&
+    typeof value.courseId === "string" &&
+    (value.kind === "report" || value.kind === "progress") &&
+    typeof value.message === "string" &&
+    typeof value.dim === "boolean" &&
+    isCount(value.done) &&
+    isCount(value.total),
 };
+
+/**
+ * Core's Publisher reports in Rich-style markup (`[dim]group Labs[/dim]`). The
+ * app shows plain text, so the known tags go, `\[` becomes a bracket, and
+ * anything else in brackets is left as the text it is. `dim` says whether the
+ * line opened dim, which the log shows muted.
+ */
+export function stripMarkup(line: string): { readonly text: string; readonly dim: boolean } {
+  const dim = /^\s*\[dim\]/.test(line);
+  const text = line
+    .replace(/\\\[|\[\/?(?:dim|bold|red|green|yellow|cyan|magenta)?\]/g, (tag) => (tag === "\\[" ? "[" : ""))
+    .trimEnd();
+  return { text, dim };
+}
 
 // Object.keys widens to string[]; EVENT_GUARDS has exactly one key per EventName.
 export const EVENT_NAMES = Object.keys(EVENT_GUARDS) as EventName[];

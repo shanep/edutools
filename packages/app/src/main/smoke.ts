@@ -57,7 +57,7 @@ function fakeCanvas(): CanvasClient {
     }
     return { ...found };
   };
-  return {
+  const base: Partial<CanvasClient> = {
     getCourses: async () => [course],
     getCourse: async () => course,
     getCourseWithSyllabus: async () => ({ ...course, syllabus_body: "<p>Syllabus</p>" }),
@@ -90,6 +90,16 @@ function fakeCanvas(): CanvasClient {
     updateObject: (kind, _course, id) => find(kind, id),
     deleteObject: (kind, _course, id) => find(kind, id),
   };
+  // Everything a real push or clean sync would call is left out: the smoke test
+  // only previews, which asks Canvas nothing, so any other call is a bug here.
+  const missing = (name: string) => async () => {
+    throw new Error(`${name} is not part of the smoke test`);
+  };
+  // The Proxy answers every CanvasClient method, either from `base` or with the
+  // rejecting stub above, which is what makes it a complete client.
+  return new Proxy(base, {
+    get: (target, name) => (name in target ? Reflect.get(target, name) : missing(String(name))),
+  }) as CanvasClient;
 }
 
 let sampleRepo = "";
@@ -191,6 +201,20 @@ export async function smokeTest(window: BrowserWindow): Promise<void> {
     await waitFor(window, "document.querySelector('#edit-title')?.value === 'Smoke Page'", "the Edit object form");
     await waitFor(window, "document.querySelector('.visible-guard')", "the published guard");
     await waitFor(window, "document.querySelector('button.save-object')?.disabled === true", "Save to stay disabled");
+
+    // Publish: the dry run needs no Canvas, so it runs for real on the sample repository.
+    await click(window, '.nav-item[data-screen="publish"]');
+    await waitFor(window, "document.querySelector('.clean-sync .warning-box')", "the clean sync warning");
+    await waitFor(window, "document.querySelector('button.run-push')?.disabled === true", "Publish to wait for a preview");
+    await click(window, "button.preview-push");
+    await waitFor(window, has(".preview-summary", "Preview finished"), "the preview result");
+    await waitFor(window, has(".preview-summary", "Covers 4 files"), "the preview to cover the sample repository");
+    await waitFor(window, "document.querySelector('button.run-push')?.disabled === false", "Publish to enable after a clean preview");
+
+    await click(window, '.nav-item[data-screen="verify"]');
+    await waitFor(window, "document.querySelector('.verify-about') && document.querySelector('button.run-verify')", "the Verify screen");
+    await click(window, '.nav-item[data-screen="audit"]');
+    await waitFor(window, "document.querySelector('.audit-about') && document.querySelector('button.run-audit')", "the Audit screen");
 
     // The repo's canvas.css is inlined by the native CSS inliner, so this loads it.
     const rendered = renderBody(path.join(sampleRepo, "modules", "week-01.md"), sampleRepo);

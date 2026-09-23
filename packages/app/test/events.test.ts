@@ -61,7 +61,7 @@ describe("the event channel", () => {
   });
 
   it("has a check for every event", () => {
-    expect(new Set(EVENT_NAMES)).toEqual(new Set(["navigate", "snapshotProgress"]));
+    expect(new Set(EVENT_NAMES)).toEqual(new Set(["navigate", "snapshotProgress", "jobProgress"]));
     for (const name of EVENT_NAMES) {
       expect(typeof EVENT_GUARDS[name]).toBe("function");
     }

@@ -24,6 +24,17 @@ import {
   setDefaultSite,
   setToken,
 } from "@edutools/core/credentials";
+import {
+  auditCourse as auditCourseRun,
+  type CleanPlan,
+  CleanRefusedError,
+  type CourseCanvas,
+  PUSH_GROUPS,
+  planClean,
+  push,
+  verifyCourse as verifyCourseRun,
+  writePreview,
+} from "@edutools/core/course";
 import { INDEX_NAME, KINDS, type PullCanvas } from "@edutools/core/pull";
 import { toCourseRow } from "../shared/courses";
 import type { CourseChoice, CurrentCourse, Emit, EdutoolsApi, SiteView, TestResult } from "../shared/ipc";
@@ -38,15 +49,27 @@ import {
   saveObject,
   setPublished,
 } from "./editing";
+import {
+  checkPushRequest,
+  describeCourseError,
+  jobCallbacks,
+  pushKey,
+  toAuditSummary,
+  toCleanPlanView,
+  toPushSummary,
+  toVerifySummary,
+} from "./courseJobs";
 import { buildOutline, buildSchedule, inspectRepo, outlineJsonText, renderBody } from "./repo";
 import { loadSettings, repoKey, saveSettings } from "./settings";
 import { checkKinds, defaultSnapshotFolder, runSnapshot } from "./snapshot";
 
 /**
  * The part of CanvasLMS the app uses: the course reads, everything a pull calls,
- * and the four single-object calls Edit object makes.
+ * everything a push, verify, audit or clean sync calls, and the single-object
+ * calls Edit object makes.
  */
 export type CanvasClient = PullCanvas &
+  CourseCanvas &
   Pick<CanvasLMS, "getCourses" | "getCourse" | "getObject" | "createObject" | "updateObject" | "deleteObject">;
 
 /** A file type a dialog offers, as Electron's FileFilter. */
@@ -137,9 +160,29 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
   const emit: Emit = deps.emit ?? (() => {});
   const documents = deps.documentsDir ?? path.join(os.homedir(), "Documents");
 
-  // Canvas throttles parallel work and charges a pre-flight penalty for it, and
-  // two pulls into one folder would fight over its index.json. One at a time.
-  let snapshotRunning = false;
+  // One long Canvas job at a time, across snapshot, push, clean sync, verify
+  // and audit: Canvas throttles parallel work and charges a pre-flight penalty
+  // for it, two pulls into one folder would fight over its index.json, and two
+  // pushes would race each other through the manifest.
+  let runningJob: string | null = null;
+  const exclusive = async <T>(job: string, work: () => Promise<T>): Promise<T> => {
+    if (runningJob !== null) {
+      throw new Error(`A ${runningJob} is already running. Wait for it to finish before starting another.`);
+    }
+    runningJob = job;
+    try {
+      return await work();
+    } finally {
+      runningJob = null;
+    }
+  };
+
+  // Main-process memory the page cannot forge: the push options last previewed
+  // per course (a real push must match one), the HTML that preview rendered,
+  // and the clean plan last shown.
+  const previewed = new Set<string>();
+  const rendered = new Map<string, ReadonlyMap<string, string>>();
+  const cleanPlans = new Map<string, { plan: CleanPlan; confirmText: string }>();
 
   const sites = async (): Promise<SiteView[]> => listSites(options);
 
@@ -177,6 +220,12 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
       throw new Error(`The course repository ${repo} is not there any more. Choose it again.`);
     }
     return repo;
+  };
+
+  /** What the designer types to confirm a clean sync: the course code they know it by. */
+  const currentCourseCode = (courseId: string): string => {
+    const course = loadSettings(options).currentCourse;
+    return course?.id === courseId && course.code.trim() ? course.code.trim() : courseId;
   };
 
   const editContext = async (courseId: string): Promise<EditContext> => {
@@ -346,18 +395,10 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
       const courseId = requireCourseId(request?.courseId);
       const folder = requireFolder(request?.folder);
       const kinds = checkKinds(request?.kinds);
-      if (snapshotRunning) {
-        throw new Error("A snapshot is already running. Wait for it to finish before starting another.");
-      }
-      snapshotRunning = true;
-      try {
+      return exclusive("snapshot", async () => {
         const { client } = await connect();
-        return await runSnapshot(client, courseId, folder, kinds, (message) =>
-          emit("snapshotProgress", { courseId, message }),
-        );
-      } finally {
-        snapshotRunning = false;
-      }
+        return runSnapshot(client, courseId, folder, kinds, (message) => emit("snapshotProgress", { courseId, message }));
+      });
     },
 
     async showFolder(folder) {
@@ -482,5 +523,138 @@ export function createApi(deps: ApiDeps): EdutoolsApi {
       const { ctx, kind, id } = await editTarget(target);
       return deleteObject(ctx, kind, id);
     },
+
+    async pushGroups() {
+      return [...PUSH_GROUPS];
+    },
+
+    async previewPush(request) {
+      const courseId = requireCourseId(request?.courseId);
+      const repo = requireRepo(courseId);
+      const checked = checkPushRequest(request, PUSH_GROUPS);
+      // No client and no lock: a dry run renders from the repository and never
+      // asks Canvas anything, so it needs no token and cannot collide with a job.
+      const result = await courseCall(() =>
+        push(null, { repo, courseId, dryRun: true, ...checked, ...jobCallbacks(emit, "push", courseId) }),
+      );
+      rendered.set(courseId, result.rendered);
+      if (result.problems.length === 0) {
+        previewed.add(pushKey(courseId, checked));
+      }
+      return toPushSummary(result);
+    },
+
+    async runPush(request) {
+      const courseId = requireCourseId(request?.courseId);
+      const repo = requireRepo(courseId);
+      const checked = checkPushRequest(request, PUSH_GROUPS);
+      // The page enables Publish only after a clean preview; this holds that
+      // even for a page that skips the step.
+      if (!previewed.has(pushKey(courseId, checked))) {
+        throw new Error("Preview these exact options first, and check the result, before publishing to Canvas.");
+      }
+      return exclusive("push", async () => {
+        const { client } = await connect();
+        const result = await courseCall(() =>
+          push(client, { repo, courseId, dryRun: false, ...checked, ...jobCallbacks(emit, "push", courseId) }),
+        );
+        rendered.set(courseId, result.rendered);
+        return toPushSummary(result);
+      });
+    },
+
+    async writePushPreview(courseId) {
+      const id = requireCourseId(courseId);
+      const bodies = rendered.get(id);
+      if (!bodies || bodies.size === 0) {
+        throw new Error("Preview first: there is no rendered HTML to write yet.");
+      }
+      if (!deps.chooseFolder || !deps.showItemInFolder) {
+        throw new Error("Choosing a folder is not available here.");
+      }
+      const folder = await deps.chooseFolder(
+        existingAncestor(path.join(documents, "edutools", "preview")),
+        "Choose a folder for the HTML preview",
+      );
+      if (folder === null) {
+        return null;
+      }
+      writePreview(bodies, folder);
+      deps.showItemInFolder(folder);
+      return folder;
+    },
+
+    async planCleanSync(courseId) {
+      const id = requireCourseId(courseId);
+      const repo = requireRepo(id);
+      const confirmText = currentCourseCode(id);
+      return exclusive("clean sync plan", async () => {
+        const { client } = await connect();
+        const plan = await courseCall(() => planClean(client, { repo, courseId: id, ...jobCallbacks(emit, "clean", id) }));
+        cleanPlans.set(id, { plan, confirmText });
+        return toCleanPlanView(plan, confirmText);
+      });
+    },
+
+    async runCleanSync(request) {
+      const id = requireCourseId(request?.courseId);
+      const repo = requireRepo(id);
+      const stored = cleanPlans.get(id);
+      if (!stored) {
+        throw new Error("Plan the clean sync first, and read what it would delete.");
+      }
+      if (stored.plan.refused.length > 0) {
+        // No override: a course with student work in it is not a fresh copy.
+        throw describeCourseError(new CleanRefusedError(stored.plan.refused));
+      }
+      if (typeof request.confirmText !== "string" || request.confirmText.trim() !== stored.confirmText) {
+        throw new Error(`Type ${stored.confirmText} exactly to confirm the clean sync.`);
+      }
+      return exclusive("clean sync", async () => {
+        // A plan is used once: after this run, what it listed is gone or changed.
+        cleanPlans.delete(id);
+        const { client } = await connect();
+        const result = await courseCall(() =>
+          push(client, {
+            repo,
+            courseId: id,
+            dryRun: false,
+            publish: request.publish === true,
+            clean: stored.plan,
+            verify: true,
+            ...jobCallbacks(emit, "clean", id),
+          }),
+        );
+        rendered.set(id, result.rendered);
+        return toPushSummary(result);
+      });
+    },
+
+    async verifyCourse(courseId) {
+      const id = requireCourseId(courseId);
+      const repo = requireRepo(id);
+      return exclusive("verify", async () => {
+        const { client } = await connect();
+        return toVerifySummary(await courseCall(() => verifyCourseRun(client, { repo, courseId: id, ...jobCallbacks(emit, "verify", id) })));
+      });
+    },
+
+    async auditCourse(courseId) {
+      const id = requireCourseId(courseId);
+      const repo = requireRepo(id);
+      return exclusive("audit", async () => {
+        const { client } = await connect();
+        return toAuditSummary(await courseCall(() => auditCourseRun(client, { repo, courseId: id, ...jobCallbacks(emit, "audit", id) })));
+      });
+    },
   };
+}
+
+/** Run a course.ts call, rethrowing its errors in plain words. */
+async function courseCall<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    throw describeCourseError(error);
+  }
 }
