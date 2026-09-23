@@ -22,9 +22,10 @@ edutools check --json          # confirms the credentials work
 edutools courses --json        # the course ids you are allowed to touch
 ```
 
-`check --json` prints `{"endpoint", "source", "site", "courses"}`. If the
-credentials are missing or rejected it prints nothing on stdout, explains on
-stderr, and exits 1. Then:
+`check --json` always prints one object on stdout. On success it is
+`{"ok": true, "endpoint", "source", "site", "courses"}`. If the credentials are
+missing or rejected it is `{"ok": false, "endpoint", "error"}` (`endpoint` is null
+when no site is set up) and it exits 1. Read `error`, then:
 
 - **No site set up.** Tell the user to generate a token in Canvas (Account ->
   Settings -> Approved Integrations -> + New Access Token) and run
@@ -32,6 +33,10 @@ stderr, and exits 1. Then:
   for the token at a hidden prompt; a token is never a flag. Do not ask the user
   to paste a token into the conversation, and do not try to work around a
   missing token.
+- **The token expired or was revoked** (`error` mentions 401 or an invalid access
+  token, or no token is saved for the site). Tell the user to generate a new one
+  and run `edutools site token <name>` themselves; it asks for the token the same
+  way `site add` does.
 - **They used an older edutools** with `~/.config/edutools/config.toml`:
   `edutools init` moves that token into the OS keychain and prints the setup
   status. It is safe to run; it only reads the old file.
@@ -73,8 +78,8 @@ Canvas writes are immediate and land on real courses with real students.
    for that specific published content to change in this conversation.
 6. **Report what actually happened.** `grade`, `push` and `pull` print what they
    did and exit non-zero on failure. If something failed, say what and why.
-7. **Never handle tokens.** Do not run `site add`, `site remove` or `site default`
-   on the user's behalf unless they ask, and never put a token on a command line.
+7. **Never handle tokens.** Do not run `site add`, `site token`, `site remove` or
+   `site default` on the user's behalf unless they ask, and never put a token on a command line.
 
 ## Reading
 
@@ -242,7 +247,7 @@ documents the layout and every `canvas.toml` key; read it before editing
 The usual loop, and the order to run it in:
 
 ```bash
-edutools dates <repo> --show                       # due dates, from canvas.toml alone
+edutools dates <repo> --json                       # due dates, from canvas.toml alone
 edutools outline <repo>                            # the modules a push will build
 edutools push <repo> --course <id> --dry-run       # render everything, write nothing
 edutools push <repo> --course <id>                 # write it, unpublished, then verify
@@ -251,9 +256,15 @@ edutools audit <repo> --course <id> --json         # what Canvas holds that the 
 
 `dates` and `outline` need no token and never touch Canvas, so they are the
 first thing to show a user who is changing the schedule or the module layout.
-`dates --shift 7d` previews the whole term moved by a week, and `outline --out
-<file>` writes the outline as JSON. Neither has `--json`; `dates` lists any
-problem and exits 1.
+`dates` only prints; `push` is what writes the dates to Canvas. `dates --shift 7d`
+previews the whole term moved by a week, and `outline --out <file>` writes the
+outline as JSON (`outline` has no `--json`).
+
+`dates --json` prints `{"items": [...], "problems": [...]}`. Each item has `path`,
+`title`, `kind`, `week` (null in finals week), `points`, and `unlock_at`, `due_at`
+and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`;
+`unlock_at` may be null). It exits 1 when `problems` is not empty; without
+`--json` it lists the problems on stderr and exits 1 too.
 
 ### `push`
 
@@ -346,8 +357,10 @@ Both require `--course <id>`.
 - `verify <repo> --course <id>` reads every object the repo pushed back from
   Canvas and compares it with what the repo says it should be. It catches the
   sanitizer stripping HTML, partial quiz writes, files stuck pending, and someone
-  editing in the Canvas UI. `push` runs it automatically. It has no `--json`; it
-  prints a table of failures and exits 1 when there are any.
+  editing in the Canvas UI. `push` runs it automatically. It exits 1 when anything
+  failed. With `--json` it prints
+  `{"checked", "drafts", "failures": [{"key", "check", "detail"}]}`, where `key` is
+  the repo path and `drafts` the paths skipped because they are now drafts.
 - `audit <repo> --course <id> --json` answers the other direction: objects in
   Canvas the repo did not create (`untracked`, normal for a hand-built exam),
   modules `canvas.toml` declares that do not exist yet (`pending`), and manifest

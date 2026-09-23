@@ -190,6 +190,19 @@ export class Cli {
 
   /** The credentials for this run, resolved once. */
   async credentials(): Promise<ResolvedCredentials> {
+    const resolved = await this.tryCredentials();
+    if (resolved instanceof CredentialsError) {
+      this.notConfigured(resolved.message);
+      throw new CliExit(1);
+    }
+    return resolved;
+  }
+
+  /**
+   * The credentials, or the reason there are none, printing nothing. For a
+   * command such as `check --json` that has to report the failure on stdout.
+   */
+  async tryCredentials(): Promise<ResolvedCredentials | CredentialsError> {
     if (this.resolved) return this.resolved;
     try {
       this.resolved = await resolveCredentials(this.site, {
@@ -198,8 +211,7 @@ export class Cli {
       });
     } catch (error) {
       if (!(error instanceof CredentialsError)) throw error;
-      this.notConfigured(error.message);
-      throw new CliExit(1);
+      return error;
     }
     return this.resolved;
   }
@@ -208,7 +220,7 @@ export class Cli {
   notConfigured(message: string): void {
     this.note(`${this.e.red("✗")} ${this.e.bold(this.e.magenta("Canvas LMS"))} - not configured`);
     this.note(`  ${message}`);
-    this.note(this.e.dim("  Run 'edutools init' to set up a site, or set CANVAS_TOKEN."));
+    this.note(this.e.dim("  'edutools init' shows the setup status and imports an old config.toml; CANVAS_TOKEN also works."));
   }
 
   /** The Canvas client, built on first use so a command that fails validation never needs one. */

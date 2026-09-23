@@ -1,5 +1,5 @@
 /**
- * `init`: move the Python CLI's plain-text token into the keychain, then say
+ * `init`: move a legacy config.toml's plain-text token into the keychain, then say
  * what is set up and what to do next.
  */
 
@@ -23,8 +23,7 @@ async function importLegacy(cli: Cli): Promise<void> {
     cli.print(
       `${c.green("✓")} imported the token from ${c.cyan(imported.path)}: ${verb} ${c.bold(imported.site.name)}`,
     );
-    // Left in place on purpose: deleting a credential is for the user to decide,
-    // and the Python edutools still reads it until it is retired.
+    // Left in place on purpose: deleting a credential is for the user to decide.
     cli.print(c.dim(`  ${imported.path} still holds the token in plain text; delete it when nothing needs it.`));
   } catch (error) {
     if (!(error instanceof CredentialsError)) throw error;

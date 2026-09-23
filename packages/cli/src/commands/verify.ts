@@ -29,11 +29,12 @@ export const register: Register = (program, cli) => {
       "Read every published object back from Canvas and prove it arrived intact.\n\n" +
         "Catches what a 200 response does not: silent sanitiser stripping, partial\n" +
         "quiz writes, files stuck pending, and drift from someone editing in the\n" +
-        "Canvas UI.",
+        "Canvas UI. Exits 1 when anything failed.",
     )
     .argument("<repo>", "Course repository containing canvas.toml")
     .requiredOption("--course <id>", "Canvas course ID")
-    .action(async (repo: string, options: { course: string }) => {
+    .option("--json", "Emit {checked, drafts, failures: [{key, check, detail}]} as JSON")
+    .action(async (repo: string, options: { course: string; json?: boolean }) => {
       const canvas = await cli.canvas();
       let result: VerifyResult;
       try {
@@ -47,6 +48,15 @@ export const register: Register = (program, cli) => {
       } catch (error) {
         if (error instanceof CourseError) throw cli.fail(error.message);
         throw error;
+      }
+      if (options.json) {
+        cli.json({
+          checked: result.checked,
+          drafts: result.drafts,
+          failures: result.failures.map((f) => ({ key: f.key, check: f.check, detail: f.detail })),
+        });
+        if (result.failures.length > 0) throw new CliExit(1);
+        return;
       }
       if (!printVerify(cli, result)) throw new CliExit(1);
     });

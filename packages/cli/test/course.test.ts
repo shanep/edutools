@@ -315,6 +315,33 @@ describe("verify", () => {
     expect(result.stdout).toContain("assignment 7 does not resolve in Canvas");
     expect(result.stderr).toContain("1 failure(s): {'missing': 1}");
   });
+
+  it("json is the result alone on stdout, and a failure still exits 1", async () => {
+    writeManifest(repo, {
+      "assignments/p0.md": { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} },
+    });
+    canvas.getAssignmentFull.mockRejectedValue(new Error("Canvas API error 404"));
+    const result = await invoke(["verify", repo, "--course", "42", "--json"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      checked: 1,
+      drafts: [],
+      failures: [
+        { key: "assignments/p0.md", check: "missing", detail: expect.stringContaining("does not resolve in Canvas") },
+      ],
+    });
+  });
+
+  it("json for an intact course exits 0", async () => {
+    writeManifest(repo, {
+      "index.md": { kind: "syllabus", canvas_id: "42", page_url: "", title: "S", extra: {} },
+    });
+    const result = await invoke(["verify", repo, "--course", "42", "--json"], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ checked: 1, drafts: [], failures: [] });
+  });
 });
 
 describe("audit", () => {
@@ -397,6 +424,45 @@ describe("dates", () => {
 
     expect(result.stdout).toContain("Showing the term shifted by +7 days.");
     expect(result.stdout).toContain("Sep 08 23:59");
+  });
+
+  it("without --show it says that push is what writes the dates", async () => {
+    const result = await invoke(["dates", repo], { env: {} });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.stdout).toContain("'edutools push' writes these dates to Canvas");
+    expect(result.stdout).not.toContain("arrives with");
+  });
+
+  it("json is the computed items as ISO strings, and nothing else on stdout", async () => {
+    const result = await invoke(["dates", repo, "--json", "--shift", "7d"], { env: {} });
+
+    expect(result.code, result.output).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(Object.keys(parsed)).toEqual(["items", "problems"]);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.items[0]).toEqual({
+      path: "assignments/p0.md",
+      title: "P0",
+      kind: "project",
+      week: 2,
+      points: 50,
+      // No available-from policy for projects, so there is no unlock date to send.
+      unlock_at: null,
+      due_at: "2026-09-08T23:59:00-06:00",
+      lock_at: "2026-09-08T23:59:00-06:00",
+    });
+  });
+
+  it("json lists problems and exits 1", async () => {
+    writeFileSync(path.join(repo, "canvas.toml"), TOML.replace("total_points = 0", "total_points = 999"), "utf-8");
+    const result = await invoke(["dates", repo, "--json"], { env: {} });
+
+    expect(result.code).toBe(1);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.problems.length).toBeGreaterThan(0);
+    expect(parsed.items).toHaveLength(2);
   });
 
   it("a bad --shift exits 1", async () => {

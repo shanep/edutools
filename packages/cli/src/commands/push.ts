@@ -197,7 +197,10 @@ export const register: Register = (program, cli) => {
     .option("--path <file>", "Limit to specific repo files, exact or glob, repeatable", collect)
     .option("--verify", "Read everything back from Canvas afterwards (the default)")
     .option("--no-verify", "Skip the read-back")
-    .option("--preview <dir>", "Write the rendered HTML to a directory and open nothing else")
+    .option(
+      "--preview <dir>",
+      "Also write the rendered HTML to a directory. The push still writes to Canvas; add --dry-run to only preview",
+    )
     .option("--clean", "Start of term: first delete everything the repo does not own, then rewrite all of it")
     .option("-y, --yes", "With --clean, skip the confirmation prompt")
     .action(async (repoArg: string, options: Options) => {
