@@ -3,7 +3,8 @@ name: CI
 # Checks run on every push and pull request. Installers are built only on demand
 # (Actions > CI > Run workflow) or for a v* tag, and are uploaded as workflow
 # artifacts. This workflow never creates a GitHub release: that needs the owner's
-# explicit go-ahead.
+# explicit go-ahead. Installers take their version from the tag they are built
+# on, or from git describe past it; see scripts/version.cjs.
 
 on:
   push:
@@ -47,7 +48,11 @@ jobs:
     needs: checks
     runs-on: macos-latest
     steps:
+      # Full history and tags: the version comes from git describe (scripts/version.cjs),
+      # and a shallow clone has no tags to describe from.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -96,7 +101,11 @@ jobs:
     needs: checks
     runs-on: windows-latest
     steps:
+      # Full history and tags: the version comes from git describe (scripts/version.cjs),
+      # and a shallow clone has no tags to describe from.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 24

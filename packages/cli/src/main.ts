@@ -10,8 +10,8 @@
 
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { VERSION } from "@edutools/core/version";
 import { Command, CommanderError } from "commander";
-import pkg from "../package.json" with { type: "json" };
 import { Cli, type CliDeps, CliExit, canvasClient, type Register } from "./cli";
 import { register as assignments } from "./commands/assignments";
 import { register as audit } from "./commands/audit";
@@ -71,8 +71,6 @@ const COMMANDS: readonly Register[] = [
   download,
   grade,
 ];
-
-export const VERSION: string = pkg.version;
 
 export function createProgram(cli: Cli): Command {
   const program = new Command("edutools");

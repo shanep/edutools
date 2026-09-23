@@ -8,6 +8,8 @@
 // electron-builder reads all of these directly; this file only decides what an
 // unsigned macOS build looks like.
 
+const { gitVersion } = require("../../scripts/version.cjs");
+
 const macSigned = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
 
 /** @type {import("electron-builder").Configuration} */
@@ -18,6 +20,10 @@ module.exports = {
   // not look, so name the installed version rather than the package.json range.
   electronVersion: require("electron/package.json").version,
   copyright: "Copyright (c) Shane Panter",
+  // The one version, from git (scripts/version.cjs), written into the packaged
+  // package.json so the installer names, Info.plist and Windows metadata carry it
+  // rather than this package's 0.0.0 placeholder.
+  extraMetadata: { version: gitVersion() },
   directories: {
     output: "release",
     buildResources: "resources",

@@ -1,7 +1,7 @@
 {
   "name": "@edutools/app",
   "productName": "edutools",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Manage Canvas course design from the desktop",
   "author": "Shane Panter <shanepanter@boisestate.edu>",
   "license": "MIT",

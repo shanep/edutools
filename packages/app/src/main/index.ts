@@ -1,4 +1,5 @@
 import path from "node:path";
+import { VERSION } from "@edutools/core/version";
 import { app, BrowserWindow, dialog, Menu, type OpenDialogOptions, type SaveDialogOptions, shell } from "electron";
 import { type Emit, sendEvent } from "../shared/ipc";
 import { type ApiDeps, createApi, type FileFilter } from "./api";
@@ -12,7 +13,7 @@ const devServer = process.env.ELECTRON_RENDERER_URL;
 const here = import.meta.dirname;
 
 app.setName("edutools");
-app.setAboutPanelOptions({ applicationName: "edutools", applicationVersion: app.getVersion() });
+app.setAboutPanelOptions({ applicationName: "edutools", applicationVersion: VERSION });
 // Electron's own data (caches, local storage) lives in a subfolder, so the
 // edutools config directory holds only our site list and settings, and stays readable.
 app.setPath("userData", path.join(app.getPath("appData"), "edutools", "app-data"));
@@ -55,7 +56,7 @@ async function chooseSaveFile(defaultPath: string, title: string, filters: FileF
 
 function realDeps(): ApiDeps {
   return {
-    version: app.getVersion(),
+    version: VERSION,
     credentials: {},
     openExternal: (url) => shell.openExternal(url),
     documentsDir: app.getPath("documents"),
@@ -126,7 +127,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-    const api = createApi({ ...(smoke ? smokeDeps(app.getVersion()) : realDeps()), emit });
+    const api = createApi({ ...(smoke ? smokeDeps(VERSION) : realDeps()), emit });
     if (smoke) {
       await seedSmoke(api);
     }

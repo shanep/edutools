@@ -6,6 +6,7 @@
 import { chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { gitVersion } from "../../scripts/version.cjs";
 
 const outfile = fileURLToPath(new URL("./dist/edutools.js", import.meta.url));
 
@@ -26,6 +27,8 @@ await build({
       "const require = __edutoolsCreateRequire(import.meta.url);",
     ].join("\n"),
   },
+  // The one version, from git; see scripts/version.cjs.
+  define: { __EDUTOOLS_VERSION__: JSON.stringify(gitVersion()) },
   logLevel: "warning",
 });
 

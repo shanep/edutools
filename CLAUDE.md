@@ -178,6 +178,11 @@ from a hidden prompt or from stdin. Never print a token; `maskToken` is all anyt
 
 ## Releases
 
+There is one version, and it comes from git: `scripts/version.cjs` turns `git
+describe` into semver at build time, and the CLI bundle, the app and its installers
+all stamp it in as `VERSION` from `@edutools/core/version`. Never set a version in a
+`package.json`; they stay `0.0.0`. A release is a `v*` tag.
+
 The CI workflow builds the app installers on `workflow_dispatch` or a `v*` tag and
 uploads them as artifacts; it never creates a GitHub release. Tagging a release and
 creating one always need the owner's explicit go-ahead.

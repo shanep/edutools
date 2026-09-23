@@ -929,9 +929,19 @@ pull request.
 
 ### Versions and releases
 
-The CLI's version is `version` in `packages/cli/package.json`, and
-`edutools --version` prints it; the app's is in `packages/app/package.json`.
-Installers are built for a `v*` tag, but a tag never creates a GitHub release on
+There is one version for the CLI, the desktop app and its installers, and it
+comes from git: `scripts/version.cjs` reads `git describe` at build time.
+
+- A build on a `v*` tag is that tag's version: `v1.2.0` builds `1.2.0`.
+- A build past the newest tag is a prerelease of the next patch, named by its
+  distance from the tag and its commit: five commits past `v1.2.0` builds
+  `1.2.1-dev.5.gabc1234`. Uncommitted changes add `.dirty`.
+- Running from source (`npm run edutools`, the tests) has no build step, so it
+  reports `0.0.0-source`.
+
+The `version` fields in the `package.json` files are placeholders (`0.0.0`) and are
+never read. To release, tag the commit (`git tag v1.2.0 && git push origin v1.2.0`);
+CI builds the installers for the tag, but a tag never creates a GitHub release on
 its own.
 
 ### References
