@@ -141,8 +141,8 @@ Canvas writes are real and immediate, against courses with real students in them
 Sites (a name and an endpoint) live in `sites.json` in the platform config
 directory; tokens live in the OS keychain under the service `edutools`, keyed by
 endpoint, through `@napi-rs/keyring`. `CANVAS_TOKEN` and `CANVAS_ENDPOINT` override
-both. A token is never a command line flag: `site add` reads it from a hidden
-prompt or from stdin. Never print a token; `maskToken` is all anything shows.
+both. A token is never a command line flag: `site add` and `site token` read it
+from a hidden prompt or from stdin. Never print a token; `maskToken` is all anything shows.
 
 ## Portability
 
