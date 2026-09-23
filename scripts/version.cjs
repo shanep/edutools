@@ -60,4 +60,84 @@ function gitVersion(cwd = __dirname) {
   return versionFromDescribe(described);
 }
 
-module.exports = { versionFromDescribe, gitVersion };
+/**
+ * Split a version into its numbers and prerelease identifiers, or null when it
+ * is not semver. Build metadata is not used by any edutools version.
+ * @param {string} version
+ */
+function parse(version) {
+  const parts = SEMVER.exec(version);
+  if (!parts) return null;
+  return {
+    numbers: [Number(parts[1]), Number(parts[2]), Number(parts[3])],
+    pre: parts[4] ? parts[4].slice(1).split(".") : [],
+  };
+}
+
+/**
+ * Compare two semver versions by semver precedence: negative when `a` is older,
+ * positive when newer, zero when equal.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function compareVersions(a, b) {
+  const left = parse(a);
+  const right = parse(b);
+  if (!left) throw new Error(`${a} is not a semver version`);
+  if (!right) throw new Error(`${b} is not a semver version`);
+  for (let i = 0; i < 3; i++) {
+    const diff = (left.numbers[i] ?? 0) - (right.numbers[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  // A release sorts after any prerelease of the same numbers.
+  if (left.pre.length === 0 || right.pre.length === 0) return right.pre.length - left.pre.length;
+  for (let i = 0; i < Math.min(left.pre.length, right.pre.length); i++) {
+    const x = left.pre[i] ?? "";
+    const y = right.pre[i] ?? "";
+    if (x === y) continue;
+    const xNumeric = /^\d+$/.test(x);
+    const yNumeric = /^\d+$/.test(y);
+    if (xNumeric && yNumeric) return Number(x) - Number(y);
+    // Numeric identifiers sort before alphanumeric ones.
+    if (xNumeric !== yNumeric) return xNumeric ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return left.pre.length - right.pre.length;
+}
+
+/**
+ * The next release after `version` for a major, minor or patch bump. A
+ * prerelease part is dropped, so bump from the last release.
+ * @param {string} version
+ * @param {"major" | "minor" | "patch"} part
+ * @returns {string}
+ */
+function bumpVersion(version, part) {
+  const parsed = parse(version);
+  if (!parsed) throw new Error(`${version} is not a semver version`);
+  const [major = 0, minor = 0, patch = 0] = parsed.numbers;
+  if (part === "major") return `${major + 1}.0.0`;
+  if (part === "minor") return `${major}.${minor + 1}.0`;
+  if (part === "patch") return `${major}.${minor}.${patch + 1}`;
+  throw new Error(`unknown bump ${part}: use major, minor or patch`);
+}
+
+/**
+ * The newest semver version among tag names, ignoring anything that is not a
+ * v-prefixed semver tag, or null when there is none.
+ * @param {readonly string[]} tags
+ * @returns {string | null}
+ */
+function latestVersion(tags) {
+  let latest = null;
+  for (const tag of tags) {
+    const name = tag.trim();
+    if (!name.startsWith("v") || !parse(name.slice(1))) continue;
+    const version = name.slice(1);
+    if (latest === null || compareVersions(version, latest) > 0) latest = version;
+  }
+  return latest;
+}
+
+module.exports = { versionFromDescribe, gitVersion, compareVersions, bumpVersion, latestVersion };

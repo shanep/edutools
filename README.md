@@ -948,14 +948,30 @@ comes from git: `scripts/version.cjs` reads `git describe` at build time.
   reports `0.0.0-source`.
 
 The `version` fields in the `package.json` files are placeholders (`0.0.0`) and are
-never read. To release, tag the commit and push the tag:
+never read. To release, run `scripts/create-release.sh` from master:
 
 ```bash
-git tag -a v1.2.0 -m "edutools 1.2.0"
-git push origin v1.2.0
+scripts/create-release.sh patch        # or minor, major, or an exact 2.1.0 / 2.1.0-beta.1
+scripts/create-release.sh -n minor     # dry run: check everything, tag nothing
 ```
 
-CI builds, self-tests and publishes the installers as the `v1.2.0` GitHub release.
+It refuses unless master is clean and matches `origin/master`, the version is
+newer than the latest tag, and `npm run check` passes. Then it asks, tags the
+commit (`v1.2.0`, annotated) and pushes the tag. CI builds, self-tests and
+publishes the installers as that tag's GitHub release; a tag with a prerelease
+part becomes a prerelease. `-y` skips the question.
+
+### Checking the installed CLI
+
+```bash
+node skills/canvas/scripts/check-version.mjs [--json]
+```
+
+This prints the installed `edutools` version, the checkout's version and the
+latest release. It warns if the installed build doesn't match the checkout, if
+it's older than the latest release, if the checkout is behind `origin`, or if the
+checkout has uncommitted or unpushed changes. It exits 1 when it warns. The Claude
+skill runs it at the start of a session and reports what it finds.
 
 ### References
 

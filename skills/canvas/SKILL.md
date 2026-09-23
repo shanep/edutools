@@ -17,6 +17,35 @@ that are say so below.
 
 ## Before anything else
 
+First, once per conversation, check which edutools you are driving. The script
+sits in this skill's directory (normally `~/.claude/skills/canvas`, a symlink into
+the edutools checkout):
+
+```bash
+node ~/.claude/skills/canvas/scripts/check-version.mjs
+```
+
+It prints the installed version, the version of the checkout it came from, and
+the latest release, then a `warning:` line for each thing that is off. It exits 0
+when there is nothing to warn about and 1 when there is; `--json` gives the same
+as one object with a `warnings` array. **Tell the user the edutools version you
+are using, and pass on every warning in your own words**, with the fix it names:
+
+- **The installed build does not match the checkout**, or **it is older than the
+  latest release**, or **the checkout is behind origin**: the CLI may be missing
+  fixes. Suggest `git pull && npm run install:cli` in the checkout.
+- **Uncommitted files or unpushed commits in the checkout**: the CLI may be
+  running local changes nobody else has. Say so; it is the user's call whether to
+  go on.
+- **edutools is not on PATH**: nothing else in this file works until it is
+  installed (`npm ci && npm run install:cli` in the checkout).
+
+A warning is information, not a stop: carry on with the task unless edutools is
+missing or the user says to fix things first. Never run `git pull`, commit, push
+or rebuild on your own to clear a warning.
+
+Then confirm the credentials and the course:
+
 ```bash
 edutools check --json          # confirms the credentials work
 edutools courses --json        # the course ids you are allowed to touch
