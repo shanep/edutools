@@ -1,0 +1,2 @@
+# Shell scripts run under bash, which reads a CRLF line ending as part of the command.
+*.sh text eol=lf

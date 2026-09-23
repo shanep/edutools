@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Report which edutools the canvas skill is driving, and whether it can be trusted
 // to be current.
 //
