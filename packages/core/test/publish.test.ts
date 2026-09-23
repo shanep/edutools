@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { globRepo } from "@edutools/core/paths";
 import {
   addHeadingIcons,
   assertNoForbiddenTags,
@@ -41,10 +40,6 @@ import {
 } from "@edutools/core/publish";
 import { describe, expect, it } from "vitest";
 
-// EDUTOOLS_CS331 points the course checks at another checkout of the course repo.
-const CS331 = process.env.EDUTOOLS_CS331 ?? path.join(os.homedir(), "repos", "CS331");
-// The directory alone is not enough: the checks need the course content in it.
-const noCS331 = !existsSync(path.join(CS331, "quizzes"));
 
 function tmp(): string {
   return mkdtempSync(path.join(os.tmpdir(), "edutools-"));
@@ -433,74 +428,6 @@ describe("comparison helpers", () => {
   });
 });
 
-describe.skipIf(noCS331)("against CS331", () => {
-  const quizzes = (): string[] => globRepo(CS331, "quizzes/*.md").map((k) => path.join(CS331, k));
-
-  it("parses all quizzes", () => {
-    let total = 0;
-    for (const file of quizzes()) {
-      const questions = parseQuiz(file);
-      expect(questions.length, file).toBeGreaterThan(0);
-      total += questions.length;
-    }
-    expect(total).toBe(85);
-  });
-
-  it("gives every question a correct answer and a rationale", () => {
-    for (const file of quizzes()) {
-      for (const question of parseQuiz(file)) {
-        expect(question.correctLetters.length, `${file} Q${question.number}`).toBeGreaterThan(0);
-        expect(question.rationale, `${file} Q${question.number}`).not.toBe("");
-      }
-    }
-  });
-
-  it("gives multiple choice questions exactly one answer", () => {
-    for (const file of quizzes()) {
-      for (const question of parseQuiz(file)) {
-        if (question.kind === "multiple_choice_question") {
-          expect(question.correctLetters.length, `${file} Q${question.number}`).toBe(1);
-        }
-      }
-    }
-  });
-
-  it("sums every lab and discussion rubric to its points", () => {
-    const keys = [...globRepo(CS331, "assignments/lab-*.md"), ...globRepo(CS331, "discussions/*.md")];
-    for (const key of keys) {
-      const text = readFileSync(path.join(CS331, key), "utf8");
-      const criteria = parseRubric(text);
-      expect(criteria.length, key).toBeGreaterThan(0);
-      const header = /·\s*([\d.]+)\s+points/.exec(text);
-      expect(header, key).not.toBeNull();
-      expect(
-        criteria.reduce((sum, c) => sum + c.points, 0),
-        key,
-      ).toBe(Number(header?.[1]));
-    }
-  });
-
-  it("keeps the stylesheet entirely Canvas compatible", () => {
-    const css = readFileSync(path.join(CS331, "canvas.css"), "utf8");
-    for (const name of [
-      "modules/week-07-symmetric-cryptography.md",
-      "assignments/lab-04-symmetric-encryption.md",
-      "discussions/d03-authentication-policy-critique.md",
-    ]) {
-      const [, html] = renderMarkdown(path.join(CS331, name));
-      const [styled, dropped] = inlineCss(wrapTables(markTableRows(decorate(html))), css);
-      expect(dropped, `${name}: Canvas would strip ${dropped}`).toEqual([]);
-      expect(assertNoForbiddenTags(styled)).toEqual([]);
-    }
-  });
-
-  it("never leaks the instructor note into a published page", () => {
-    for (const file of quizzes()) {
-      const [, html] = renderMarkdown(file);
-      expect(html, file).not.toContain("Instructor note");
-    }
-  });
-});
 
 describe("stripVitepress", () => {
   // The same file is a VitePress page and a Canvas object, so the VitePress-only

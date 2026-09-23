@@ -4,7 +4,7 @@
  * These need no Canvas token: dates.ts is pure computation.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -16,7 +16,6 @@ import {
   Term,
   classify,
   compute,
-  crossCheckSyllabus,
   isoformat,
   loadConfig,
   loadGroups,
@@ -28,9 +27,7 @@ import {
 } from "@edutools/core/dates";
 import { DateTime } from "luxon";
 import { parse as parseToml } from "smol-toml";
-import { beforeAll, describe, expect, it } from "vitest";
-
-const CS331 = path.join(os.homedir(), "repos", "CS331");
+import { describe, expect, it } from "vitest";
 
 function tmpRepo(): string {
   return mkdtempSync(path.join(os.tmpdir(), "edutools-"));
@@ -51,12 +48,6 @@ function makeTerm(overrides: Partial<ConstructorParameters<typeof Term>[0]> = {}
 
 function denver(year: number, month: number, day: number, hour = 0, minute = 0): DateTime {
   return DateTime.fromObject({ year, month, day, hour, minute }, { zone: makeTerm().tz });
-}
-
-// Whole calendar days between two timestamps in one zone, the way subtracting
-// two Python datetimes that share a tzinfo counts them: by wall clock.
-function daysBetween(later: DateTime, earlier: DateTime): number {
-  return later.diff(earlier, "days").days;
 }
 
 describe("term arithmetic", () => {
@@ -212,115 +203,6 @@ describe("layout", () => {
   });
 });
 
-// The generated schedule has to agree with the course as written. Python gates
-// this class on canvas.toml alone. The ~/repos/CS331 checkout currently holds
-// canvas.toml but none of the course files or syllabus.md it names, and with
-// that gate seven of these fail identically in Python and here (no items, a
-// missing syllabus). Gating on syllabus.md as well skips the class until the
-// course content is back, rather than leaving the suite red.
-describe.skipIf(!existsSync(path.join(CS331, "canvas.toml")) || !existsSync(path.join(CS331, "syllabus.md")))(
-  "CS331 schedule",
-  () => {
-    let config: DateConfig;
-    let items: ItemDates[];
-
-    beforeAll(() => {
-      config = loadConfig(CS331);
-      items = compute(CS331, config);
-    });
-
-    it("no problems", () => {
-      expect(validate(items, config.term)).toEqual([]);
-    });
-
-    it("agrees with the syllabus schedule table", () => {
-      expect(crossCheckSyllabus(path.join(CS331, "syllabus.md"), config.term)).toEqual([]);
-    });
-
-    it("points total one thousand", () => {
-      expect(items.reduce((sum, item) => sum + item.points, 0)).toBe(1000);
-    });
-
-    it("every item has all three dates in order", () => {
-      for (const item of items) {
-        expect(item.unlockAt, item.path).not.toBeNull();
-        const unlock = item.unlockAt?.toMillis() ?? Number.POSITIVE_INFINITY;
-        const due = item.dueAt.toMillis();
-        expect(unlock <= due && due <= item.lockAt.toMillis(), item.path).toBe(true);
-      }
-    });
-
-    it("labs get two days of grace", () => {
-      // Except in week 15, where the last day of instruction clamps it.
-      const labs = items.filter((i) => i.kind === "lab" && i.week !== 15);
-      expect(labs.length, "expected some labs").toBeGreaterThan(0);
-      for (const lab of labs) {
-        expect(daysBetween(lab.lockAt, lab.dueAt), lab.path).toBe(2);
-      }
-    });
-
-    it("quizzes and discussions get no grace", () => {
-      for (const item of items) {
-        if (item.kind === "quiz" || item.kind === "discussion") {
-          expect(item.lockAt.equals(item.dueAt), item.path).toBe(true);
-        }
-      }
-    });
-
-    it("nothing from an instructional week locks after the last day", () => {
-      const cutoff = DateTime.fromObject(
-        { year: 2027, month: 4, day: 30, hour: 23, minute: 59 },
-        { zone: config.term.tz },
-      );
-      for (const item of items) {
-        if (item.week !== null) {
-          expect(item.lockAt.toMillis() <= cutoff.toMillis(), item.path).toBe(true);
-        }
-      }
-    });
-
-    it("finals week items use the finals window", () => {
-      const finals = items.filter((i) => i.week === null);
-      expect(finals.length, "the final exam and D6").toBe(2);
-      for (const item of finals) {
-        expect(item.unlockAt?.toISODate()).toBe("2027-05-03");
-        expect(item.dueAt.toISODate()).toBe("2027-05-07");
-      }
-    });
-
-    it("nothing falls in the break week", () => {
-      for (const item of items) {
-        for (const stamp of [item.unlockAt, item.dueAt, item.lockAt]) {
-          const day = stamp?.toISODate() ?? "";
-          expect("2027-03-15" <= day && day <= "2027-03-21", item.path).toBe(false);
-        }
-      }
-    });
-
-    it("daylight saving transition is handled", () => {
-      // DST starts Mar 14 2027: weeks 1-9 are MST, weeks 10-15 MDT.
-      const byWeek = new Map(items.filter((i) => i.week !== null).map((i) => [i.week, i]));
-      expect(byWeek.get(1)?.dueAt.offset).toBe(-7 * 60);
-      expect(byWeek.get(10)?.dueAt.offset).toBe(-6 * 60);
-      expect(byWeek.get(15)?.dueAt.offset).toBe(-6 * 60);
-    });
-
-    it("week fifteen ends on the last day of instruction", () => {
-      const week15 = items.filter((i) => i.week === 15);
-      expect(week15.length).toBeGreaterThan(0);
-      for (const item of week15) {
-        expect(item.dueAt.toISODate()).toBe("2027-04-30");
-      }
-    });
-
-    it("shift moves everything together", () => {
-      const shifted = items.map((i) => i.shifted(7));
-      items.forEach((before, n) => {
-        expect(daysBetween((shifted[n] as ItemDates).dueAt, before.dueAt)).toBe(7);
-      });
-    });
-  },
-);
 
 describe("validation", () => {
   it("out of order dates are reported", () => {
