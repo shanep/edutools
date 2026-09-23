@@ -1,0 +1,27 @@
+{
+  "name": "edutools-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/cli",
+    "packages/app"
+  ],
+  "engines": {
+    "node": ">=22.14"
+  },
+  "scripts": {
+    "lint": "biome lint .",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && npm run typecheck --workspace @edutools/app --if-present",
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

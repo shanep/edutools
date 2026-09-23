@@ -1,0 +1,15 @@
+{
+  "name": "@edutools/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "edutools": "./dist/edutools.js"
+  },
+  "dependencies": {
+    "@edutools/core": "*",
+    "cli-table3": "^0.6.5",
+    "commander": "^15.0.0",
+    "picocolors": "^1.1.1"
+  }
+}

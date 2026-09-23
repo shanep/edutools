@@ -184,3 +184,9 @@ keys/
 *.csv
 
 /.claude/worktrees/*
+# TypeScript workspace
+node_modules/
+packages/*/dist/
+packages/app/out/
+packages/app/release/
+*.tsbuildinfo

@@ -1,0 +1,19 @@
+{
+  "name": "@edutools/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@css-inline/css-inline": "^0.21.2",
+    "luxon": "^3.7.2",
+    "picomatch": "^4.0.7",
+    "smol-toml": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.5",
+    "@types/picomatch": "^4.0.3"
+  }
+}
