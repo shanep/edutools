@@ -14,7 +14,8 @@
     "lint": "biome lint .",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/cli --noEmit && npm run typecheck --workspace @edutools/app --if-present",
     "test": "vitest run",
-    "check": "npm run lint && npm run typecheck && npm run test"
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "edutools": "tsx packages/cli/src/main.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
