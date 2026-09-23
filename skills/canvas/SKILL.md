@@ -12,22 +12,43 @@ gets fussy about.
 
 Run `edutools --help`, or `edutools <command> --help`, whenever the exact flags
 matter. This file covers what the help text cannot: which command to reach for,
-and what goes wrong.
+and what goes wrong. `--help` does not mark which options are required; the ones
+that are say so below.
 
 ## Before anything else
 
 ```bash
-edutools check                 # confirms the token works
+edutools check --json          # confirms the credentials work
 edutools courses --json        # the course ids you are allowed to touch
 ```
 
-If `check` fails, the token is missing from `~/.config/edutools/config.toml`.
-Tell the user to run `edutools init` and paste a token from Canvas (Account ->
-Settings -> Approved Integrations -> + New Access Token). Do not try to work
-around a missing token.
+`check --json` prints `{"endpoint", "source", "site", "courses"}`. If the
+credentials are missing or rejected it prints nothing on stdout, explains on
+stderr, and exits 1. Then:
+
+- **No site set up.** Tell the user to generate a token in Canvas (Account ->
+  Settings -> Approved Integrations -> + New Access Token) and run
+  `edutools site add <name> --endpoint https://<their canvas>` themselves. It asks
+  for the token at a hidden prompt; a token is never a flag. Do not ask the user
+  to paste a token into the conversation, and do not try to work around a
+  missing token.
+- **They used an older edutools** with `~/.config/edutools/config.toml`:
+  `edutools init` moves that token into the OS keychain and prints the setup
+  status. It is safe to run; it only reads the old file.
+
+Tokens live in the OS keychain, one per Canvas **site**. `edutools site list
+--json` shows the sites, which is the default, and a masked hint of each token.
+Every command takes a global `--site <name>` (`edutools --site other courses
+--json`) to use a site other than the default.
+`CANVAS_TOKEN` and `CANVAS_ENDPOINT` in the environment override all of it.
 
 Every read command takes `--json` and prints the raw Canvas payload. **Always use
-`--json` when you need to read a value**; parse that, never the Rich table.
+`--json` when you need to read a value**; parse that, never the table. With
+`--json`, stdout is pure JSON and everything else (prompts, progress, warnings,
+errors) goes to stderr, so piping stdout into a parser is safe.
+
+Exit codes: 0 for success, 1 for a failure or a problem found, 2 for a usage
+error such as a missing required option.
 
 ## Rules that are not negotiable
 
@@ -52,6 +73,8 @@ Canvas writes are immediate and land on real courses with real students.
    for that specific published content to change in this conversation.
 6. **Report what actually happened.** `grade`, `push` and `pull` print what they
    did and exit non-zero on failure. If something failed, say what and why.
+7. **Never handle tokens.** Do not run `site add`, `site remove` or `site default`
+   on the user's behalf unless they ask, and never put a token on a command line.
 
 ## Reading
 
@@ -67,7 +90,8 @@ edutools modules <course_id> --json           # modules, each with its items und
 
 Ids are what these commands are for: get the assignment id from `assignments`,
 the student user id from `students`. Do not ask the user for an id you can look
-up.
+up. **Always pass the ids.** A course or assignment id left off is prompted for
+interactively, which an agent cannot answer.
 
 ## Snapshotting a whole course
 
@@ -115,13 +139,14 @@ objects that are gone; nothing else in the directory is touched.
 ## Creating, changing, and removing one object
 
 The five kinds are `page`, `assignment`, `discussion`, `quiz`, `module`.
+`--course` / `-c` is required on all five commands.
 
 ```bash
 edutools create <kind> --course <id> --title "..." [options]
 edutools update <kind> <object_id> --course <id> [options]
-edutools delete <kind> <object_id> --course <id>
-edutools publish <kind> <object_id> --course <id>
-edutools unpublish <kind> <object_id> --course <id>
+edutools delete <kind> <object_id> --course <id> [--yes] [--json]
+edutools publish <kind> <object_id> --course <id> [--json]
+edutools unpublish <kind> <object_id> --course <id> [--json]
 ```
 
 Shared options on `create` and `update`:
@@ -129,12 +154,13 @@ Shared options on `create` and `update`:
 | Option | Applies to | Notes |
 | --- | --- | --- |
 | `--title` / `-t` | all | Defaults to the `#` heading of a markdown `--body-file` |
-| `--body-file` / `-f` | all but module | `.md` is rendered through pandoc; anything else is sent as-is |
+| `--body-file` / `-f` | all but module | `.md` is rendered as `push` renders it; anything else is sent as-is |
 | `--body` | all but module | Literal HTML, for something short |
 | `--points` / `-p` | assignment, discussion | A quiz scores from its questions instead |
 | `--due` `--unlock` `--lock` | assignment, discussion, quiz | ISO 8601, **with an offset**: `2026-10-14T23:59:00-06:00` |
 | `--position` | module | 1-based |
-| `--publish` / `--no-publish` | all | `update` uses `--publish` / `--unpublish` |
+| `--publish` / `--no-publish` | `create` only | Unpublished is the default |
+| `--publish` / `--unpublish` | `update` only | Two separate flags; both at once is an error, neither leaves visibility alone |
 | `--set key=value` | all | Any Canvas field not modelled above; repeatable |
 | `--json` | all | Emit the resulting object |
 
@@ -149,15 +175,19 @@ edutools create assignment -c 12345 --title "Lab 7" --points 50 \
 ```
 
 `update` sends only the fields you name, so it never clears anything you did not
-mention. To change one thing, pass one flag.
+mention. To change one thing, pass one flag. With no field at all it exits 1.
+
+`delete` reads the object first and asks on stderr before deleting; without
+`--yes` it needs an answer on stdin, and anything but `y` leaves the object alone
+(exit 0). Publishing a module publishes everything in it.
 
 ### Gotchas
 
 - **A page is addressed by its url slug** (`week-1`), not a numeric id. Everything
   else uses its id. `edutools create page --json` prints the slug it got.
-- **Markdown bodies go through the same pipeline as `push`**, which needs `pandoc`
-  on `PATH`. If pandoc is missing the command says so; install it rather than
-  hand-writing HTML.
+- **Markdown bodies go through the same pipeline as `push`**, rendered in
+  process: nothing external needs to be installed. Prefer a markdown
+  `--body-file` over hand-writing HTML.
 - **Canvas strips HTML silently and still answers 200.** `<style>`, `<link>`,
   `<script>`, and CSS properties outside its allowlist vanish. Prefer markdown
   `--body-file` over hand-rolled HTML, and for repo-published content run
@@ -205,7 +235,7 @@ in the repo and push instead.
 
 A course repository is a directory of markdown with a `canvas.toml` at its root:
 the term dates, date policies, assignment groups, and `[[module]]` tables. `push`
-publishes it; the rest check it. The repo's `README` in `~/repos/edutools`
+publishes it; the rest check it. The `README.md` in `~/repos/edutools`
 documents the layout and every `canvas.toml` key; read it before editing
 `canvas.toml`.
 
@@ -221,23 +251,32 @@ edutools audit <repo> --course <id> --json         # what Canvas holds that the 
 
 `dates` and `outline` need no token and never touch Canvas, so they are the
 first thing to show a user who is changing the schedule or the module layout.
-`dates --shift 7d` previews the whole term moved by a week.
+`dates --shift 7d` previews the whole term moved by a week, and `outline --out
+<file>` writes the outline as JSON. Neither has `--json`; `dates` lists any
+problem and exits 1.
 
 ### `push`
 
+`--course <id>` is required.
+
 | Option | Notes |
 | --- | --- |
-| `--dry-run` | Renders everything and writes nothing. Run it first. |
+| `--dry-run` | Renders everything and writes nothing. Run it first. Needs no token, except with `--clean`. |
 | `--path <file or glob>` | Push one correction, not the whole course. Repeatable. Skips the module rebuild. |
 | `--only <group>` | `pages`, `assignments`, `discussions`, `quizzes`, `files`, `modules`, `syllabus`, `rubrics`, `groups`. Repeatable. |
 | `--publish` | Makes what it writes visible. Leave it off unless asked. |
 | `--update-published` | Also rewrites content students can already see. See rule 5. |
-| `--preview <dir>` | Writes the rendered HTML to a directory to inspect, and nothing else. |
+| `--preview <dir>` | Also writes the rendered HTML to a directory to inspect. It still pushes unless `--dry-run` is given too. |
 | `--no-verify` | Skips the read-back that normally follows. Rarely right. |
 | `--clean` | Start of term only: deletes every page, assignment, discussion, quiz and module the repo does not own, then pushes everything. See below. |
+| `--yes` / `-y` | Only with `--clean`: skips its confirmation. Rule 4 applies. |
 
 - **Without `--publish`, a push never changes visibility** of an object that
   already exists. It does not unpublish a live assignment.
+- **A push that hits a problem exits 1** and lists each problem on stderr: a
+  malformed `canvas.toml`, a `--path` that matches nothing (it lists the paths
+  that exist), a file that fails to render, a Canvas error on one object. Read
+  the list and report it; do not retry blindly.
 - **A module is rebuilt from `canvas.toml`**: every item is removed and re-added
   from the table's `page`, `items`, and `canvas` lists. Something added to a
   repo-managed module by hand in Canvas disappears on the next push unless it is
@@ -252,10 +291,15 @@ first thing to show a user who is changing the schedule or the module layout.
   `push --clean --dry-run` first, show the user the delete list, and get a yes
   naming what goes before running it for real. It keeps course files, the front
   page, native module items and `[clean] keep`, and refuses if anything holds
-  student work; never try to get past that refusal. Never use it mid-term.
+  student work; never try to get past that refusal. It checks for student work
+  once more right before deleting, since a student may submit between the list
+  and the yes, and stops at the first failed delete. It cannot be combined with
+  `--only` or `--path`. Never use it mid-term.
 - **Retitling a page changes its Canvas url slug.** The push records the new one,
   so a module still finds it. A page created while an old page of the same title
   exists gets a `-2` slug; delete the old one (after confirming) if that matters.
+- **Repo paths use forward slashes** in `--path`, `canvas.toml` and the manifest,
+  on Windows too.
 
 ### Module tables
 
@@ -281,7 +325,8 @@ items = [
   week). Modules are matched by name, and a module with the same title but other
   dates, or none, is renamed in place, so a new term does not duplicate them. A
   module whose title changes some other way is created fresh: rename the old one
-  with `edutools update module <id> --set 'module[name]=...'` before pushing.
+  with `edutools update module <id> --course <id> --set 'module[name]=...'`
+  before pushing.
 - **`never_publish = true`** is for instructor-only modules. Every push writes the
   module and all it lists unpublished, whatever the flags, pulls back anything
   published in the Canvas UI (the one time a push rewrites published content),
@@ -296,10 +341,13 @@ items = [
 
 ### `verify` and `audit`
 
+Both require `--course <id>`.
+
 - `verify <repo> --course <id>` reads every object the repo pushed back from
   Canvas and compares it with what the repo says it should be. It catches the
   sanitizer stripping HTML, partial quiz writes, files stuck pending, and someone
-  editing in the Canvas UI. `push` runs it automatically.
+  editing in the Canvas UI. `push` runs it automatically. It has no `--json`; it
+  prints a table of failures and exits 1 when there are any.
 - `audit <repo> --course <id> --json` answers the other direction: objects in
   Canvas the repo did not create (`untracked`, normal for a hand-built exam),
   modules `canvas.toml` declares that do not exist yet (`pending`), and manifest
@@ -316,6 +364,9 @@ edutools submission -c 12345 -a 67890 -s 555 --json       # read one submission
 edutools download -c 12345 -a 67890 --out ./submissions   # pull attachments down
 edutools grade -c 12345 -a 67890 -s 555 --score 18 --comment "..."
 ```
+
+Always pass `-c` and `-a`; left off, they are prompted for. `submission` requires
+`-s`, and `download` requires `--out` (`-s` limits it to one student).
 
 `submission --json` gives the submitted text, the attachment list, and any
 comments already left. `download` writes `<out>/<user_id>/<filename>` plus
@@ -336,7 +387,7 @@ edutools grade -c 12345 -a 67890 -s 555 --score 15 --late-status late
 `--score` takes whatever the assignment's grading type accepts: points (`18`), a
 percentage (`92%`), a letter (`B+`), or `pass`/`fail`. A comment with no score
 returns feedback without putting a number on the work, which is a real thing to
-want.
+want. `--late-status` is one of `late`, `missing`, `extended`, `none`.
 
 ### A whole class
 
@@ -359,7 +410,8 @@ are matched loosely: `student`/`user_id`/`student_id`/`id`, `score`/`grade`/
 ]
 ```
 
-CSV with a header row works too, and is inferred from a `.csv` filename:
+CSV with a header row works too, and is inferred from a `.csv` filename (or
+forced with `--csv`):
 
 ```csv
 student_id,score,comment
@@ -375,6 +427,7 @@ the assignment's rubric):
 ```
 
 `-` as the filename reads stdin, so a generated file need not be written to disk.
+`--student` and `--from-file` cannot be combined.
 
 Grading runs sequentially on purpose: Canvas throttles parallel writes, and the
 loop reports exactly which students failed. A class of 40 takes well under a
@@ -398,10 +451,19 @@ Write the grades, then tell the user to post them from the Canvas gradebook
 
 ## Changing edutools itself
 
-`edutools` is the user's own project, at `~/repos/edutools`. If a Canvas task
-genuinely cannot be expressed with the commands above, adding to the tool is the
-right move rather than reaching for `curl`. That repo has its own `CLAUDE.md`
-covering layout, checks, and Canvas API conventions. Read it first.
+`edutools` is the user's own project, at `~/repos/edutools`, a TypeScript npm
+workspace. If a Canvas task genuinely cannot be expressed with the commands above,
+adding to the tool is the right move rather than reaching for `curl`. That repo
+has its own `CLAUDE.md` covering layout, checks, and Canvas API conventions. Read
+it first. In short:
+
+- A command is `packages/cli/src/commands/<name>.ts`, registered by one line in
+  `COMMANDS` in `packages/cli/src/main.ts`.
+- A Canvas endpoint is a method on `CanvasLMS` in `packages/core/src/canvas.ts`.
+- Whole-course logic (push, verify, audit, clean, outline, dates) lives in
+  `packages/core/src/course.ts`, which the CLI and the desktop app share.
+- `npm run lint`, `npm run typecheck` and `npm run test` must pass, and
+  `npm run edutools -- <command> ...` runs the CLI from source.
 
 This skill lives in that repo too, at `skills/canvas/SKILL.md`; `~/.claude/skills/canvas`
 is a symlink to it. A change to a command's name, flags, or `--json` output
