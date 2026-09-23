@@ -4,9 +4,10 @@ import path from "node:path";
 import { memoryStore } from "@edutools/core/credentials";
 import type { Payload } from "@edutools/core/types";
 import { beforeEach, describe, expect, it } from "vitest";
-import { type CanvasClient, createApi } from "../src/main/api";
+import { createApi } from "../src/main/api";
 import { filterCourses, sortCourses, toCourseRow } from "../src/shared/courses";
 import { API_METHODS } from "../src/shared/ipc";
+import { FakeCanvas } from "./fakeCanvas";
 
 const BSU = "https://boisestatecanvas.instructure.com";
 
@@ -24,12 +25,16 @@ function makeApi(env: Record<string, string> = {}) {
     version: "1.2.3",
     credentials: { dir, secrets, env, legacyPath: path.join(dir, "config.toml") },
     openExternal: async () => {},
-    canvas: (endpoint, token): CanvasClient => ({
-      async getCourses(options) {
+    canvas: (endpoint, token) => {
+      const fake = new FakeCanvas(endpoint, token);
+      fake.courses = COURSES;
+      const getCourses = fake.getCourses.bind(fake);
+      fake.getCourses = async (options) => {
         calls.push({ endpoint, token, includeAll: options?.includeAll });
-        return COURSES;
-      },
-    }),
+        return getCourses(options);
+      };
+      return fake;
+    },
   });
 }
 
