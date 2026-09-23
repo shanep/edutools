@@ -11,9 +11,9 @@ const SIDES: readonly { side: DifferenceRow["side"]; title: string; explain: str
     side: "stale",
     title: "Stale: tracked, but gone from Canvas",
     explain:
-      "The manifest still tracks these, but Canvas no longer has them, so the next push would try to update something " +
-      "that is gone. Drop the entry from .canvas/manifest-<course id>.json to have the push recreate it, or delete the " +
-      "repository file if the removal was deliberate.",
+      "The manifest still tracks these, but Canvas no longer has them, usually because they were deleted in Canvas. " +
+      "If that was a mistake, publish again: the push creates them afresh. If it was deliberate, delete the file from " +
+      "the repository (or mark it as a draft) and remove its entry from .canvas/manifest-<course id>.json.",
     className: "message error",
   },
   {
@@ -80,7 +80,7 @@ export function Audit({ course, navigate, setStatus }: ScreenProps) {
                 <p className={stale > 0 ? "message error" : "message ok"}>
                   {plural(differences.length, "difference")} across {plural(result.value.tracked, "tracked object")}.
                   {stale > 0
-                    ? ` ${plural(stale, "stale entry", "stale entries")} to fix before the next push.`
+                    ? ` ${plural(stale, "stale entry", "stale entries")}: publish again to recreate them, or remove them if the deletion was deliberate.`
                     : " None of them is a problem."}
                 </p>
               )}

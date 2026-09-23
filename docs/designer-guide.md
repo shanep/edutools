@@ -714,13 +714,13 @@ repository and the course agree". Otherwise it sorts the differences into three 
 
 **Stale: tracked, but gone from Canvas.** The repository's record says a file became a
 Canvas object that no longer exists, usually because someone deleted it in Canvas.
-This needs fixing before the next publish.
 
-- If the deletion was a mistake, open `.canvas/manifest-<course id>.json` in the
-  repository in a text editor, remove the entry for that file (the **Repo key** column
-  names it), save, and publish again. The publish creates the object afresh.
+- If the deletion was a mistake, publish again. The publish creates the object afresh
+  from the repository file.
 - If the deletion was deliberate, delete the file from the repository (or mark it as a
-  [draft](#drafts)) and remove it from its module in `canvas.toml`.
+  [draft](#drafts)), remove it from its module in `canvas.toml`, and remove its entry
+  from `.canvas/manifest-<course id>.json` in a text editor (the **Repo key** column
+  names it).
 
 #### Untracked items are usually fine
 
@@ -785,9 +785,9 @@ Two related points:
 
 - Publishing a repository-managed item here means later publishes treat it as
   protected and skip it, unless you tick **Update published content**.
-- Deleting a repository-managed item here leaves the repository's record pointing at
-  it. Run [Audit](#fix-stale-items) afterwards; if it reports the item as stale, fix it
-  as described there.
+- Deleting a repository-managed item here does not remove it from the repository, so
+  the next publish creates it again, as the delete confirmation warns. To remove it for
+  good, also delete its file from the repository; see [Fix stale items](#fix-stale-items).
 
 ## Safety checklist
 

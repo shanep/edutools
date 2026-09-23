@@ -365,7 +365,10 @@ Both require `--course <id>`.
   Canvas the repo did not create (`untracked`, normal for a hand-built exam),
   modules `canvas.toml` declares that do not exist yet (`pending`), and manifest
   entries pointing at objects Canvas no longer has (`stale`). Only `stale` exits
-  non-zero, because the next push would try to update something that is gone.
+  non-zero, because the course no longer matches the repo. A stale object whose
+  repo file still exists is recreated by the next push; if the deletion was
+  deliberate, the repo file goes (or becomes a draft) and so does its manifest
+  entry. Ask the user which it was rather than guessing.
 
 ## Grading with feedback
 

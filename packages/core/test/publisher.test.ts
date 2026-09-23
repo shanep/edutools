@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { CanvasLMS } from "@edutools/core/canvas";
+import { CanvasApiError, type CanvasLMS } from "@edutools/core/canvas";
 import { DateConfigError, ItemDates } from "@edutools/core/dates";
 import { Entry } from "@edutools/core/publish";
 import { Plan, Publisher, type PublisherCanvas, type PublisherOptions } from "@edutools/core/publisher";
@@ -164,6 +164,32 @@ describe("the published content guard", () => {
     expect(pub.protected.has("assignments/p0.md")).toBe(true);
     expect(await pub.rewrite(plan)).toEqual([]);
     expect(callOrder(canvas).map(([method]) => method)).toEqual(["getJson"]);
+  });
+
+  it("treats an object deleted in Canvas as not live", async () => {
+    const canvas = fakeCanvas();
+    canvas.getJson.mockRejectedValue(new CanvasApiError(404, '{"errors":[{"message":"not found"}]}'));
+    expect(await publisher(canvas).isLive(entry())).toBe(false);
+  });
+
+  it("still fails on any other Canvas error", async () => {
+    const canvas = fakeCanvas();
+    canvas.getJson.mockRejectedValue(new CanvasApiError(500, "boom"));
+    await expect(publisher(canvas).isLive(entry())).rejects.toThrow("Canvas API error 500");
+  });
+
+  it("recreates a tracked object that was deleted by hand", async () => {
+    const canvas = fakeCanvas();
+    const pub = publisher(canvas);
+    write(pub.repo, "assignments/p0.md", "# P0\n\n**Week 2 · 50 points · x**\n");
+    pub.manifest.put("assignments/p0.md", entry());
+    canvas.getJson.mockRejectedValue(new CanvasApiError(404, "not found"));
+    canvas.exists.mockResolvedValue(false);
+    canvas.createAssignment.mockResolvedValue({ id: 99 });
+    const result = await pub.createOrUpdate(planFor(pub, "assignments/p0.md"));
+    expect(result.created).toBe(1);
+    expect(pub.protected.has("assignments/p0.md")).toBe(false);
+    expect(pub.manifest.get("assignments/p0.md")?.canvasId).toBe("99");
   });
 });
 

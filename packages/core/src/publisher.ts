@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { asNumber, type CanvasLMS } from "./canvas";
+import { asNumber, CanvasApiError, type CanvasLMS } from "./canvas";
 import {
   compute,
   type DateConfig,
@@ -497,7 +497,15 @@ export class Publisher {
       return String(course.workflow_state ?? "") === "available";
     }
     if (entry.kind === "file") return false;
-    const stored = await canvas.getJson(`/api/v1${canvasPath(entry, this.courseId)}`);
+    let stored: Payload;
+    try {
+      stored = await canvas.getJson(`/api/v1${canvasPath(entry, this.courseId)}`);
+    } catch (error) {
+      // Deleted in Canvas since the last push: nothing is live, and the create
+      // path below recreates it. Throwing here instead failed the whole item.
+      if (error instanceof CanvasApiError && error.status === 404) return false;
+      throw error;
+    }
     return Boolean(stored.published);
   }
 

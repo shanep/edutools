@@ -103,6 +103,20 @@ function withParams(url: string, params: RequestParams | undefined): string {
   return target.toString();
 }
 
+/**
+ * An HTTP error from Canvas, carrying its status so a caller can tell "that
+ * object is gone" (404) from a real failure without matching on message text.
+ */
+export class CanvasApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, body: string) {
+    super(`Canvas API error ${status}: ${body}`);
+    this.name = "CanvasApiError";
+    this.status = status;
+  }
+}
+
 function isRedirect(status: number): boolean {
   return status >= 300 && status < 400;
 }
@@ -155,7 +169,7 @@ export class CanvasLMS {
     while (url !== undefined) {
       const response = await this.send(url, query);
       if (!response.ok) {
-        throw new Error(`Canvas API error ${response.status}: ${await response.text()}`);
+        throw new CanvasApiError(response.status, await response.text());
       }
       // Canvas answers a collection with a JSON list; its shape is its business.
       all.push(...((await response.json()) as Payload[]));
@@ -176,7 +190,7 @@ export class CanvasLMS {
   ): Promise<Payload> {
     const response = await this.send(this.endpoint + urlPath, params);
     if (!response.ok) {
-      throw new Error(`Canvas API error ${response.status}: ${await response.text()}`);
+      throw new CanvasApiError(response.status, await response.text());
     }
     // A single resource is a JSON object; Canvas is loose about what is in it.
     return (await response.json()) as Payload;
@@ -307,7 +321,7 @@ export class CanvasLMS {
   ): Promise<Payload> {
     const response = await this.request(method, urlPath, { data, params });
     if (!response.ok) {
-      throw new Error(`Canvas API error ${response.status}: ${await response.text()}`);
+      throw new CanvasApiError(response.status, await response.text());
     }
     // A single resource is a JSON object; Canvas is loose about what is in it.
     return (await response.json()) as Payload;
@@ -330,7 +344,7 @@ export class CanvasLMS {
         absolute: true,
       });
       if (!response.ok) {
-        throw new Error(`Canvas API error ${response.status}: ${await response.text()}`);
+        throw new CanvasApiError(response.status, await response.text());
       }
       // Canvas answers a collection with a JSON list; its shape is its business.
       results.push(...((await response.json()) as Payload[]));
@@ -725,7 +739,7 @@ export class CanvasLMS {
       { params: include.map((name): [string, string] => ["include[]", name]) },
     );
     if (!response.ok) {
-      throw new Error(`Canvas API error ${response.status}: ${await response.text()}`);
+      throw new CanvasApiError(response.status, await response.text());
     }
     // A submission is a JSON object; Canvas is loose about what is in it.
     return (await response.json()) as Payload;
