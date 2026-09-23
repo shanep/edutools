@@ -515,3 +515,50 @@ table.grid td.indented {
 .repo-bar code {
   word-break: break-all;
 }
+
+.warning-box {
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  padding: 4px 10px;
+  margin: 4px 0 8px;
+}
+
+fieldset.group .warning-box p {
+  margin: 4px 0;
+}
+
+fieldset.group .clean-refused p {
+  margin: 4px 0;
+}
+
+.wide-input {
+  flex: 1;
+  min-width: 240px;
+}
+
+.push-counts {
+  margin: 6px 0;
+}
+
+.message-block {
+  margin: 8px 0 0;
+}
+
+.message-block.warn {
+  color: var(--warn);
+}
+
+.message-block.error {
+  color: var(--error);
+}
+
+fieldset.group .message-block p {
+  margin: 4px 0;
+}
+
+.option-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}

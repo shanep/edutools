@@ -4,8 +4,8 @@
  * `renderer/src/screens/index.tsx`, whose type demands an entry for every id.
  *
  * To add a screen: add its id and entry here, write the component under
- * `renderer/src/screens/`, and add it to the map there. To bring a placeholder to
- * life, flip `available` and swap the Placeholder for the real component.
+ * `renderer/src/screens/`, and add it to the map there. A screen listed before it
+ * is built sets `available: false`, which the sidebar and View menu show disabled.
  */
 
 export type ScreenId =
@@ -25,9 +25,9 @@ export interface ScreenInfo {
   readonly title: string;
   /** Sidebar group heading. */
   readonly group: "Canvas" | "Course repository" | "Tools";
-  /** One line shown under the title, and on the placeholder. */
+  /** One line shown under the title. */
   readonly summary: string;
-  /** False while the screen is a placeholder that a later change wires up. */
+  /** False for a screen listed before it is built. */
   readonly available: boolean;
 }
 
@@ -58,21 +58,21 @@ export const SCREENS: readonly ScreenInfo[] = [
     title: "Publish",
     group: "Course repository",
     summary: "Push a course repository of markdown into Canvas, unpublished by default.",
-    available: false,
+    available: true,
   },
   {
     id: "verify",
     title: "Verify",
     group: "Course repository",
     summary: "Read published content back and check that it arrived intact.",
-    available: false,
+    available: true,
   },
   {
     id: "audit",
     title: "Audit",
     group: "Course repository",
     summary: "Compare a course repository with what is live in Canvas.",
-    available: false,
+    available: true,
   },
   {
     id: "outline",

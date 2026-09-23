@@ -38,6 +38,7 @@ export function writeSampleRepo(root: string): string {
     "modules/week-01.md": "# Week 1 overview\n\nWelcome to the course.\n",
     "modules/instructor.md": "# Instructor notes\n",
     "assignments/lab-01.md": "# Lab 1: Hello\n\n**Week 1 · 30 points**\n\nSay hello.\n",
+    "syllabus.md": "# Syllabus\n\nHow the course works.\n",
     "canvas.css": "p { color: #333333; }\n",
   };
   for (const [rel, text] of Object.entries(files)) {
