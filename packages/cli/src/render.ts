@@ -3,10 +3,10 @@
  *
  * A markdown body goes through the same Canvas-safe rendering as `push`, and its
  * H1 becomes the default title, so the two paths agree on what a document is
- * called. That pipeline is the publish port, which has not landed yet. When it
- * does, this function renders the file with it (render, decorate, mark table
- * rows, wrap tables) and nothing that calls it changes.
+ * called.
  */
+
+import { decorate, markTableRows, PublishError, renderMarkdown, wrapTables } from "@edutools/core/publish";
 
 export class RenderError extends Error {
   constructor(message: string) {
@@ -23,8 +23,11 @@ export interface RenderedBody {
 
 /** Render a markdown file into Canvas HTML. */
 export async function renderMarkdownBody(file: string): Promise<RenderedBody> {
-  throw new RenderError(
-    `cannot render ${file}: markdown bodies arrive with the publish port. ` +
-      "Pass an .html --body-file or --body for now.",
-  );
+  try {
+    const [title, html] = renderMarkdown(file);
+    return { title: title || null, html: wrapTables(markTableRows(decorate(html))) };
+  } catch (error) {
+    if (error instanceof PublishError) throw new RenderError(error.message);
+    throw error;
+  }
 }

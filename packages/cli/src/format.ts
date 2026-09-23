@@ -75,6 +75,43 @@ export function describe(cli: Cli, kind: string, stored: Payload, colour = cli.c
   return `${kind} ${colour.cyan(identify(kind, stored))} ${colour.green(str(title))}`;
 }
 
+type Colours = Cli["c"];
+const STYLES = ["dim", "bold", "red", "green", "yellow", "cyan", "magenta"] as const;
+type Style = (typeof STYLES)[number];
+const MARKUP_RE = /\\\[|\[(\/?)([a-z]+)?\]/g;
+
+/**
+ * Render the Rich-style markup core's Publisher reports in (`[dim]...[/dim]`),
+ * the one place markup crosses from core into the CLI. `\[` is a literal
+ * bracket, a closing tag with no name closes the latest, and a tag that is not a
+ * known style is left as text.
+ */
+export function markup(colour: Colours, text: string): string {
+  const stack: Style[] = [];
+  let out = "";
+  let last = 0;
+  const paint = (segment: string): string =>
+    stack.reduceRight((painted, style) => colour[style](painted), segment);
+  for (const match of text.matchAll(MARKUP_RE)) {
+    const at = match.index ?? 0;
+    const [whole, closing, name] = match;
+    const known = name === undefined || (STYLES as readonly string[]).includes(name);
+    if (whole !== "\\[" && (!known || (!closing && name === undefined))) continue;
+    out += paint(text.slice(last, at));
+    last = at + whole.length;
+    if (whole === "\\[") out += paint("[");
+    else if (closing) stack.pop();
+    else if (name !== undefined) stack.push(name as Style); // checked against STYLES just above
+  }
+  return out + paint(text.slice(last));
+}
+
+/** A core progress event as one spinner line: "Publishing a.md (3/40)". */
+export function progressLine(progress: { message: string; done?: number; total?: number }): string {
+  const count = progress.total !== undefined ? ` (${progress.done ?? 0}/${progress.total})` : "";
+  return `${progress.message}${count}`;
+}
+
 export function isRecord(value: unknown): value is Payload {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

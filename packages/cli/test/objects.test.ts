@@ -124,14 +124,26 @@ describe("create", () => {
     expect(result.output).toContain("No such file");
   });
 
-  it("a markdown body file waits for the publish port and sends nothing", async () => {
+  it("a markdown body file is rendered and its heading becomes the title", async () => {
+    canvas.createObject.mockResolvedValue({ url: "week-1", title: "Week 1" });
     const file = path.join(tmpDir(), "week-1.md");
-    writeFileSync(file, "# Week 1\n", "utf-8");
+    writeFileSync(file, "# Week 1\n\nRead **this**.\n", "utf-8");
     const result = await invoke(["create", "page", "-c", "123", "-f", file], { client: canvas });
 
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain("markdown bodies arrive with the publish port");
-    expect(canvas.createObject).not.toHaveBeenCalled();
+    expect(result.code, result.output).toBe(0);
+    const fields = canvas.createObject.mock.calls[0]?.[2];
+    expect(fields?.["wiki_page[title]"]).toBe("Week 1");
+    expect(fields?.["wiki_page[body]"]).toContain("<strong>this</strong>");
+    expect(fields?.["wiki_page[body]"]).not.toContain("<h1");
+  });
+
+  it("an explicit title beats the markdown heading", async () => {
+    canvas.createObject.mockResolvedValue({ id: 1 });
+    const file = path.join(tmpDir(), "week-1.md");
+    writeFileSync(file, "# Week 1\n\nText.\n", "utf-8");
+    await invoke(["create", "page", "-c", "123", "-t", "Other", "-f", file], { client: canvas });
+
+    expect(canvas.createObject.mock.calls[0]?.[2]["wiki_page[title]"]).toBe("Other");
   });
 
   it("points that are not a number are a usage error", async () => {
