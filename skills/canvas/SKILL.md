@@ -228,6 +228,9 @@ mention. To change one thing, pass one flag. With no field at all it exits 1.
   `edutools verify` to prove what landed.
 - **Canvas refuses to unpublish anything with student submissions.** The error
   says so; that is Canvas, not a bug.
+- **`delete` also takes `file`** (`edutools delete file <file_id> -c <id>`), and only
+  `delete` does. The id comes from `audit` or a `pull`'s `files.json`. A page that
+  shows or links to the file breaks until a push relinks it, so rule 4 applies.
 
 ### Assignment groups
 

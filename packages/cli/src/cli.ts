@@ -42,6 +42,8 @@ export type CanvasClient = PullCanvas &
     | "getObject"
     | "updateObject"
     | "deleteObject"
+    | "getCourseFile"
+    | "deleteFile"
     | "getSubmission"
     | "gradeSubmission"
   >;

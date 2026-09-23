@@ -177,7 +177,7 @@ edutools create <kind> -c <id> [options]           create one page/assignment/di
 edutools update <kind> <object_id> -c <id> [options]
                                                    change one object
 edutools delete <kind> <object_id> -c <id> [-y] [--json]
-                                                   delete one object (asks first)
+                                                   delete one object or course file (asks first)
 edutools publish <kind> <object_id> -c <id> [--json]
                                                    make one object student-visible
 edutools unpublish <kind> <object_id> -c <id> [--json]
@@ -768,6 +768,7 @@ edutools update page week-1 -c 12345 --unpublish
 edutools publish assignment 98765 -c 12345
 edutools unpublish page week-1 -c 12345
 edutools delete assignment 98765 -c 12345
+edutools delete file 25200025 -c 12345
 ```
 
 Like `push`, `create` leaves an object **unpublished** unless `--publish` is given.
@@ -777,7 +778,9 @@ title; any other file is sent as it is. `update` sends only the fields you name,
 so it never clears anything you did not mention, and with no field at all it
 exits 1 rather than sending an empty update. `delete` reads the object first,
 prints what it is about to remove, and asks for confirmation unless `--yes` is
-given; answering no exits 0 and leaves it alone. Publishing a module publishes
+given; answering no exits 0 and leaves it alone. `delete` also takes `file`, by
+the id `edutools pull` or `audit` shows; the file is read through the course
+first, so an id from another course fails before anything goes. Publishing a module publishes
 everything in it, and Canvas refuses to unpublish anything with student
 submissions.
 

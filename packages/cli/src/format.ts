@@ -71,7 +71,7 @@ export function identify(kind: string, stored: Payload): string {
 }
 
 export function describe(cli: Cli, kind: string, stored: Payload, colour = cli.c): string {
-  const title = stored.title || stored.name || "";
+  const title = stored.title || stored.name || stored.display_name || "";
   return `${kind} ${colour.cyan(identify(kind, stored))} ${colour.green(str(title))}`;
 }
 

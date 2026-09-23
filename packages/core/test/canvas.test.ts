@@ -471,6 +471,14 @@ describe("gradeSubmission", () => {
   });
 });
 
+describe("getCourseFile", () => {
+  it("reads the file through the course", async () => {
+    const fake = always(() => json({ id: 7 }));
+    await client(fake.fetch).getCourseFile("123", "7");
+    expect(fake.calls[0]?.url).toBe("https://c.test/api/v1/courses/123/files/7");
+  });
+});
+
 describe("downloadBytes", () => {
   it("follows the redirect to storage without the token and returns the bytes", async () => {
     const fake = fakeFetch((url) => {

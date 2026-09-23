@@ -713,6 +713,14 @@ export class CanvasLMS {
     return this.json("DELETE", `/api/v1/courses/${courseId}/${kindPath(kind)}/${objectId}`);
   }
 
+  /**
+   * One file, read through the course, so an id from another course is a 404
+   * rather than a file quietly found somewhere else.
+   */
+  async getCourseFile(courseId: string, fileId: string): Promise<Payload> {
+    return this.getJson(`/api/v1/courses/${courseId}/files/${fileId}`);
+  }
+
   /** Files live outside the course namespace, so they get their own method. */
   async deleteFile(fileId: string): Promise<Payload> {
     return this.json("DELETE", `/api/v1/files/${fileId}`);

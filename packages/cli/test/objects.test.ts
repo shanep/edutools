@@ -279,6 +279,27 @@ describe("delete", () => {
     expect(canvas.deleteObject).not.toHaveBeenCalled();
   });
 
+  it("reads a file through the course and deletes it by id", async () => {
+    canvas.getCourseFile.mockResolvedValue({ id: 7, display_name: "list.svg" });
+    canvas.deleteFile.mockResolvedValue({ id: 7 });
+    const result = await invoke(["delete", "file", "7", "-c", "123"], { client: canvas, input: "y\n" });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.getCourseFile.mock.calls[0]).toEqual(["123", "7"]);
+    expect(canvas.deleteFile.mock.calls[0]).toEqual(["7"]);
+    expect(canvas.deleteObject).not.toHaveBeenCalled();
+    expect(result.output).toContain("list.svg");
+    expect(result.output).toContain("breaks until it is relinked");
+  });
+
+  it("a file outside the course is never deleted", async () => {
+    canvas.getCourseFile.mockRejectedValue(new Error("Canvas API error 404"));
+    const result = await invoke(["delete", "file", "7", "-c", "123", "--yes"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(canvas.deleteFile).not.toHaveBeenCalled();
+  });
+
   it("json after a confirmation is still only the deleted object", async () => {
     canvas.getObject.mockResolvedValue({ id: 42, name: "Lab 7" });
     canvas.deleteObject.mockResolvedValue({ id: 42, name: "Lab 7" });
