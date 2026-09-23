@@ -47,8 +47,11 @@ function listenForProgress(): void {
     return;
   }
   listening = true;
+  // Progress events and the startSnapshot reply travel separately, and the reply
+  // can arrive first. Matching on the run's course rather than on `running` keeps
+  // the last lines of a finished run; the next run's start clears the log.
   window.edutools.on("snapshotProgress", (progress) => {
-    if (state.running && progress.courseId === state.courseId) {
+    if (progress.courseId === state.courseId) {
       update({ log: [...state.log, progress.message].slice(-MAX_LOG) });
     }
   });

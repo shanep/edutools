@@ -82,13 +82,16 @@ function listen(): void {
     return;
   }
   listening = true;
+  // Progress events and a job's reply travel separately, and the reply can
+  // arrive first. Log lines are matched on the last job rather than the running
+  // one so a finished run keeps its tail; the next run's start clears the log.
   window.edutools.on("jobProgress", (event) => {
-    if (state.running === null || EVENT_JOB[state.running] !== event.job || event.courseId !== state.courseId) {
+    if (state.last === null || EVENT_JOB[state.last] !== event.job || event.courseId !== state.courseId) {
       return;
     }
     if (event.kind === "report") {
       update({ log: [...state.log, { text: event.message, dim: event.dim }].slice(-MAX_LOG) });
-    } else {
+    } else if (state.running !== null) {
       const count = event.total !== null ? ` (${event.done ?? 0} of ${event.total})` : "";
       update({ progress: `${event.message}${count}` });
     }
