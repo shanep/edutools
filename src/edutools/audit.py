@@ -20,7 +20,7 @@ Everything here is pure: the caller fetches the live inventory and hands it in.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from edutools.dates import Term, module_title
 from edutools.publish import Manifest, NativeItem, module_entries, parse_native_items
@@ -250,3 +250,62 @@ def summarise(differences: list[Difference]) -> dict[str, int]:
         label = f"{d.side} {d.kind}"
         counts[label] = counts.get(label, 0) + 1
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Clean sync: what a start-of-term push --clean removes
+# ---------------------------------------------------------------------------
+
+# Files are left out on purpose. A course card or a hand-uploaded handout is
+# referenced from course settings and from pages the repo does not know about,
+# and a stray file costs nothing, so a clean sync never deletes one.
+CLEANABLE: tuple[str, ...] = ("page", "assignment", "discussion", "quiz", "module")
+
+
+def clean_keep(raw: dict[str, object], declared: list[DeclaredModule]) -> set[tuple[str, str]]:
+    """Everything a clean sync must leave: every native item a [[module]] names,
+    plus the `[clean] keep` list, written like a module's native items::
+
+        [clean]
+        keep = [{ quiz = 393731 }, { page = "home-page" }]
+    """
+    keep = {(n.kind, n.ident) for module in declared for n in module.native}
+    section = raw.get("clean", {})
+    if not isinstance(section, dict):
+        raise ValueError("canvas.toml [clean] must be a table")
+    listed = cast(dict[str, object], section).get("keep", [])
+    keep.update((n.kind, n.ident) for n in parse_native_items({"canvas": listed}))
+    return keep
+
+
+def clean_targets(differences: list[Difference], keep: set[tuple[str, str]]) -> list[Difference]:
+    """The untracked objects a clean sync deletes, in a safe order.
+
+    Modules go last, so a failure part-way through never leaves a module
+    pointing at content that is already gone.
+    """
+    chosen = [
+        d for d in differences
+        if d.side == "untracked" and d.kind in CLEANABLE and (d.kind, d.ident) not in keep
+    ]
+    return sorted(chosen, key=lambda d: (d.kind == "module", d.kind, d.title))
+
+
+def student_work(
+    kind: str, stored: dict[str, object], assignment: dict[str, object] | None
+) -> str:
+    """Why this object holds student work, or "" if it holds none.
+
+    A clean sync is for a course nobody has used yet. Deleting a graded object
+    takes its submissions and grades with it, so anything with work in it is
+    refused rather than deleted.
+    """
+    if assignment is not None and assignment.get("has_submitted_submissions"):
+        return "has submissions"
+    if kind == "assignment" and stored.get("has_submitted_submissions"):
+        return "has submissions"
+    if kind == "discussion":
+        replies = stored.get("discussion_subentry_count")
+        if isinstance(replies, int) and replies > 0:
+            return f"has {replies} post(s)"
+    return ""

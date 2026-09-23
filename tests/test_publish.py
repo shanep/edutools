@@ -1611,3 +1611,40 @@ class TestAlwaysPublish:
         publisher, canvas = self._publisher(tmp_path, both=True)
         publisher.create_or_update(next(p for p in publisher.plan() if p.key == "tech.md"))
         assert canvas.create_page.call_args.args[3] is False
+
+
+class TestUngradedDiscussions:
+    def _publisher(self, tmp_path: Path):
+        from edutools.publisher import Publisher
+
+        (tmp_path / "shared").mkdir()
+        (tmp_path / "index.md").write_text("# S\n", encoding="utf-8")
+        (tmp_path / "shared" / "questions.md").write_text("# Course Questions\n\nAsk here.\n", encoding="utf-8")
+        (tmp_path / "shared" / "tech.md").write_text("# Technology Support\n", encoding="utf-8")
+        (tmp_path / "canvas.toml").write_text(
+            "[term]\n"
+            'timezone = "America/Boise"\n'
+            "first_monday = 2026-08-24\nweeks = 15\n"
+            "last_day_of_instruction = 2026-12-11\n"
+            "finals_start = 2026-12-14\nfinals_end = 2026-12-18\ntotal_points = 0\n\n"
+            '[term.policy.project]\ndue = "tue 23:59"\n\n'
+            '[layout]\nsyllabus = "index.md"\npages = ["shared/*.md"]\nfiles = []\n'
+            'discussions = ["shared/questions.md"]\n',
+            encoding="utf-8",
+        )
+        canvas = MagicMock()
+        canvas.create_discussion.return_value = {"id": "77", "assignment_id": None}
+        return Publisher(tmp_path, "42", canvas), canvas
+
+    def test_it_is_planned_as_a_discussion_not_a_page(self, tmp_path: Path):
+        publisher, _ = self._publisher(tmp_path)
+        kinds = {p.key: p.kind for p in publisher.plan()}
+        assert kinds["shared/questions.md"] == "discussion"
+        assert kinds["shared/tech.md"] == "page"
+
+    def test_no_assignment_fields_are_sent(self, tmp_path: Path):
+        publisher, canvas = self._publisher(tmp_path)
+        publisher.create_or_update(next(p for p in publisher.plan() if p.key == "shared/questions.md"))
+        fields = canvas.create_discussion.call_args.args[1]
+        assert fields["title"] == "Course Questions"
+        assert not any(key.startswith("assignment[") for key in fields)

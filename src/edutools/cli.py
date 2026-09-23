@@ -585,6 +585,145 @@ def pull_course(
 # Course Publishing Commands
 # ============================================================================
 
+def _read_differences(
+    repo_path: Any, course_id: str, canvas: Any, publisher: Any
+) -> tuple[list[Any], list[Any], dict[str, object]]:
+    """Read the whole course and compare it with the manifest, both ways.
+
+    Shared by `audit`, which reports the differences, and `push --clean`, which
+    deletes the untracked ones. Returns the differences, the declared modules,
+    and the parsed canvas.toml.
+    """
+    from edutools.audit import (
+        audit_modules,
+        audit_objects,
+        declared_modules,
+        live_assignments,
+        live_discussions,
+        live_files,
+        live_modules,
+        live_pages,
+        live_quizzes,
+    )
+
+    manifest = publisher.manifest
+    drafts = {key for key in manifest.entries if publisher.is_draft_key(key)}
+
+    with (repo_path / "canvas.toml").open("rb") as handle:
+        raw = tomllib.load(handle)
+    declared = declared_modules(raw, publisher.config.term)
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  console=console, transient=True) as progress:
+        task = progress.add_task("Reading pages")
+        live = live_pages(canvas.list_pages(course_id))
+        progress.update(task, description="Reading assignments")
+        live += live_assignments(canvas.get_assignments(course_id))
+        progress.update(task, description="Reading discussions")
+        live += live_discussions(canvas.list_discussions(course_id))
+        progress.update(task, description="Reading quizzes")
+        live += live_quizzes(canvas.list_quizzes(course_id))
+        progress.update(task, description="Reading files")
+        live += live_files(canvas.list_files(course_id))
+        progress.update(task, description="Reading modules")
+        stored_modules = canvas.list_modules(course_id)
+        items = {
+            str(m.get("id", "")): canvas.list_module_items(course_id, str(m.get("id", "")))
+            for m in stored_modules
+        }
+        modules = live_modules(stored_modules, items)
+
+    differences = audit_objects(manifest, live, drafts) + audit_modules(declared, modules, items, manifest)
+    return differences, declared, raw
+
+
+def _clean_course(
+    repo_path: Any, course_id: str, canvas: Any, publisher: Any, dry_run: bool, yes: bool
+) -> None:
+    """Delete what the repo does not own, before a start-of-term push.
+
+    Never touches files, anything a [[module]] names as a native item, anything
+    under `[clean] keep`, or the course front page. Refuses the whole clean if
+    any object it would delete holds student work.
+    """
+    from edutools.audit import clean_keep, clean_targets, student_work
+
+    differences, declared, raw = _read_differences(repo_path, course_id, canvas, publisher)
+    try:
+        keep = clean_keep(raw, declared)
+    except ValueError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(1)
+    try:
+        front = canvas.get_json(f"/api/v1/courses/{course_id}/front_page")
+        keep.add(("page", str(front.get("url", ""))))
+    except RuntimeError:
+        pass  # no front page set
+
+    targets = clean_targets(differences, keep)
+    stale = [d for d in differences if d.side == "stale"]
+
+    refused: list[tuple[Any, str]] = []
+    for target in targets:
+        if target.kind not in ("assignment", "discussion", "quiz"):
+            continue
+        stored = canvas.get_object(target.kind, course_id, target.ident)
+        assignment_id = stored.get("assignment_id")
+        assignment = (
+            canvas.get_assignment_full(course_id, str(assignment_id)) if assignment_id else None
+        )
+        reason = student_work(target.kind, stored, assignment)
+        if reason:
+            refused.append((target, reason))
+
+    table = Table(title=f"Clean sync of course {course_id}", show_header=True, header_style="bold magenta")
+    table.add_column("Action")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Title")
+    table.add_column("Id", style="dim")
+    for target in targets:
+        table.add_row("[red]delete[/red]", target.kind, target.title, target.ident)
+    for entry in stale:
+        table.add_row("[yellow]forget[/yellow]", entry.kind, entry.title, entry.key)
+    if targets or stale:
+        console.print(table)
+    console.print(
+        f"[dim]kept: {len(keep)} native or \\[clean] keep item(s), the front page, and every "
+        f"course file[/dim]"
+    )
+
+    if refused:
+        for target, reason in refused:
+            console.print(f"[red]refusing: {target.kind} {target.title!r} ({target.ident}) {reason}[/red]")
+        console.print(
+            "[red]A clean sync is for a course nobody has used yet. Delete or keep those "
+            "by hand (add them to \\[clean] keep), then run it again.[/red]"
+        )
+        raise typer.Exit(1)
+
+    if not targets and not stale:
+        console.print("[green]✓ nothing to clean: Canvas holds only what the repo put there[/green]")
+        return
+    if dry_run:
+        console.print(f"[yellow]dry run: would delete {len(targets)} and forget {len(stale)}[/yellow]")
+        return
+    if not yes:
+        typer.confirm(
+            f"Delete these {len(targets)} object(s) from course {course_id}? This cannot be undone",
+            abort=True,
+        )
+
+    for target in targets:
+        try:
+            canvas.delete_object(target.kind, course_id, target.ident)
+        except RuntimeError as error:
+            console.print(f"[red]could not delete {target.kind} {target.ident}: {error}[/red]")
+            raise typer.Exit(1)
+    for entry in stale:
+        publisher.manifest.drop(entry.key)
+    console.print(f"[green]✓ deleted {len(targets)}, forgot {len(stale)} stale manifest entr(ies)[/green]")
+
+
 @app.command("push")
 def push_course(
     repo: str = typer.Argument(..., help="Course repository containing canvas.toml"),
@@ -596,6 +735,8 @@ def push_course(
     path: Optional[list[str]] = typer.Option(None, "--path", help="Limit to specific repo files, exact or glob, repeatable"),
     verify: bool = typer.Option(True, "--verify/--no-verify", help="Read everything back from Canvas afterwards"),
     preview: Optional[str] = typer.Option(None, "--preview", help="Write the rendered HTML to a directory and open nothing else"),
+    clean: bool = typer.Option(False, "--clean", help="Start of term: first delete everything the repo does not own, then rewrite all of it"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="With --clean, skip the confirmation prompt"),
 ):
     """Publish a course repository to Canvas.
 
@@ -614,6 +755,13 @@ def push_course(
     same pipeline the full push does, so dates, links, rubric and styling all
     still come from the repository. Whole-course module rebuilding is skipped,
     since that is a structural change rather than a correction.
+
+    --clean is for the start of a term, on a course copied from a shell or from
+    last term. It deletes every page, assignment, discussion, quiz and module
+    the repo does not own (keeping course files, the front page, the native
+    items [[module]] tables name, and anything under [clean] keep), refuses if
+    any of it holds student work, asks first, and then pushes everything with
+    --update-published. With --dry-run it lists what it would delete.
     """
     from pathlib import Path
 
@@ -622,6 +770,14 @@ def push_course(
 
     init()
     repo_path = Path(repo).expanduser()
+
+    if clean and (only or path):
+        console.print("[red]--clean syncs the whole course; it cannot be combined with --only or --path[/red]")
+        raise typer.Exit(1)
+    if clean:
+        # The clean sync is the one time everything is rewritten: the course is
+        # about to start, so nothing in it is being read yet.
+        update_published = True
 
     canvas = None
     if not dry_run:
@@ -638,6 +794,11 @@ def push_course(
     except (PublishError, ValueError) as error:
         console.print(f"[red]{error}[/red]")
         raise typer.Exit(1)
+
+    if clean:
+        from edutools.canvas import CanvasLMS
+
+        _clean_course(repo_path, course_id, canvas or CanvasLMS(), publisher, dry_run, yes)
 
     if publisher.drafts:
         console.print(
@@ -950,18 +1111,7 @@ def audit_course(
     from dataclasses import asdict
     from pathlib import Path
 
-    from edutools.audit import (
-        audit_modules,
-        audit_objects,
-        declared_modules,
-        live_assignments,
-        live_discussions,
-        live_files,
-        live_modules,
-        live_pages,
-        live_quizzes,
-        summarise,
-    )
+    from edutools.audit import summarise
     from edutools.canvas import CanvasLMS
     from edutools.publisher import Publisher
 
@@ -970,32 +1120,7 @@ def audit_course(
     canvas = CanvasLMS()
     publisher = Publisher(repo_path, course_id, canvas)
     manifest = publisher.manifest
-    drafts = {key for key in manifest.entries if publisher.is_draft_key(key)}
-
-    with (repo_path / "canvas.toml").open("rb") as handle:
-        declared = declared_modules(tomllib.load(handle), publisher.config.term)
-
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                  console=console, transient=True) as progress:
-        task = progress.add_task("Reading pages")
-        live = live_pages(canvas.list_pages(course_id))
-        progress.update(task, description="Reading assignments")
-        live += live_assignments(canvas.get_assignments(course_id))
-        progress.update(task, description="Reading discussions")
-        live += live_discussions(canvas.list_discussions(course_id))
-        progress.update(task, description="Reading quizzes")
-        live += live_quizzes(canvas.list_quizzes(course_id))
-        progress.update(task, description="Reading files")
-        live += live_files(canvas.list_files(course_id))
-        progress.update(task, description="Reading modules")
-        stored_modules = canvas.list_modules(course_id)
-        items = {
-            str(m.get("id", "")): canvas.list_module_items(course_id, str(m.get("id", "")))
-            for m in stored_modules
-        }
-        modules = live_modules(stored_modules, items)
-
-    differences = audit_objects(manifest, live, drafts) + audit_modules(declared, modules, items, manifest)
+    differences, _, _ = _read_differences(repo_path, course_id, canvas, publisher)
     stale = [d for d in differences if d.side == "stale"]
 
     if as_json:

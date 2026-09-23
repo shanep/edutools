@@ -186,6 +186,8 @@ class Layout:
         "assignments/*-exam-guide.md",
     )
     files: tuple[str, ...] = ("docs/*.pdf", "data/*")
+    # Ungraded discussions, such as a course Q&A board: no points, no dates.
+    discussions: tuple[str, ...] = ()
     gradable: tuple[tuple[str, ItemKind], ...] = (
         ("assignments/lab-*.md", "lab"),
         ("assignments/p[0-9]*.md", "project"),
@@ -479,6 +481,7 @@ def load_layout(raw: dict[str, object]) -> Layout:
         syllabus=syllabus,
         pages=_glob_list(section, "pages", DEFAULT_LAYOUT.pages),
         files=_glob_list(section, "files", DEFAULT_LAYOUT.files),
+        discussions=_glob_list(section, "discussions", DEFAULT_LAYOUT.discussions),
         gradable=gradable,
     )
 

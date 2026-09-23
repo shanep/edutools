@@ -222,6 +222,14 @@ class Publisher:
                 claimed.add(key_of(path))
                 plans.append(Plan(key=key_of(path), kind="file", title=path.name, source=path))
 
+        # Ungraded discussions before pages, so a Q&A board that sits among a
+        # module's pages is not caught by a looser page glob first.
+        for pattern in layout.discussions:
+            for path in sorted(self.repo.glob(pattern)):
+                if path.is_file() and not skip(path) and key_of(path) not in claimed:
+                    claimed.add(key_of(path))
+                    plans.append(Plan(key=key_of(path), kind="discussion", title="", source=path))
+
         # Pages before gradable items: a file matched by both, such as an exam guide
         # sitting under assignments/, stays a page.
         for pattern in layout.pages:
@@ -498,13 +506,16 @@ class Publisher:
                 canvas_id, result.created = str(created["id"]), 1
             self.manifest.put(item.key, Entry(kind="assignment", canvas_id=canvas_id, title=title))
         elif item.kind == "discussion":
-            fields = {
-                "title": title,
-                "message": html,
-                "assignment[points_possible]": f"{item.points or 0:g}",
-                **self._group_fields("assignment", item),
-                **self._date_fields("assignment", item.dates),
-            }
+            fields = {"title": title, "message": html}
+            # A graded discussion hangs its points, group and dates off an
+            # assignment; sending any of them to an ungraded one would make
+            # Canvas create that assignment and put the board in the gradebook.
+            if item.item_kind is not None:
+                fields.update({
+                    "assignment[points_possible]": f"{item.points or 0:g}",
+                    **self._group_fields("assignment", item),
+                    **self._date_fields("assignment", item.dates),
+                })
             if existing and canvas.exists(
                 f"/api/v1/courses/{self.course_id}/discussion_topics/{existing.canvas_id}"
             ):

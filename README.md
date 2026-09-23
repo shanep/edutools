@@ -357,6 +357,37 @@ gradable ones, so a file caught by both stays a page. The keys under
 `[layout.gradable]` are item kinds (`lab`, `project`, `extra`, `quiz`, `discussion`, `exam`),
 and each needs a matching `[term.policy.<kind>]` to compute its dates from.
 
+`discussions` lists ungraded discussions, such as a Course Questions board: they
+are pushed with no points, group or dates, so Canvas keeps them out of the
+gradebook. They are matched before `pages`, so a board can sit in a directory a
+page glob also covers.
+
+### Clean sync at the start of a term
+
+A course copied from a shell, or from last term, holds objects the repo did not
+make: template placeholders, last term's pages. `push --clean` makes the course
+exactly the repo:
+
+```bash
+edutools push ./cs331 --course 12345 --clean --dry-run   # list what it would delete
+edutools push ./cs331 --course 12345 --clean             # delete, confirm, then push
+```
+
+It deletes every page, assignment, discussion, quiz and module the repo does not
+own, forgets manifest entries for objects Canvas no longer has, and then pushes
+everything with `--update-published`. It never deletes course files, the front
+page, a native item a `[[module]]` names, or anything listed to keep:
+
+```toml
+[clean]
+keep = [{ quiz = 393731 }, { page = "welcome" }]
+```
+
+It refuses outright if anything it would delete holds student work
+(submissions, or posts in a discussion), because deleting a graded object takes
+its grades with it. It asks before deleting unless given `--yes`, and it cannot
+be combined with `--only` or `--path`.
+
 ### Heading icons
 
 The Boise State Online course shell puts a small icon in front of each section

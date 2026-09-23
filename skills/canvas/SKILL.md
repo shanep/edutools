@@ -234,6 +234,7 @@ first thing to show a user who is changing the schedule or the module layout.
 | `--update-published` | Also rewrites content students can already see. See rule 5. |
 | `--preview <dir>` | Writes the rendered HTML to a directory to inspect, and nothing else. |
 | `--no-verify` | Skips the read-back that normally follows. Rarely right. |
+| `--clean` | Start of term only: deletes every page, assignment, discussion, quiz and module the repo does not own, then pushes everything. See below. |
 
 - **Without `--publish`, a push never changes visibility** of an object that
   already exists. It does not unpublish a live assignment.
@@ -247,6 +248,11 @@ first thing to show a user who is changing the schedule or the module layout.
 - **A gradable file that no `[[module]]` lists** is published but invisible to
   students, who find work through Modules. The push warns about each one; tell
   the user rather than letting the warning scroll by.
+- **`--clean` deletes, so it follows rule 4.** Always run
+  `push --clean --dry-run` first, show the user the delete list, and get a yes
+  naming what goes before running it for real. It keeps course files, the front
+  page, native module items and `[clean] keep`, and refuses if anything holds
+  student work; never try to get past that refusal. Never use it mid-term.
 - **Retitling a page changes its Canvas url slug.** The push records the new one,
   so a module still finds it. A page created while an old page of the same title
   exists gets a `-2` slug; delete the old one (after confirming) if that matters.
