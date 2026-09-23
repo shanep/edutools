@@ -14,17 +14,21 @@ import { Command, CommanderError } from "commander";
 import pkg from "../package.json" with { type: "json" };
 import { Cli, type CliDeps, CliExit, canvasClient, type Register } from "./cli";
 import { register as assignments } from "./commands/assignments";
+import { register as audit } from "./commands/audit";
 import { register as check } from "./commands/check";
 import { register as courses } from "./commands/courses";
 import { register as create } from "./commands/create";
+import { register as dates } from "./commands/dates";
 import { register as deleteCommand } from "./commands/delete";
 import { register as download } from "./commands/download";
 import { register as grade } from "./commands/grade";
 import { register as groups } from "./commands/groups";
 import { register as init } from "./commands/init";
 import { register as modules } from "./commands/modules";
+import { register as outline } from "./commands/outline";
 import { register as publish } from "./commands/publish";
 import { register as pull } from "./commands/pull";
+import { register as push } from "./commands/push";
 import { register as site } from "./commands/site";
 import { register as students } from "./commands/students";
 import { register as submission } from "./commands/submission";
@@ -32,6 +36,7 @@ import { register as submissions } from "./commands/submissions";
 import { register as ungraded } from "./commands/ungraded";
 import { register as unpublish } from "./commands/unpublish";
 import { register as update } from "./commands/update";
+import { register as verify } from "./commands/verify";
 import { messageOf } from "./format";
 
 /** Every command, in the order `--help` lists them. */
@@ -49,6 +54,12 @@ const COMMANDS: readonly Register[] = [
   submissions,
   ungraded,
   pull,
+  // course repositories
+  push,
+  verify,
+  audit,
+  outline,
+  dates,
   // one object at a time
   create,
   update,

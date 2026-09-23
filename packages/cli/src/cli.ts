@@ -22,12 +22,14 @@ import {
   type ResolvedCredentials,
   resolveCredentials,
 } from "@edutools/core/credentials";
+import type { CourseCanvas } from "@edutools/core/course";
 import type { PullCanvas } from "@edutools/core/pull";
 import type { Command } from "commander";
 import pc from "picocolors";
 
 /** The client methods the commands call, so a test can hand in a plain object. */
 export type CanvasClient = PullCanvas &
+  CourseCanvas &
   Pick<
     CanvasLMS,
     | "getCourses"
