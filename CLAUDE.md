@@ -18,8 +18,14 @@ src/edutools/
 ├── verify.py     pure: reads content back and compares it semantically
 ├── dates.py      pure: due-date computation from a canvas.toml term skeleton
 ├── objects.py    pure: per-kind Canvas field names, grade-file parsing
+├── pull.py       course snapshot: raw JSON, HTML bodies, and files to disk
 └── _version.py   version reporting
+skills/canvas/SKILL.md   the Claude skill that drives this CLI
 ```
+
+`~/.claude/skills/canvas` is a symlink to `skills/canvas`. The skill documents
+command names, flags, and `--json` output, so a change to any of those updates
+`SKILL.md` in the same commit.
 
 The split is the point: `canvas.py` owns the network, everything else is pure and
 testable without a token, and `cli.py` is a thin presentation layer. Keep it that

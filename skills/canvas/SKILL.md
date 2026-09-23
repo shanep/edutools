@@ -1,6 +1,6 @@
 ---
 name: canvas
-description: Work with Canvas LMS through the `edutools` CLI - list courses, students, assignments and submissions; create, update, delete, publish and unpublish pages, assignments, discussions, quizzes and modules; and grade submissions with written feedback. Use whenever the request touches Canvas, an LMS course, a gradebook, a course page or module, an assignment or quiz, student submissions, grading, or leaving feedback on student work.
+description: Work with Canvas LMS through the `edutools` CLI - list courses, students, assignments, modules and submissions; snapshot a whole course to disk; publish a course repository of markdown into Canvas and verify or audit what landed; preview the module outline and due dates; create, update, delete, publish and unpublish pages, assignments, discussions, quizzes and modules; and grade submissions with written feedback. Use whenever the request touches Canvas, an LMS course, course design or course content, a backup or snapshot of a course, a gradebook, a course page or module, an assignment or quiz, student submissions, grading, or leaving feedback on student work.
 ---
 
 # Canvas LMS
@@ -45,8 +45,11 @@ Canvas writes are immediate and land on real courses with real students.
    its submissions and grades with it, irreversibly. Confirm with the user first,
    naming the object. Do not pass `--yes` unless the user has already confirmed
    that specific object in this conversation.
-5. **Report what actually happened.** `grade` and `push` print a per-row result
-   table and exit non-zero on failure. If rows failed, say which ones and why.
+5. **Leave published content alone.** `push` skips anything students can already
+   see and lists it. Do not add `--update-published` unless the user has asked
+   for that specific published content to change in this conversation.
+6. **Report what actually happened.** `grade`, `push` and `pull` print what they
+   did and exit non-zero on failure. If something failed, say what and why.
 
 ## Reading
 
@@ -57,11 +60,55 @@ edutools students <course_id> --json
 edutools submissions <course_id> <assignment_id> --json
 edutools ungraded <course_id> --json          # everything still needing a grade
 edutools groups <course_id> --json            # assignment groups and their weights
+edutools modules <course_id> --json           # modules, each with its items under "items"
 ```
 
 Ids are what these commands are for: get the assignment id from `assignments`,
 the student user id from `students`. Do not ask the user for an id you can look
 up.
+
+## Snapshotting a whole course
+
+`pull` writes everything a course contains to a directory, as Canvas stores it.
+It only reads, so it is safe on any course the user names. Reach for it when the
+user wants a backup, wants to compare the course across two dates, or when you
+need to read a lot of course content: one pull and then reading files beats
+dozens of separate commands.
+
+```bash
+edutools pull <course_id>                        # into ./canvas-<course_id>
+edutools pull <course_id> --out ~/backups/cs121
+edutools pull <course_id> --only pages --only assignments
+edutools pull <course_id> --json                 # print index.json when done
+```
+
+What lands where:
+
+```
+index.json                    every path the pull wrote, and any problems
+course.json, syllabus.html
+pages/<url>.json, .html
+assignments/<id>-<slug>.json, .html
+discussions/<id>-<slug>.json, .html
+announcements/<id>-<slug>.json, .html
+quizzes/<id>-<slug>.json, .html, .questions.json
+modules.json                  modules with their items nested
+assignment_groups.json, rubrics.json
+folders.json, files.json
+files/<folder>/<name>         the course files themselves
+```
+
+The `.html` is the body, as Canvas holds it, after its sanitizer. Pulling again
+into the same directory refreshes it and removes what an earlier pull wrote for
+objects that are gone; nothing else in the directory is touched.
+
+- **A snapshot is not a course repository.** Nothing is converted to markdown, and
+  `push` cannot read it.
+- **Student work is not in it**: no submissions, grades, or discussion replies.
+  Use `download` for submissions.
+- **A New Quizzes quiz shows up only as its assignment**, with no questions.
+- **`files.json` holds download urls that may work without a login.** Do not
+  paste them anywhere public.
 
 ## Creating, changing, and removing one object
 
@@ -146,12 +193,70 @@ Two things to know before editing those blocks:
 
 ### When to use `push` instead
 
-If the course lives in a repository of markdown with a `canvas.toml`, the whole
-course is published with `edutools push <repo> --course <id>` and checked with
-`edutools verify <repo> --course <id>`. Use `create`/`update` for one-off objects
-and for courses that are not repo-backed. **Do not use `create`/`update` to patch
-an object that `push` manages**: the next `push` will overwrite it. Edit the
-markdown in the repo and push instead.
+If the course lives in a repository of markdown with a `canvas.toml`, use the
+course repository commands below. Use `create`/`update` for one-off objects and
+for courses that are not repo-backed. **Do not use `create`/`update` to patch an
+object that `push` manages**: the next `push` will overwrite it. Edit the markdown
+in the repo and push instead.
+
+## Course repositories
+
+A course repository is a directory of markdown with a `canvas.toml` at its root:
+the term dates, date policies, assignment groups, and `[[module]]` tables. `push`
+publishes it; the rest check it. The repo's `README` in `~/repos/edutools`
+documents the layout and every `canvas.toml` key; read it before editing
+`canvas.toml`.
+
+The usual loop, and the order to run it in:
+
+```bash
+edutools dates <repo> --show                       # due dates, from canvas.toml alone
+edutools outline <repo>                            # the modules a push will build
+edutools push <repo> --course <id> --dry-run       # render everything, write nothing
+edutools push <repo> --course <id>                 # write it, unpublished, then verify
+edutools audit <repo> --course <id> --json         # what Canvas holds that the repo did not put there
+```
+
+`dates` and `outline` need no token and never touch Canvas, so they are the
+first thing to show a user who is changing the schedule or the module layout.
+`dates --shift 7d` previews the whole term moved by a week.
+
+### `push`
+
+| Option | Notes |
+| --- | --- |
+| `--dry-run` | Renders everything and writes nothing. Run it first. |
+| `--path <file or glob>` | Push one correction, not the whole course. Repeatable. Skips the module rebuild. |
+| `--only <group>` | `pages`, `assignments`, `discussions`, `quizzes`, `files`, `modules`, `syllabus`, `rubrics`, `groups`. Repeatable. |
+| `--publish` | Makes what it writes visible. Leave it off unless asked. |
+| `--update-published` | Also rewrites content students can already see. See rule 5. |
+| `--preview <dir>` | Writes the rendered HTML to a directory to inspect, and nothing else. |
+| `--no-verify` | Skips the read-back that normally follows. Rarely right. |
+
+- **Without `--publish`, a push never changes visibility** of an object that
+  already exists. It does not unpublish a live assignment.
+- **A module is rebuilt from `canvas.toml`**: every item is removed and re-added
+  from the table's `page`, `items`, and `canvas` lists. Something added to a
+  repo-managed module by hand in Canvas disappears on the next push unless it is
+  named under `canvas`. `audit` reports exactly those items.
+- **A file marked `draft: true` in its frontmatter is not pushed.** Marking an
+  already-pushed file as a draft orphans its Canvas object rather than deleting
+  it; the push prints the path.
+- **A gradable file that no `[[module]]` lists** is published but invisible to
+  students, who find work through Modules. The push warns about each one; tell
+  the user rather than letting the warning scroll by.
+
+### `verify` and `audit`
+
+- `verify <repo> --course <id>` reads every object the repo pushed back from
+  Canvas and compares it with what the repo says it should be. It catches the
+  sanitizer stripping HTML, partial quiz writes, files stuck pending, and someone
+  editing in the Canvas UI. `push` runs it automatically.
+- `audit <repo> --course <id> --json` answers the other direction: objects in
+  Canvas the repo did not create (`untracked`, normal for a hand-built exam),
+  modules `canvas.toml` declares that do not exist yet (`pending`), and manifest
+  entries pointing at objects Canvas no longer has (`stale`). Only `stale` exits
+  non-zero, because the next push would try to update something that is gone.
 
 ## Grading with feedback
 
@@ -249,3 +354,7 @@ Write the grades, then tell the user to post them from the Canvas gradebook
 genuinely cannot be expressed with the commands above, adding to the tool is the
 right move rather than reaching for `curl`. That repo has its own `CLAUDE.md`
 covering layout, checks, and Canvas API conventions. Read it first.
+
+This skill lives in that repo too, at `skills/canvas/SKILL.md`; `~/.claude/skills/canvas`
+is a symlink to it. A change to a command's name, flags, or `--json` output
+updates this file in the same commit.
