@@ -10,11 +10,14 @@
     "@css-inline/css-inline": "^0.21.2",
     "@napi-rs/keyring": "^2.1.0",
     "luxon": "^3.7.2",
+    "markdown-it": "^15.0.2",
+    "markdown-it-footnote": "^4.0.0",
     "picomatch": "^4.0.7",
     "smol-toml": "^1.9.0"
   },
   "devDependencies": {
     "@types/luxon": "^3.7.5",
+    "@types/markdown-it-footnote": "^3.0.4",
     "@types/picomatch": "^4.0.3"
   }
 }
