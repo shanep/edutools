@@ -59,6 +59,7 @@ edutools students <course_id> [--json]           list students in a course
 edutools submissions <course_id> <assignment_id> [--json]
                                                  list submissions for one assignment
 edutools ungraded <course_id> [--json]           list submissions still needing a grade
+edutools pull <course_id> [--out <dir>] [--json]  snapshot the whole course to disk, as Canvas stores it
 edutools push <course_repo> --course <id>        publish a course repo into Canvas
 edutools verify <course_repo> --course <id>      read published content back and prove it landed
 edutools audit <course_repo> --course <id>       compare the manifest with the live course, both ways
@@ -110,6 +111,57 @@ edutools ungraded 12345
 Without `--json` these print a Rich table meant for humans. With `--json` they print
 the API payload verbatim, which is the mode to use when another program is consuming
 the output.
+
+### Snapshotting a course
+
+`pull` writes everything a course contains to a directory, exactly as Canvas
+stores it. Nothing is converted, so the snapshot is lossless: a backup, something
+to diff between two dates, or input an agent can read without a token. It is not a
+course repo, and `push` cannot read it.
+
+```bash
+edutools pull 12345                         # into ./canvas-12345
+edutools pull 12345 --out ~/backups/cs121   # somewhere else
+edutools pull 12345 --only pages --only assignments
+edutools pull 12345 --json                  # print index.json when done
+```
+
+```
+index.json                    every path this pull wrote, and any problems
+course.json                   the course, including syllabus_body
+syllabus.html
+pages/<url>.json, .html       one pair per page, named by its url slug
+assignments/<id>-<slug>.json, .html
+discussions/<id>-<slug>.json, .html
+announcements/<id>-<slug>.json, .html
+quizzes/<id>-<slug>.json, .html, .questions.json
+modules.json                  every module with its items nested under "items"
+assignment_groups.json
+rubrics.json
+folders.json, files.json      the raw listings
+files/<folder>/<name>         each course file, in its Canvas folder
+```
+
+The `.html` file is the body (a page's `body`, an assignment's `description`,
+a topic's `message`) and is left out when the body is empty. `--only` takes
+`syllabus`, `pages`, `assignments`, `discussions`, `announcements`, `quizzes`,
+`modules`, `groups`, `rubrics` or `files`, and is repeatable; `course.json` is
+written every time.
+
+Pulling again into the same directory refreshes it. A course file already on
+disk at the size and time Canvas reports is not downloaded again. Anything an
+earlier pull wrote for an object Canvas no longer has, or under a title that has
+since changed, is removed; `index.json` is how the pull knows what it wrote, and
+nothing else in the directory is touched. An object or a whole kind that cannot
+be fetched keeps its previous copy, is listed as a problem, and makes the command
+exit non-zero.
+
+Student work is not part of the snapshot: submissions, grades and discussion
+replies stay behind (`download` fetches submissions). A quiz built with New
+Quizzes arrives only as its assignment, with no questions, since the classic
+quizzes API cannot see it. `files.json` holds each file's download url, which
+carries a verifier that can work without a login, so treat a snapshot as you
+would the course itself.
 
 ### Publishing a course repo
 

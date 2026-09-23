@@ -402,3 +402,24 @@ class TestPushWarnsAboutUnlistedItems:
 
         assert result.exit_code == 0, result.output
         assert "1 gradable item(s) in no [[module]]" in result.output
+
+
+class TestPull:
+    def test_pull_writes_the_snapshot_and_emits_the_index(self, canvas, tmp_path):
+        canvas.get_course_with_syllabus.return_value = {"id": 42, "name": "CS 121"}
+        for method in ("list_pages", "list_assignments", "list_discussions", "list_announcements",
+                       "list_quizzes", "list_modules", "list_assignment_groups", "list_rubrics",
+                       "list_folders", "list_files"):
+            getattr(canvas, method).return_value = []
+        out = tmp_path / "snap"
+
+        result = runner.invoke(app, ["pull", "42", "--out", str(out), "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["course_name"] == "CS 121"
+        assert (out / "course.json").is_file()
+
+    def test_pull_refuses_an_unknown_kind(self, canvas, tmp_path):
+        result = runner.invoke(app, ["pull", "42", "--out", str(tmp_path), "--only", "widgets"])
+        assert result.exit_code == 2
+        assert "unknown kind" in result.output

@@ -515,6 +515,72 @@ def list_ungraded(
     console.print(f"\n[dim]Total ungraded: {len(ungraded)}[/dim]")
 
 
+@app.command("pull")
+def pull_course(
+    course_id: Optional[str] = typer.Argument(None, help="Canvas course ID (prompted if omitted)"),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Directory to write into (default: ./canvas-<course_id>)"),
+    only: Optional[list[str]] = typer.Option(None, "--only", help="Limit to: syllabus, pages, assignments, discussions, announcements, quizzes, modules, groups, rubrics, files (repeatable)"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the snapshot index as JSON"),
+):
+    """Snapshot a whole course to disk, exactly as Canvas stores it.
+
+    Every object is written as its raw JSON, its body as the HTML Canvas holds,
+    and every course file as its bytes. Nothing is converted to markdown, so the
+    snapshot is lossless but is not a repo that push can read.
+
+    Pulling again into the same directory refreshes it: files already current
+    are not downloaded twice, and anything an earlier pull wrote for an object
+    Canvas no longer has is removed. Nothing else in the directory is touched.
+    """
+    init()
+    from pathlib import Path
+
+    from edutools.canvas import CanvasLMS
+    from edutools.pull import Puller, PullError
+
+    if course_id is None:
+        course_id = _select_course()
+    root = Path(out or f"canvas-{course_id}").expanduser()
+
+    try:
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                      console=console, transient=True) as progress:
+            task = progress.add_task("Reading course")
+            puller = Puller(
+                CanvasLMS(), course_id, root, kinds=only,
+                report=lambda message: progress.update(task, description=message),
+            )
+            index = puller.run()
+    except PullError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(2)
+    except RuntimeError as error:
+        # Only the course itself is fatal; everything past it is reported per object.
+        console.print(f"[red]could not read course {course_id}: {error}[/red]")
+        raise typer.Exit(1)
+
+    result = puller.result
+    if as_json:
+        _emit_json(index)
+        raise typer.Exit(1 if result.errors else 0)
+
+    counts: dict[str, int] = {}
+    for entry in result.entries:
+        if entry.ident and entry.kind != "course":
+            counts[entry.kind] = counts.get(entry.kind, 0) + 1
+    summary = ", ".join(f"{n} {kind}" for kind, n in counts.items()) or "no objects"
+    console.print(f"[green]✓[/green] {index['course_name']} pulled to [cyan]{root}[/cyan]: {summary}")
+    if result.downloaded or result.unchanged:
+        console.print(f"  [dim]files: {result.downloaded} downloaded, {result.unchanged} already current[/dim]")
+    if result.removed:
+        console.print(f"  [dim]removed {len(result.removed)} path(s) for objects Canvas no longer has[/dim]")
+    if result.errors:
+        console.print(f"\n[red]{len(result.errors)} problem(s); the previous copy of each was kept:[/red]")
+        for problem in result.errors[:20]:
+            console.print(f"  [red]•[/red] {problem}")
+        raise typer.Exit(1)
+
+
 # ============================================================================
 # Course Publishing Commands
 # ============================================================================

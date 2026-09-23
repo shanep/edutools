@@ -125,6 +125,10 @@ class CanvasLMS():
         """Fetch a single course by ID."""
         return self._get_single(f"/api/v1/courses/{course_id}", {})
 
+    def get_course_with_syllabus(self, course_id: str) -> dict[str, object]:
+        """The course, carrying its syllabus body, which Canvas omits unless asked."""
+        return self.get_json(f"/api/v1/courses/{course_id}", {"include[]": "syllabus_body"})
+
     def get_assignments(self, course_id: str) -> list[dict[str, object]]:
         return self._get_paginated(f"/api/v1/courses/{course_id}/assignments", {})
 
@@ -289,6 +293,14 @@ class CanvasLMS():
             data={"course[apply_assignment_group_weights]": str(enabled).lower()},
         )
 
+    def list_assignments(self, course_id: str) -> list[dict[str, object]]:
+        """Every assignment, with retries, which get_assignments does not have.
+
+        A pull makes hundreds of sequential requests, so one 429 partway through
+        should back off rather than abandon the snapshot.
+        """
+        return self.list_json(f"/api/v1/courses/{course_id}/assignments")
+
     # -- pages ----------------------------------------------------------
 
     def list_pages(self, course_id: str) -> list[dict[str, object]]:
@@ -336,6 +348,13 @@ class CanvasLMS():
 
     def list_discussions(self, course_id: str) -> list[dict[str, object]]:
         return self.list_json(f"/api/v1/courses/{course_id}/discussion_topics")
+
+    def list_announcements(self, course_id: str) -> list[dict[str, object]]:
+        # Announcements are discussion topics, but the topics listing leaves them
+        # out unless asked for them alone.
+        return self.list_json(
+            f"/api/v1/courses/{course_id}/discussion_topics", {"only_announcements": "true"}
+        )
 
     def get_discussion(self, course_id: str, topic_id: str) -> dict[str, object]:
         return self.get_json(f"/api/v1/courses/{course_id}/discussion_topics/{topic_id}")
@@ -407,6 +426,10 @@ class CanvasLMS():
 
     def list_files(self, course_id: str) -> list[dict[str, object]]:
         return self.list_json(f"/api/v1/courses/{course_id}/files")
+
+    def list_folders(self, course_id: str) -> list[dict[str, object]]:
+        """Every folder, whose full_name is the only place a file's path lives."""
+        return self.list_json(f"/api/v1/courses/{course_id}/folders")
 
     def get_file(self, file_id: str) -> dict[str, object]:
         return self.get_json(f"/api/v1/files/{file_id}")
@@ -571,9 +594,9 @@ class CanvasLMS():
         )
 
     def download_attachment(self, url: str, dest: Path) -> int:
-        """Stream a submission attachment to disk and return its size in bytes.
+        """Stream a submission attachment or a course file to disk, return its size.
 
-        Canvas attachment URLs redirect to blob storage; `requests` drops the
+        Canvas download URLs redirect to blob storage; `requests` drops the
         Authorization header on a cross-host redirect, so the token stays put.
         """
         dest.parent.mkdir(parents=True, exist_ok=True)
