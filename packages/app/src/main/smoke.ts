@@ -132,7 +132,7 @@ export async function seedSmoke(api: EdutoolsApi): Promise<void> {
   }
 }
 
-async function waitFor(window: BrowserWindow, expression: string, what: string): Promise<void> {
+export async function waitFor(window: BrowserWindow, expression: string, what: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
     if ((await window.webContents.executeJavaScript(`!!(${expression})`)) === true) {
       return;
@@ -142,12 +142,12 @@ async function waitFor(window: BrowserWindow, expression: string, what: string):
   throw new Error(`timed out waiting for ${what}`);
 }
 
-async function click(window: BrowserWindow, selector: string): Promise<void> {
+export async function click(window: BrowserWindow, selector: string): Promise<void> {
   await waitFor(window, `document.querySelector(${JSON.stringify(selector)})`, selector);
   await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)}).click()`);
 }
 
-function has(selector: string, text: string): string {
+export function has(selector: string, text: string): string {
   return `[...document.querySelectorAll(${JSON.stringify(selector)})].some((e) => e.textContent.includes(${JSON.stringify(text)}))`;
 }
 

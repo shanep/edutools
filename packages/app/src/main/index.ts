@@ -4,6 +4,7 @@ import { type Emit, sendEvent } from "../shared/ipc";
 import { type ApiDeps, createApi, type FileFilter } from "./api";
 import { registerApi } from "./ipc";
 import { buildMenu } from "./menu";
+import { captureScreens } from "./screenshots";
 import { seedSmoke, smokeDeps, smokeTest } from "./smoke";
 
 // electron-vite sets this in `dev` so the renderer is served with hot reload.
@@ -18,7 +19,9 @@ app.setPath("userData", path.join(app.getPath("appData"), "edutools", "app-data"
 
 let mainWindow: BrowserWindow | null = null;
 
-const smoke = process.env.EDUTOOLS_SMOKE_TEST === "1";
+// Both run against the smoke test's fake Canvas and throwaway config.
+const screenshots = process.env.EDUTOOLS_SCREENSHOTS ?? "";
+const smoke = process.env.EDUTOOLS_SMOKE_TEST === "1" || screenshots !== "";
 
 const emit: Emit = (event, payload) => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -130,7 +133,9 @@ if (!app.requestSingleInstanceLock()) {
     registerApi(api, devServer ? [devServer] : []);
     Menu.setApplicationMenu(buildMenu(() => mainWindow));
     mainWindow = createWindow();
-    if (smoke) {
+    if (screenshots) {
+      void captureScreens(mainWindow, path.resolve(screenshots));
+    } else if (smoke) {
       void smokeTest(mainWindow);
     }
 
