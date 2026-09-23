@@ -10,6 +10,10 @@ Every read command can emit raw JSON with `--json`, so the output is easy to par
 from a script or an agent instead of scraping table borders. With `--json`, stdout
 carries the JSON and nothing else; prompts, progress and errors go to stderr.
 
+The desktop app does the same course work with windows and buttons, for an
+instructional designer who does not use a terminal; see [Desktop app](#desktop-app)
+and [the designer guide](docs/designer-guide.md).
+
 Both the CLI and the app are TypeScript on Node, and run on macOS, Windows and
 Linux. Nothing shells out to an external program: markdown is rendered in process.
 
@@ -811,35 +815,73 @@ not do it.
 
 `packages/app` is an Electron app over the same core as the CLI, for working on a
 course without a terminal. It shares the CLI's site list and keychain, so a site
-added in either one is there in the other. It is young and still changing.
+added in either one is there in the other. Whole-course work (publish, clean sync,
+verify, audit) runs through the same functions in `packages/core/src/course.ts` that
+the CLI uses, so both reach the same results under the same safety rules.
 
-Screens that work now:
+**[The designer guide](docs/designer-guide.md)** walks through the app task by task
+for an instructional designer. The screens:
 
 - **Settings**: add and remove Canvas sites, test and save or replace their tokens,
   pick the default, and import the old `config.toml`.
-- **Courses**: the courses you teach on the default site; open one to work on it.
+- **Courses**: the courses you teach on the default site; open one to make it the
+  current course.
 - **Course overview**: the current course's assignments, modules, pages and
-  assignment groups, as Canvas has them.
-- **Snapshot**: `pull` with a window: snapshot the course to a folder on disk.
+  assignment groups, as Canvas has them, each with Open in Canvas.
+- **Snapshot**: `pull` with a window, with live progress and a result summary.
+- **Outline** and **Dates**: the modules a push will build and the semester's due
+  dates, computed from the chosen course repository alone. Outline exports the same
+  JSON as `outline --out`; Dates previews a shifted term without writing anything.
+- **Publish**: `push`, with Preview (the dry run) required before "Publish to
+  Canvas" is enabled, and separate confirmations for making content visible and for
+  rewriting published content. **Clean sync** is a separate, warned section: it shows
+  the whole plan, refuses outright when anything it would delete holds student work,
+  and otherwise needs the course code typed to confirm.
+- **Verify** and **Audit**: `verify` and `audit`, with results explained in words.
+- **Edit object**: create, change, publish, unpublish or delete one page,
+  assignment, discussion, quiz or module. Changing something students can see needs
+  an explicit checkbox, and a delete names what goes with it.
 
-**Edit object** (create, update, publish or delete one object) and **Outline and
-Dates** (the module outline and the semester's due dates) are landing now; Publish,
-Verify and Audit are placeholders.
+Only one Canvas job (snapshot, publish, clean sync, verify, audit) runs at a time.
 
-Installers are built by CI (`.github/workflows/ci.yml`), not by hand: run the CI
-workflow from the Actions tab (`workflow_dispatch`), or push a `v*` tag. It builds
-a `.dmg` for Apple Silicon and Intel Macs and an NSIS `.exe` for Windows x64, and
-uploads them as workflow artifacts; it never creates a GitHub release. Until signing
-certificates are set up the builds are unsigned (ad hoc signed on macOS), so macOS
-asks you to approve the app under System Settings -> Privacy & Security on first
-launch, and Windows SmartScreen warns before running the installer.
+### Getting the installers
 
-To run it from the checkout (this needs the Electron binary, so run `npm ci`
-without `ELECTRON_SKIP_BINARY_DOWNLOAD`):
+Installers are built by CI (`.github/workflows/ci.yml`), not by hand. Run the CI
+workflow from the Actions tab (`workflow_dispatch`), or push a `v*` tag. It builds a
+`.dmg` for Apple Silicon and for Intel Macs and an NSIS `.exe` for Windows x64,
+self-tests each packaged app on its own platform, and uploads them as workflow
+artifacts (`edutools-mac`, `edutools-windows`). Download them from the run's page, or:
+
+```bash
+gh run download <run id>
+```
+
+It never creates a GitHub release.
+
+Until signing certificates are set up the builds are unsigned (ad hoc signed on
+macOS), so macOS asks you to approve the app under System Settings -> Privacy &
+Security -> Open Anyway on first launch, and Windows SmartScreen warns before
+running the installer (More info -> Run anyway). Signing and notarization switch on
+by themselves once these repository secrets are set: `CSC_LINK` and
+`CSC_KEY_PASSWORD` (a Developer ID Application certificate), `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` (notarization), and `WIN_CSC_LINK`
+and `WIN_CSC_KEY_PASSWORD` (a Windows code-signing certificate). The app icon comes
+from `packages/app/resources/icon.icns` and `icon.ico`; without them it uses
+Electron's default.
+
+### Running it from the checkout
+
+This needs the Electron binary, so run `npm ci` without
+`ELECTRON_SKIP_BINARY_DOWNLOAD`:
 
 ```bash
 npm run dev --workspace @edutools/app
 ```
+
+`EDUTOOLS_SMOKE_TEST=1` launches the app against a fake Canvas, a throwaway config
+folder and an in-memory token store, drives every screen, prints `SMOKE OK` and
+exits; CI runs it on each packaged app. It never reads your keychain or contacts
+Canvas.
 
 ## Development
 
