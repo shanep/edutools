@@ -860,7 +860,11 @@ artifacts (`edutools-mac`, `edutools-windows`). Download them from the run's pag
 gh run download <run id>
 ```
 
-It never creates a GitHub release.
+A run started from the Actions tab stops there. A pushed `v*` tag goes on to
+publish a GitHub release with the three installers attached, once every check and
+both self-tests pass. A tag with a prerelease part (`v2.1.0-beta.1`) is published as
+a prerelease, and re-running the workflow for a tag replaces its release's
+installers.
 
 Until signing certificates are set up the builds are unsigned (ad hoc signed on
 macOS), so macOS asks you to approve the app under System Settings -> Privacy &
@@ -944,9 +948,14 @@ comes from git: `scripts/version.cjs` reads `git describe` at build time.
   reports `0.0.0-source`.
 
 The `version` fields in the `package.json` files are placeholders (`0.0.0`) and are
-never read. To release, tag the commit (`git tag v1.2.0 && git push origin v1.2.0`);
-CI builds the installers for the tag, but a tag never creates a GitHub release on
-its own.
+never read. To release, tag the commit and push the tag:
+
+```bash
+git tag -a v1.2.0 -m "edutools 1.2.0"
+git push origin v1.2.0
+```
+
+CI builds, self-tests and publishes the installers as the `v1.2.0` GitHub release.
 
 ### References
 

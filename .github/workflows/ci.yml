@@ -2,9 +2,10 @@ name: CI
 
 # Checks run on every push and pull request. Installers are built only on demand
 # (Actions > CI > Run workflow) or for a v* tag, and are uploaded as workflow
-# artifacts. This workflow never creates a GitHub release: that needs the owner's
-# explicit go-ahead. Installers take their version from the tag they are built
-# on, or from git describe past it; see scripts/version.cjs.
+# artifacts. A pushed v* tag also publishes a GitHub release of those installers,
+# once every check and both smoke tests pass, so pushing the tag is the release:
+# it needs the owner's explicit go-ahead. Installers take their version from the
+# tag they are built on, or from git describe past it; see scripts/version.cjs.
 
 on:
   push:
@@ -129,3 +130,56 @@ jobs:
           $env:EDUTOOLS_SMOKE_TEST = "1"
           $p = Start-Process -FilePath "release\win-unpacked\edutools.exe" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "smoke test exited with $($p.ExitCode)" }
+
+  release:
+    name: GitHub release
+    # Only a pushed tag: an on-demand build is for testing and never publishes.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [installer-mac, installer-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: edutools-*
+          path: installers
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # The tag comes through the environment, never pasted into the script.
+          TAG: ${{ github.ref_name }}
+          MAC_SIGNED: ${{ secrets.CSC_LINK != '' }}
+          WIN_SIGNED: ${{ secrets.WIN_CSC_LINK != '' }}
+        run: |
+          version="${TAG#v}"
+          {
+            echo "## Installers"
+            echo
+            echo "- macOS, Apple Silicon: \`edutools-${version}-mac-arm64.dmg\`"
+            echo "- macOS, Intel: \`edutools-${version}-mac-x64.dmg\`"
+            echo "- Windows x64: \`edutools-${version}-windows-x64-setup.exe\`"
+            echo
+            if [ "$MAC_SIGNED" != "true" ]; then
+              echo "The macOS builds are not signed: approve the app under System Settings > Privacy & Security the first time it opens."
+              echo
+            fi
+            if [ "$WIN_SIGNED" != "true" ]; then
+              echo "The Windows build is not signed: choose \"More info\" then \"Run anyway\" in SmartScreen."
+              echo
+            fi
+            echo "The CLI installs from source; see the README."
+          } > notes.md
+          # A tag with a prerelease part (v2.1.0-beta.1) is published as a prerelease.
+          prerelease=""
+          case "$version" in *-*) prerelease="--prerelease" ;; esac
+          # Re-running the workflow for a tag that already has a release replaces
+          # its installers rather than failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" installers/* --clobber
+          else
+            gh release create "$TAG" installers/* --verify-tag --title "edutools ${version}" \
+              --notes-file notes.md --generate-notes $prerelease
+          fi

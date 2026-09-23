@@ -184,8 +184,9 @@ all stamp it in as `VERSION` from `@edutools/core/version`. Never set a version 
 `package.json`; they stay `0.0.0`. A release is a `v*` tag.
 
 The CI workflow builds the app installers on `workflow_dispatch` or a `v*` tag and
-uploads them as artifacts; it never creates a GitHub release. Tagging a release and
-creating one always need the owner's explicit go-ahead.
+uploads them as artifacts. A pushed `v*` tag also publishes them as a GitHub release
+once every check passes, so pushing a tag is releasing: it always needs the owner's
+explicit go-ahead.
 
 ## References
 
