@@ -5,6 +5,7 @@
 
 import os from "node:os";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import type { Payload } from "@edutools/core/types";
 import Table from "cli-table3";
 import type { Cli } from "./cli";
@@ -26,18 +27,55 @@ export function printTable(
   rows: readonly (readonly string[])[],
 ): void {
   const { c } = cli;
+  const head = columns.map((col) => c.bold(c.magenta(col.name)));
+  const body = rows.map((row) => row.map((cell, i) => columns[i]?.style?.(cell) ?? cell));
+  const widths = fitColumns([head, ...body], cli.width);
   // cli-table3 colours through its own library, which decides colour support for
   // itself; switching its styles off leaves every colour to picocolors.
   const table = new Table({
-    head: columns.map((col) => c.bold(c.magenta(col.name))),
+    head,
     colAligns: columns.map((col) => col.align ?? "left"),
     style: { head: [], border: [] },
+    ...(widths && { colWidths: widths, wordWrap: true, wrapOnWordBoundary: true }),
   });
-  for (const row of rows) {
-    table.push(row.map((cell, i) => columns[i]?.style?.(cell) ?? cell));
-  }
+  for (const row of body) table.push(row);
   if (title) cli.print(c.bold(title));
   cli.print(table.toString());
+}
+
+/**
+ * Column widths that fit the table in `width`, or undefined when it already fits
+ * or the width is unknown. cli-table3 never shrinks a table on its own, so one
+ * long cell (an audit detail, a file path) made every row wider than the
+ * terminal and the terminal's own wrapping broke the box apart; Rich used to
+ * wrap cells instead. Only the widest columns are capped, all at the same
+ * width, so short columns such as ids stay on one line.
+ *
+ * A column never narrows past its longest word, because cli-table3 truncates a
+ * word that does not fit, and that word is usually the slug or path the reader
+ * needs. A table that cannot fit without that overflows instead.
+ */
+function fitColumns(rows: readonly (readonly string[])[], width: number | undefined): number[] | undefined {
+  if (width === undefined) return undefined;
+  const count = Math.max(0, ...rows.map((row) => row.length));
+  const measure = (i: number, size: (text: string) => number): number =>
+    // One space of padding either side of every cell, which colWidths includes.
+    Math.max(0, ...rows.map((row) => size(stripVTControlCharacters(row[i] ?? "")))) + 2;
+  const natural = Array.from({ length: count }, (_, i) => measure(i, longest(/\n/)));
+  const floor = Array.from({ length: count }, (_, i) => measure(i, longest(/\s+/)));
+  const widths = (cap: number): number[] => natural.map((w, i) => Math.min(w, Math.max(cap, floor[i] ?? 0)));
+  const total = (cap: number): number => widths(cap).reduce((sum, w) => sum + w, 0);
+  // A border to the left of every column, and one closing the right edge.
+  const available = width - (count + 1);
+  let cap = Math.max(...natural);
+  if (total(cap) <= available) return undefined;
+  while (cap > 1 && total(cap) > available) cap -= 1;
+  return widths(cap);
+}
+
+/** The length of the longest piece of `text` split on `separator`. */
+function longest(separator: RegExp): (text: string) => number {
+  return (text) => Math.max(0, ...text.split(separator).map((piece) => piece.length));
 }
 
 /** A boxed block of lines with a title, standing in for Rich's Panel. */

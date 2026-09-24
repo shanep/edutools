@@ -52,6 +52,8 @@ export type CanvasClient = PullCanvas &
 export interface Output {
   write(chunk: string): unknown;
   readonly isTTY?: boolean;
+  /** The terminal's width, which process.stdout has when it is a terminal. */
+  readonly columns?: number;
 }
 
 /** Somewhere lines are read from: process.stdin, or a Readable in a test. */
@@ -162,6 +164,17 @@ export class Cli {
 
   get env(): Readonly<Record<string, string | undefined>> {
     return this.deps.env;
+  }
+
+  /**
+   * How wide stdout is, for fitting tables: the terminal's width, else COLUMNS,
+   * else undefined, and piped output is then left at its natural width.
+   */
+  get width(): number | undefined {
+    const { stdout } = this.deps;
+    if (stdout.isTTY && stdout.columns) return stdout.columns;
+    const columns = Number(this.deps.env.COLUMNS);
+    return Number.isInteger(columns) && columns > 0 ? columns : undefined;
   }
 
   /** A line of result on stdout. */

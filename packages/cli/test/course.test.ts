@@ -385,6 +385,21 @@ describe("audit", () => {
     expect(result.stdout).toContain("Hand built");
     expect(result.stdout).toContain("difference(s): {'untracked assignment': 1, 'pending module': 1}");
   });
+
+  it("wraps a long detail to fit the terminal rather than overflowing it", async () => {
+    canvas.listModules.mockResolvedValue([{ id: 9, name: "Week 1", published: false, items_count: 1 }]);
+    canvas.listModuleItems.mockResolvedValue([
+      { id: 5, type: "Page", page_url: "lecture-slides-for-the-first-week", title: "Lecture slides" },
+    ]);
+    const result = await invoke(["audit", repo, "--course", "42"], {
+      client: canvas,
+      env: { CANVAS_TOKEN: "tok", COLUMNS: "80" },
+    });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.stdout).toContain("lecture-slides-for-the-first-week");
+    for (const line of result.stdout.split("\n")) expect(line.length, line).toBeLessThanOrEqual(80);
+  });
 });
 
 describe("outline", () => {
