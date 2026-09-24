@@ -400,6 +400,24 @@ describe("audit", () => {
     expect(result.stdout).toContain("lecture-slides-for-the-first-week");
     for (const line of result.stdout.split("\n")) expect(line.length, line).toBeLessThanOrEqual(80);
   });
+
+  it("breaks a slug too long for a narrow terminal rather than overflowing it", async () => {
+    canvas.listModules.mockResolvedValue([{ id: 9, name: "Week 1", published: false, items_count: 1 }]);
+    canvas.listModuleItems.mockResolvedValue([
+      { id: 5, type: "Page", page_url: "lecture-slides-for-the-first-week", title: "Lecture slides" },
+    ]);
+    const result = await invoke(["audit", repo, "--course", "42"], {
+      client: canvas,
+      env: { CANVAS_TOKEN: "tok", COLUMNS: "60" },
+    });
+
+    expect(result.code, result.output).toBe(0);
+    const lines = result.stdout.split("\n");
+    for (const line of lines) expect(line.length, line).toBeLessThanOrEqual(60);
+    // Every piece of the slug is there, read down its column.
+    const detail = lines.map((line) => line.split("│").at(-2)?.trim() ?? "").join("");
+    expect(detail).toContain("lecture-slides-for-the-first-week");
+  });
 });
 
 describe("outline", () => {

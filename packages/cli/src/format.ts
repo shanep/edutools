@@ -27,18 +27,25 @@ export function printTable(
   rows: readonly (readonly string[])[],
 ): void {
   const { c } = cli;
-  const head = columns.map((col) => c.bold(c.magenta(col.name)));
-  const body = rows.map((row) => row.map((cell, i) => columns[i]?.style?.(cell) ?? cell));
-  const widths = fitColumns([head, ...body], cli.width);
+  const names = columns.map((col) => col.name);
+  const widths = fitColumns(names, rows, cli.width);
+  // Cells are wrapped here, before they are coloured, rather than by cli-table3:
+  // its word wrap truncates a word longer than the column, and on a laptop's
+  // terminal that word is often the slug or path the reader needs.
+  const cell = (text: string, i: number): string => {
+    const lines = widths ? wrap(text, (widths[i] ?? 3) - 2) : [text];
+    const style = columns[i]?.style;
+    return style ? lines.map(style).join("\n") : lines.join("\n");
+  };
   // cli-table3 colours through its own library, which decides colour support for
   // itself; switching its styles off leaves every colour to picocolors.
   const table = new Table({
-    head,
+    head: names.map((name, i) => cell(name, i).split("\n").map((line) => c.bold(c.magenta(line))).join("\n")),
     colAligns: columns.map((col) => col.align ?? "left"),
     style: { head: [], border: [] },
-    ...(widths && { colWidths: widths, wordWrap: true, wrapOnWordBoundary: true }),
+    ...(widths && { colWidths: widths }),
   });
-  for (const row of body) table.push(row);
+  for (const row of rows) table.push(row.map(cell));
   if (title) cli.print(c.bold(title));
   cli.print(table.toString());
 }
@@ -51,31 +58,76 @@ export function printTable(
  * wrap cells instead. Only the widest columns are capped, all at the same
  * width, so short columns such as ids stay on one line.
  *
- * A column never narrows past its longest word, because cli-table3 truncates a
- * word that does not fit, and that word is usually the slug or path the reader
- * needs. A table that cannot fit without that overflows instead.
+ * A column first keeps its longest word whole, so slugs and paths read in one
+ * piece. When that still does not fit, as on a laptop, long words are broken
+ * instead, and only a table too wide even for its column headers overflows.
  */
-function fitColumns(rows: readonly (readonly string[])[], width: number | undefined): number[] | undefined {
+function fitColumns(
+  head: readonly string[],
+  rows: readonly (readonly string[])[],
+  width: number | undefined,
+): number[] | undefined {
   if (width === undefined) return undefined;
-  const count = Math.max(0, ...rows.map((row) => row.length));
+  const all = [head, ...rows];
+  const count = Math.max(0, ...all.map((row) => row.length));
   const measure = (i: number, size: (text: string) => number): number =>
     // One space of padding either side of every cell, which colWidths includes.
-    Math.max(0, ...rows.map((row) => size(stripVTControlCharacters(row[i] ?? "")))) + 2;
+    Math.max(0, ...all.map((row) => size(row[i] ?? ""))) + 2;
   const natural = Array.from({ length: count }, (_, i) => measure(i, longest(/\n/)));
-  const floor = Array.from({ length: count }, (_, i) => measure(i, longest(/\s+/)));
-  const widths = (cap: number): number[] => natural.map((w, i) => Math.min(w, Math.max(cap, floor[i] ?? 0)));
-  const total = (cap: number): number => widths(cap).reduce((sum, w) => sum + w, 0);
+  const words = Array.from({ length: count }, (_, i) => measure(i, longest(/\s+/)));
+  const headers = Array.from({ length: count }, (_, i) => Math.max(longest(/\s+/)(head[i] ?? ""), MIN_COLUMN) + 2);
   // A border to the left of every column, and one closing the right edge.
   const available = width - (count + 1);
-  let cap = Math.max(...natural);
-  if (total(cap) <= available) return undefined;
-  while (cap > 1 && total(cap) > available) cap -= 1;
-  return widths(cap);
+  if (natural.reduce((sum, w) => sum + w, 0) <= available) return undefined;
+  const fit = (floor: readonly number[]): number[] => {
+    const widths = (cap: number): number[] => natural.map((w, i) => Math.min(w, Math.max(cap, floor[i] ?? 0)));
+    const total = (cap: number): number => widths(cap).reduce((sum, w) => sum + w, 0);
+    let cap = Math.max(...natural);
+    while (cap > 1 && total(cap) > available) cap -= 1;
+    return widths(cap);
+  };
+  const whole = fit(words);
+  return whole.reduce((sum, w) => sum + w, 0) <= available ? whole : fit(headers);
 }
+
+/** The narrowest a column shrinks to, in characters, when words have to break. */
+const MIN_COLUMN = 4;
 
 /** The length of the longest piece of `text` split on `separator`. */
 function longest(separator: RegExp): (text: string) => number {
-  return (text) => Math.max(0, ...text.split(separator).map((piece) => piece.length));
+  return (text) => Math.max(0, ...text.split(separator).map((piece) => stripVTControlCharacters(piece).length));
+}
+
+/**
+ * `text` as lines no longer than `width`, broken between words where it can be
+ * and inside a word only when that word alone is wider than the column.
+ */
+function wrap(text: string, width: number): string[] {
+  const size = Math.max(1, width);
+  // A cell a command coloured itself keeps its colour when it fits; one that has
+  // to wrap loses it, since cutting between escape codes would garble the line.
+  if (longest(/\n/)(text) <= size) return text.split("\n");
+  const lines: string[] = [];
+  for (const paragraph of stripVTControlCharacters(text).split("\n")) {
+    let line = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      if (line && line.length + 1 + word.length <= size) {
+        line = `${line} ${word}`;
+        continue;
+      }
+      if (line) lines.push(line);
+      line = word;
+      while (line.length > size) {
+        // Break a path or slug after a separator, when one comes late enough.
+        const cut = Math.max(line.lastIndexOf("/", size - 1), line.lastIndexOf("-", size - 1)) + 1;
+        const at = cut > size / 2 ? cut : size;
+        lines.push(line.slice(0, at));
+        line = line.slice(at);
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
 }
 
 /** A boxed block of lines with a title, standing in for Rich's Panel. */
