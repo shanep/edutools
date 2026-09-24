@@ -385,6 +385,13 @@ paths relative to `canvas.toml` and must have been published. A push deletes eve
 item in the module and rebuilds it from this list, so the repo is the source of
 truth for what a module contains.
 
+The repo's modules keep the order they are written in relative to each other,
+and nothing else moves. A module Canvas holds that the repo does not declare,
+such as a shell's "Course Links", stays where it is, and so does a published
+module the push skips. Each repo module is placed right after the one before
+it, and one that already follows it (with only modules the repo does not manage
+in between) is left alone.
+
 Some things belong in a module but have no repo file: an exam quiz built in the
 Canvas UI, a file uploaded by hand. Name them under `canvas` and the rebuild keeps
 them, after the repo items and in the order written:

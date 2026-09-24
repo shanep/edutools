@@ -164,6 +164,58 @@ function findModule(stored: readonly Payload[], name: string, base: string): Pay
   return null;
 }
 
+/** Module ids in the order Canvas shows them. */
+function moduleOrder(stored: readonly Payload[]): string[] {
+  // Canvas lists modules by position already; sorting again guards against a
+  // gap in the numbering. A module with no position keeps its listed place.
+  return stored
+    .map((module, index) => ({
+      id: pyStr(module.id),
+      rank: typeof module.position === "number" ? module.position : index,
+    }))
+    .sort((a, b) => a.rank - b.rank)
+    .map((module) => module.id);
+}
+
+/**
+ * Where a repo module belongs, as the 1-based Canvas position to send, with
+ * `order` updated to match.
+ *
+ * A module goes right after `after`, the repo module before it, and the first
+ * one goes ahead of every other repo module. Canvas also holds modules the
+ * repo does not manage (a shell's "Course Links") and published ones a push
+ * skips; neither is moved, so their slots are counted rather than assumed
+ * away, which is what a plain index into canvas.toml got wrong. A module that
+ * already follows `after` with only unmanaged modules in between stays put, so
+ * a module placed by hand between two weeks keeps its place.
+ */
+export function placeModule(
+  order: string[],
+  id: string,
+  after: string | null,
+  managed: ReadonlySet<string>,
+): number {
+  const isManaged = (other: string): boolean => other !== id && managed.has(other);
+  const current = order.indexOf(id);
+  if (current !== -1) {
+    const from = after === null ? 0 : order.indexOf(after) + 1;
+    const anchored = after === null || from > 0;
+    if (anchored && current >= from && !order.slice(from, current).some(isManaged)) {
+      return current + 1;
+    }
+    order.splice(current, 1);
+  }
+  let target: number;
+  if (after !== null && order.includes(after)) {
+    target = order.indexOf(after) + 1;
+  } else {
+    const first = order.findIndex(isManaged);
+    target = first === -1 ? order.length : first;
+  }
+  order.splice(target, 0, id);
+  return target + 1;
+}
+
 /** One object to publish. */
 export class Plan {
   key: string;
@@ -888,33 +940,48 @@ export class Publisher {
     const course = this.courseId;
     const storedModules = await canvas.listModules(course);
 
-    let position = 0;
-    for (const module of modules) {
-      position += 1;
-      const base = pyStr(module.title ?? `Module ${position}`);
-      let name: string;
+    // Each table's name, and the Canvas module it already has, worked out up
+    // front so that placing one module knows which of the others are the
+    // repo's. A table whose title fails is reported in the loop below.
+    const named = modules.map((module, index) => {
+      const base = pyStr(module.title ?? `Module ${index + 1}`);
       try {
-        name = moduleTitle(module, this.config.term);
+        const name = moduleTitle(module, this.config.term);
+        return { module, name, error: null, stored: findModule(storedModules, name, base) };
       } catch (error) {
         if (!(error instanceof DateConfigError)) throw error;
-        result.errors.push(error.message);
+        return { module, name: "", error: error.message, stored: null };
+      }
+    });
+    const order = moduleOrder(storedModules);
+    const managed = new Set(named.flatMap(({ stored }) => (stored === null ? [] : [pyStr(stored.id)])));
+
+    // The repo module placed or skipped last, which the next one goes after.
+    let after: string | null = null;
+    for (const { module, name, error, stored } of named) {
+      if (error !== null) {
+        result.errors.push(error);
         continue;
       }
       const hidden = module.never_publish === true;
       const shown = module.publish === true && !hidden;
-      const stored = findModule(storedModules, name, base);
       if (stored?.published && !this.updatePublished && !hidden) {
         result.skipped += 1;
+        after = pyStr(stored.id);
         continue;
       }
       let moduleId: string;
       if (stored === null) {
+        const position = placeModule(order, "", after, managed);
         const created = await canvas.createModule(course, name, position, (this.publish || shown) && !hidden);
         moduleId = String(created.id);
+        order[position - 1] = moduleId;
+        managed.add(moduleId);
         result.created += 1;
         if (hidden) await canvas.updateModule(course, moduleId, { ...NEVER_PUBLISH_FIELDS });
       } else {
         moduleId = pyStr(stored.id);
+        const position = placeModule(order, moduleId, after, managed);
         const fields: Record<string, string> = { "module[position]": String(position) };
         if (hidden) Object.assign(fields, NEVER_PUBLISH_FIELDS);
         // A new term moves every date, so the same module comes back
@@ -923,6 +990,7 @@ export class Publisher {
         await canvas.updateModule(course, moduleId, fields);
         result.updated += 1;
       }
+      after = moduleId;
 
       for (const current of await canvas.listModuleItems(course, moduleId)) {
         await canvas.deleteModuleItem(course, moduleId, String(current.id));

@@ -10,7 +10,7 @@ import path from "node:path";
 import { CanvasApiError, type CanvasLMS } from "@edutools/core/canvas";
 import { DateConfigError, ItemDates } from "@edutools/core/dates";
 import { Entry } from "@edutools/core/publish";
-import { Plan, Publisher, type PublisherCanvas, type PublisherOptions } from "@edutools/core/publisher";
+import { Plan, Publisher, type PublisherCanvas, type PublisherOptions, placeModule } from "@edutools/core/publisher";
 import type { Payload } from "@edutools/core/types";
 import { DateTime } from "luxon";
 import { describe, expect, it, type Mock, vi } from "vitest";
@@ -1141,5 +1141,128 @@ describe("quiz questions are rebuilt unpublished", () => {
     expect(first["quiz[due_at]"]).toBe("2026-09-06T23:59:00-06:00");
     expect(writes[2]?.[1]).toEqual(["42", "300", "501"]);
     expect(writes[4]?.[1]).toEqual(["42", "300", { "quiz[published]": "true" }]);
+  });
+});
+
+describe("placeModule", () => {
+  it("leaves a module that already follows the one before it", () => {
+    const order = ["links", "w1", "w2"];
+    expect(placeModule(order, "w2", "w1", new Set(["w1", "w2"]))).toBe(3);
+    expect(order).toEqual(["links", "w1", "w2"]);
+  });
+
+  it("leaves an unmanaged module between two repo modules in place", () => {
+    const order = ["w1", "extra", "w2"];
+    expect(placeModule(order, "w2", "w1", new Set(["w1", "w2"]))).toBe(3);
+    expect(order).toEqual(["w1", "extra", "w2"]);
+  });
+
+  it("moves a module up to follow the one before it", () => {
+    const order = ["links", "w1", "w3", "w2"];
+    expect(placeModule(order, "w2", "w1", new Set(["w1", "w2", "w3"]))).toBe(3);
+    expect(order).toEqual(["links", "w1", "w2", "w3"]);
+  });
+
+  it("moves a module down past one it sits in front of", () => {
+    const order = ["w2", "w1"];
+    expect(placeModule(order, "w2", "w1", new Set(["w1", "w2"]))).toBe(2);
+    expect(order).toEqual(["w1", "w2"]);
+  });
+
+  it("puts the first repo module ahead of the other repo modules", () => {
+    const order = ["links", "w2", "w1"];
+    expect(placeModule(order, "w1", null, new Set(["w1", "w2"]))).toBe(2);
+    expect(order).toEqual(["links", "w1", "w2"]);
+  });
+
+  it("appends a new first module to a course with none of the repo's", () => {
+    const order = ["links"];
+    expect(placeModule(order, "", null, new Set())).toBe(2);
+  });
+});
+
+describe("module order", () => {
+  // A course where a shell module the repo does not know leads, and published
+  // modules the push skips sit between unpublished ones. Positions used to be
+  // indexes into canvas.toml, which put every module one slot early and left
+  // the skipped ones stranded among the rest.
+  function course(stored: Array<[string, string, boolean]>): [Publisher, Fake, () => string[]] {
+    const repo = tmp();
+    write(repo, "index.md", "# S\n");
+    const titles = ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"];
+    write(
+      repo,
+      "canvas.toml",
+      `${TERM}[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n` +
+        titles.map((title) => `[[module]]\ntitle = "${title}"\n`).join("\n"),
+    );
+    // Canvas's module list, which the fake keeps in step with every move.
+    const live = stored.map(([id, name, published]) => ({ id, name, published }));
+    const canvas = fakeCanvas();
+    canvas.listModules.mockImplementation(async () => live.map((m, i) => ({ ...m, position: i + 1 })));
+    let next = 100;
+    canvas.createModule.mockImplementation(async (_course, name, position) => {
+      const id = String(next++);
+      live.splice(position - 1, 0, { id, name, published: false });
+      return { id };
+    });
+    canvas.updateModule.mockImplementation(async (_course, id, fields) => {
+      const position = fields["module[position]"];
+      if (position !== undefined) {
+        const from = live.findIndex((m) => m.id === id);
+        const [moved] = live.splice(from, 1);
+        if (moved !== undefined) live.splice(Number(position) - 1, 0, moved);
+      }
+      return {};
+    });
+    return [new Publisher(repo, "42", canvas), canvas, () => live.map((m) => m.name)];
+  }
+
+  it("restores the order around a leading shell module and skipped published ones", async () => {
+    const [pub, , names] = course([
+      ["1", "Course Links", true],
+      ["2", "Week 1", true],
+      ["4", "Week 3", false],
+      ["5", "Week 4", false],
+      ["3", "Week 2", true],
+      ["6", "Week 5", false],
+    ]);
+    const result = await pub.pushModules();
+    expect(result.errors).toEqual([]);
+    expect(result.skipped).toBe(2);
+    expect(names()).toEqual(["Course Links", "Week 1", "Week 2", "Week 3", "Week 4", "Week 5"]);
+  });
+
+  it("does not move anything when the order is already right", async () => {
+    const [pub, canvas, names] = course([
+      ["1", "Course Links", true],
+      ["2", "Week 1", true],
+      ["3", "Week 2", false],
+      ["4", "Week 3", true],
+      ["5", "Week 4", false],
+      ["6", "Week 5", false],
+    ]);
+    await pub.pushModules();
+    expect(names()).toEqual(["Course Links", "Week 1", "Week 2", "Week 3", "Week 4", "Week 5"]);
+    const sent = canvas.updateModule.mock.calls.map((call) => [call[1], call[2]["module[position]"]]);
+    expect(sent).toEqual([
+      ["3", "3"],
+      ["5", "5"],
+      ["6", "6"],
+    ]);
+  });
+
+  it("slots a new module in after the one before it", async () => {
+    const [pub, canvas, names] = course([
+      ["1", "Course Links", true],
+      ["2", "Week 1", false],
+      ["3", "Week 2", false],
+      ["5", "Week 4", false],
+      ["6", "Week 5", false],
+      ["9", "Instructor Only", false],
+    ]);
+    await pub.pushModules();
+    expect(canvas.createModule.mock.calls.map((call) => [call[1], call[2]])).toEqual([["Week 3", 4]]);
+    expect(names()).toEqual(["Course Links", "Week 1", "Week 2", "Week 3", "Week 4", "Week 5", "Instructor Only"]);
   });
 });

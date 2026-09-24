@@ -324,6 +324,10 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
   from the table's `page`, `items`, and `canvas` lists. Something added to a
   repo-managed module by hand in Canvas disappears on the next push unless it is
   named under `canvas`. `audit` reports exactly those items.
+- **Module order follows `canvas.toml`, among the repo's own modules only.**
+  Modules the repo does not declare (a shell's "Course Links") and published
+  modules the push skips stay where they are; every other repo module is placed
+  right after the one before it in `canvas.toml`.
 - **A file marked `draft: true` in its frontmatter is not pushed.** Marking an
   already-pushed file as a draft orphans its Canvas object rather than deleting
   it; the push prints the path.
