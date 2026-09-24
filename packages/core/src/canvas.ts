@@ -881,4 +881,8 @@ export class CanvasLMS {
   async createRubric(courseId: string, fields: Array<[string, string]>): Promise<Payload> {
     return this.json("POST", `/api/v1/courses/${courseId}/rubrics`, fields);
   }
+
+  async updateRubric(courseId: string, rubricId: string, fields: Array<[string, string]>): Promise<Payload> {
+    return this.json("PUT", `/api/v1/courses/${courseId}/rubrics/${rubricId}`, fields);
+  }
 }

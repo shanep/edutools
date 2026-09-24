@@ -116,6 +116,7 @@ function fakeCanvas(): Fake & { maxInFlight: () => number } {
     createModuleItem: created,
     deleteModuleItem: () => undefined,
     createRubric: created,
+    updateRubric: () => ({}),
     listPages: () => [],
     getPage: () => ({}),
     getAssignments: () => [],

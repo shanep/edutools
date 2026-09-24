@@ -5,6 +5,7 @@ import {
   addHeadingIcons,
   assertNoForbiddenTags,
   assignmentOptions,
+  attachedRubric,
   CANVAS_CSS_PROPERTIES,
   canvasPath,
   classifyCallouts,
@@ -29,6 +30,7 @@ import {
   renderMarkdown,
   rewriteLinks,
   rubricFields,
+  sameCriteria,
   stripInstructorSections,
   stripTitle,
   stripVitepress,
@@ -321,6 +323,41 @@ describe("rubric parsing", () => {
 
   it("returns nothing without a rubric section", () => {
     expect(parseRubric("## Goal\n\nNothing here.\n")).toEqual([]);
+  });
+
+  it("reads the rubric attached to an assignment", () => {
+    const assignment = {
+      rubric_settings: { id: 263317, title: "P0 rubric" },
+      rubric: [
+        { id: "_1", description: "Builds", points: 10, ratings: [] },
+        { id: "_2", description: "Tests", points: 5.5, ratings: [] },
+      ],
+    };
+    expect(attachedRubric(assignment)).toEqual({
+      id: "263317",
+      criteria: [
+        { description: "Builds", points: 10 },
+        { description: "Tests", points: 5.5 },
+      ],
+    });
+  });
+
+  it("finds no rubric on an assignment without one", () => {
+    expect(attachedRubric({})).toBeNull();
+    expect(attachedRubric({ rubric_settings: null })).toBeNull();
+    expect(attachedRubric({ rubric_settings: {} })).toBeNull();
+  });
+
+  it("compares criteria as they would be sent", () => {
+    const a = { description: "a", points: 20 };
+    const b = { description: "b", points: 18 };
+    expect(sameCriteria([a, b], [a, b])).toBe(true);
+    expect(sameCriteria([a], [a, b])).toBe(false);
+    expect(sameCriteria([b, a], [a, b])).toBe(false);
+    expect(sameCriteria([a, { description: "b", points: 17 }], [a, b])).toBe(false);
+    // Canvas stores a long description cut to 255 code points, so that is the same.
+    const cut = [{ description: "x".repeat(255), points: 1 }];
+    expect(sameCriteria(cut, [{ description: "x".repeat(300), points: 1 }])).toBe(true);
   });
 
   it("makes the rubric fields total match", () => {

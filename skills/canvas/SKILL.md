@@ -320,6 +320,11 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
   malformed `canvas.toml`, a `--path` that matches nothing (it lists the paths
   that exist), a file that fails to render, a Canvas error on one object. Read
   the list and report it; do not retry blindly.
+- **A `## Rubric` table is kept in step, not recreated.** The push reads the
+  rubric already attached to the assignment: unchanged criteria are skipped,
+  changed ones are rewritten in that same rubric, and one is created only when
+  there is none. (Before this, every push created a fresh rubric and attached it,
+  replacing the one the assignment had been graded with.)
 - **A module is rebuilt from `canvas.toml`**: every item is removed and re-added
   from the table's `page`, `items`, and `canvas` lists. Something added to a
   repo-managed module by hand in Canvas disappears on the next push unless it is

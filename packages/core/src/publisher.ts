@@ -43,12 +43,14 @@ import {
   PublishError,
   parseNativeItems,
   parseQuiz,
+  attachedRubric,
   parseRubric,
   pathIsDraft,
   questionFields,
   renderMarkdown,
   rewriteLinks,
   rubricFields,
+  sameCriteria,
   ValueError,
   wrapTables,
 } from "./publish";
@@ -90,6 +92,7 @@ export type PublisherCanvas = Pick<
   | "createModuleItem"
   | "deleteModuleItem"
   | "createRubric"
+  | "updateRubric"
 >;
 
 // Which Canvas object each gradable kind becomes.  An exam guide is a study guide,
@@ -1070,7 +1073,13 @@ export class Publisher {
   // -- rubrics --------------------------------------------------------
 
   /**
-   * Create a Canvas rubric per lab and discussion, bound to its assignment.
+   * Bind a Canvas rubric to each lab and discussion that has a '## Rubric' table.
+   *
+   * The rubric already attached is read first. Unchanged criteria are left alone,
+   * changed ones are rewritten in place, and a rubric is only created for an
+   * assignment that has none. Creating one every push used to replace the rubric
+   * an assignment was graded with, so SpeedGrader showed a new, empty rubric
+   * beside grades that had been given with the old one.
    *
    * `keys` limits the sweep to particular repo files, so a scoped push carries
    * the corrected rubric without touching every other assignment's.
@@ -1092,8 +1101,19 @@ export class Publisher {
         result.errors.push(`${key}: no assignment_id, cannot attach a rubric`);
         continue;
       }
-      await canvas.createRubric(this.courseId, rubricFields(`${entry.title} rubric`, criteria, association));
-      result.created += 1;
+      const fields = rubricFields(`${entry.title} rubric`, criteria, association);
+      const current = attachedRubric(
+        await canvas.getJson(`/api/v1/courses/${this.courseId}/assignments/${association}`),
+      );
+      if (current === null) {
+        await canvas.createRubric(this.courseId, fields);
+        result.created += 1;
+      } else if (sameCriteria(current.criteria, criteria)) {
+        result.skipped += 1;
+      } else {
+        await canvas.updateRubric(this.courseId, current.id, fields);
+        result.updated += 1;
+      }
     }
     return result;
   }

@@ -1085,6 +1085,44 @@ export function parseRubric(markdown: string): Criterion[] {
   return criteria;
 }
 
+/** Canvas caps a criterion description at 255 characters, counted by code point. */
+function criterionDescription(description: string): string {
+  return Array.from(description).slice(0, 255).join("");
+}
+
+/**
+ * The rubric Canvas has attached to an assignment, read from the assignment's
+ * own payload (`rubric_settings` and `rubric`), or null when it has none.
+ */
+export function attachedRubric(assignment: Payload): { id: string; criteria: Criterion[] } | null {
+  const settings = assignment.rubric_settings;
+  if (!isTable(settings)) return null;
+  const id = settings.id;
+  if (id === undefined || id === null || id === "") return null;
+  const rows: unknown[] = Array.isArray(assignment.rubric) ? assignment.rubric : [];
+  const criteria: Criterion[] = [];
+  for (const row of rows) {
+    if (!isTable(row)) continue;
+    criteria.push({ description: String(row.description ?? ""), points: Number(row.points) });
+  }
+  return { id: String(id), criteria };
+}
+
+/** True when Canvas's criteria are the repo's, in the same order, as they would be sent. */
+export function sameCriteria(stored: readonly Criterion[], wanted: readonly Criterion[]): boolean {
+  return (
+    stored.length === wanted.length &&
+    wanted.every((criterion, index) => {
+      const other = stored[index];
+      return (
+        other !== undefined &&
+        other.description === criterionDescription(criterion.description) &&
+        other.points === criterion.points
+      );
+    })
+  );
+}
+
 /** Canvas form fields for a rubric bound to an assignment. */
 export function rubricFields(
   title: string,
@@ -1103,9 +1141,7 @@ export function rubricFields(
   ];
   criteria.forEach((criterion, index) => {
     const key = `rubric[criteria][${index}]`;
-    // Canvas caps a criterion description at 255 characters, counted as Python
-    // counts them: by code point, not by UTF-16 unit.
-    fields.push([`${key}[description]`, Array.from(criterion.description).slice(0, 255).join("")]);
+    fields.push([`${key}[description]`, criterionDescription(criterion.description)]);
     fields.push([`${key}[points]`, formatG(criterion.points)]);
     fields.push([`${key}[ratings][0][description]`, "Full marks"]);
     fields.push([`${key}[ratings][0][points]`, formatG(criterion.points)]);

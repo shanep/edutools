@@ -68,6 +68,7 @@ const METHODS: Readonly<Record<keyof CanvasClient, true>> = {
   createModuleItem: true,
   deleteModuleItem: true,
   createRubric: true,
+  updateRubric: true,
   getAssignmentFull: true,
   getDiscussion: true,
   getQuiz: true,

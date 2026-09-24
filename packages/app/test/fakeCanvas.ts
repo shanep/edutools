@@ -245,6 +245,9 @@ export class FakeCanvas implements CanvasClient {
   createRubric(courseId: string, fields: Array<[string, string]>) {
     return this.created("createRubric", [courseId, fields]);
   }
+  updateRubric(courseId: string, rubricId: string, fields: Array<[string, string]>) {
+    return this.answer("updateRubric", [courseId, rubricId, fields], {});
+  }
   getAssignments(courseId: string) {
     return this.answer("getAssignments", [courseId], this.assignments);
   }

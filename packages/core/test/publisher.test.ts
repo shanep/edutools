@@ -71,6 +71,7 @@ function fakeCanvas(): Fake {
     createModuleItem: vi.fn<CanvasLMS["createModuleItem"]>(created),
     deleteModuleItem: vi.fn<CanvasLMS["deleteModuleItem"]>(async () => undefined),
     createRubric: vi.fn<CanvasLMS["createRubric"]>(created),
+    updateRubric: vi.fn<CanvasLMS["updateRubric"]>(async () => ({})),
   };
 }
 
@@ -192,6 +193,90 @@ describe("the published content guard", () => {
     expect(result.created).toBe(1);
     expect(pub.protected.has("assignments/p0.md")).toBe(false);
     expect(pub.manifest.get("assignments/p0.md")?.canvasId).toBe("99");
+  });
+});
+
+describe("rubrics", () => {
+  // Creating a rubric on every push replaced the one an assignment had been
+  // graded with, so the write has to depend on what is already attached.
+  const RUBRIC = "## Rubric\n\n| # | Criterion | Points |\n| - | - | - |\n| 1 | Builds | 10 |\n| 2 | Tests | 5 |\n";
+
+  function publisher(canvas: Fake, options: PublisherOptions = {}): Publisher {
+    const repo = tmp();
+    write(repo, "index.md", "# S\n");
+    write(
+      repo,
+      "canvas.toml",
+      `${TERM}[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n` +
+        '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n',
+    );
+    write(repo, "assignments/p0.md", `# P0\n\n**Week 2 · 15 points · x**\n\n${RUBRIC}`);
+    const pub = new Publisher(repo, "42", canvas, options);
+    pub.manifest.put("assignments/p0.md", new Entry({ kind: "assignment", canvasId: "7", title: "P0" }));
+    return pub;
+  }
+
+  const attached = (criteria: Array<[string, number]>) => ({
+    rubric_settings: { id: 555, title: "P0 rubric" },
+    rubric: criteria.map(([description, points], i) => ({ id: `_${i}`, description, points })),
+  });
+
+  it("creates a rubric for an assignment that has none", async () => {
+    const canvas = fakeCanvas();
+    canvas.getJson.mockResolvedValue({ id: 7 });
+    const result = await publisher(canvas).pushRubrics();
+    expect(canvas.getJson).toHaveBeenCalledWith("/api/v1/courses/42/assignments/7");
+    expect(canvas.createRubric).toHaveBeenCalledTimes(1);
+    expect(asRecord(canvas.createRubric.mock.lastCall?.[1])["rubric_association[association_id]"]).toBe("7");
+    expect(canvas.updateRubric).not.toHaveBeenCalled();
+    expect(result.created).toBe(1);
+  });
+
+  it("leaves an unchanged rubric alone", async () => {
+    const canvas = fakeCanvas();
+    canvas.getJson.mockResolvedValue(
+      attached([
+        ["Builds", 10],
+        ["Tests", 5],
+      ]),
+    );
+    const result = await publisher(canvas).pushRubrics();
+    expect(canvas.createRubric).not.toHaveBeenCalled();
+    expect(canvas.updateRubric).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(1);
+  });
+
+  it("rewrites a changed rubric in place instead of creating another", async () => {
+    const canvas = fakeCanvas();
+    canvas.getJson.mockResolvedValue(
+      attached([
+        ["Builds", 10],
+        ["Tests", 3],
+      ]),
+    );
+    const result = await publisher(canvas).pushRubrics();
+    expect(canvas.createRubric).not.toHaveBeenCalled();
+    expect(canvas.updateRubric).toHaveBeenCalledTimes(1);
+    const [course, rubricId, fields] = canvas.updateRubric.mock.lastCall ?? [];
+    expect([course, rubricId]).toEqual(["42", "555"]);
+    const body = asRecord(fields);
+    expect(body["rubric[criteria][1][points]"]).toBe("5");
+    expect(body["rubric_association[association_id]"]).toBe("7");
+    expect(result.updated).toBe(1);
+  });
+
+  it("does not touch the rubric of published content", async () => {
+    const canvas = fakeCanvas();
+    const pub = publisher(canvas);
+    pub.protected.add("assignments/p0.md");
+    await pub.pushRubrics();
+    expect(callOrder(canvas)).toEqual([]);
+  });
+
+  it("writes nothing on a dry run", async () => {
+    const canvas = fakeCanvas();
+    await publisher(canvas, { dryRun: true }).pushRubrics();
+    expect(callOrder(canvas)).toEqual([]);
   });
 });
 
