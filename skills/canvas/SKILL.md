@@ -455,6 +455,31 @@ percentage (`92%`), a letter (`B+`), or `pass`/`fail`. A comment with no score
 returns feedback without putting a number on the work, which is a real thing to
 want. `--late-status` is one of `late`, `missing`, `extended`, `none`.
 
+### Correcting feedback already sent
+
+`grade` only ever adds a comment. To change one, rewrite it in place with
+`edit-comment`: the student then sees the corrected text, not the old comment
+with a second one under it.
+
+```bash
+edutools edit-comment -c 12345 -a 67890 -s 555 --comment "Clearer wording."
+edutools edit-comment -c 12345 -a 67890 -s 555 --comment-id 4321 --comment-file fix.md
+edutools edit-comment -c 12345 -a 67890 --from-file grades.json --dry-run
+edutools edit-comment -c 12345 -a 67890 --from-file grades.json
+```
+
+- **Without `--comment-id` it edits the most recent comment the token's user
+  wrote** on that submission, never a student's reply. A submission with no such
+  comment fails that row and the command exits 1.
+- **The batch file is a grades file.** Only the student and comment are read,
+  plus an optional `comment_id`; a score in it is ignored, so edit the comments in
+  the file that did the grading and send it again. Scores change only through
+  `grade`.
+- **Its `--dry-run` needs the token**: it reads each submission and prints the old
+  text beside the new. Show that before writing, as with any bulk change.
+- `submission --json` lists a submission's comments with their `id`s when a
+  specific older comment is the one to change.
+
 ### A whole class
 
 Write a file, dry run it, then send it:

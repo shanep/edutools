@@ -277,6 +277,7 @@ const ALIASES = {
   comment: ["comment", "feedback", "text_comment"],
   excuse: ["excuse", "excused"],
   late_policy_status: ["late_policy_status", "late_status"],
+  comment_id: ["comment_id", "submission_comment_id"],
 } as const;
 
 /** A rubric assessment: criterion id to its fields (points, rating_id, comments). */
@@ -430,19 +431,22 @@ function csvRecords(text: string): Array<Record<string, unknown>> {
 }
 
 /**
- * Read a batch of grades from JSON or CSV.
+ * Load a batch file as one mapping per row.
  *
- * JSON is either a list of objects or an object keyed by student id. CSV needs
- * a header row. Either way the column names are matched loosely, so `score`,
- * `grade`, and `points` all mean the same thing.
+ * JSON is either a list of objects or an object keyed by student id; a keyed
+ * entry that is a bare value, not an object, is taken as `scalarField`. CSV
+ * needs a header row.
  */
-export function parseGrades(text: string, options: { asCsv?: boolean } = {}): GradeRow[] {
+function loadRecords(
+  text: string,
+  options: { asCsv?: boolean; scalarField: string },
+): Array<Record<string, unknown>> {
   if (options.asCsv) {
     const records = csvRecords(text);
     if (records.length === 0) {
       throw new FieldError("no rows found; the CSV needs a header row");
     }
-    return records.map(rowFromMapping);
+    return records;
   }
 
   let loaded: unknown;
@@ -453,27 +457,99 @@ export function parseGrades(text: string, options: { asCsv?: boolean } = {}): Gr
   }
 
   if (isObject(loaded)) {
-    const rows: GradeRow[] = [];
-    for (const [key, value] of Object.entries(loaded)) {
-      if (isObject(value)) {
-        // A keyed object may still name the student inside; the key is
-        // only the fallback.
-        const merged: Record<string, unknown> = { ...value };
-        if (!Object.hasOwn(merged, "user_id")) merged.user_id = key;
-        rows.push(rowFromMapping(merged));
-      } else {
-        rows.push(rowFromMapping({ user_id: key, grade: value }));
-      }
-    }
-    return rows;
+    return Object.entries(loaded).map(([key, value]) => {
+      if (!isObject(value)) return { user_id: key, [options.scalarField]: value };
+      // A keyed object may still name the student inside; the key is only
+      // the fallback.
+      const merged: Record<string, unknown> = { ...value };
+      if (!Object.hasOwn(merged, "user_id")) merged.user_id = key;
+      return merged;
+    });
   }
   if (Array.isArray(loaded)) {
     return loaded.map((entry: unknown) => {
       if (!isObject(entry)) {
         throw new FieldError(`expected a list of objects, found ${pyRepr(entry)}`);
       }
-      return rowFromMapping(entry);
+      return entry;
     });
   }
   throw new FieldError("expected a JSON list of objects or an object keyed by student id");
+}
+
+/**
+ * Read a batch of grades from JSON or CSV.
+ *
+ * JSON is either a list of objects or an object keyed by student id. CSV needs
+ * a header row. Either way the column names are matched loosely, so `score`,
+ * `grade`, and `points` all mean the same thing.
+ */
+export function parseGrades(text: string, options: { asCsv?: boolean } = {}): GradeRow[] {
+  return loadRecords(text, { asCsv: options.asCsv, scalarField: "grade" }).map(rowFromMapping);
+}
+
+/** New text for one comment already on a student's submission. */
+export class CommentEdit {
+  readonly userId: string;
+  readonly comment: string;
+  /** Null means the most recent comment the token's own user wrote. */
+  readonly commentId: string | null;
+
+  constructor(fields: { userId: string; comment: string; commentId?: string | null }) {
+    this.userId = fields.userId;
+    this.comment = fields.comment;
+    this.commentId = fields.commentId ?? null;
+    if (!this.comment.trim()) {
+      throw new FieldError(`no new comment text for student ${this.userId}`);
+    }
+  }
+}
+
+function editFromMapping(row: Record<string, unknown>): CommentEdit {
+  const userId = pick(row, "user_id");
+  if (userId === null) {
+    throw new FieldError(`row is missing a student id: ${pyRepr(row)}`);
+  }
+  const comment = pick(row, "comment");
+  const commentId = pick(row, "comment_id");
+  return new CommentEdit({
+    userId: pyStr(userId),
+    comment: comment === null ? "" : pyStr(comment),
+    commentId: commentId === null ? null : pyStr(commentId),
+  });
+}
+
+/**
+ * Read a batch of comment edits from JSON or CSV, with the same loose column
+ * names as a grades file, so a grades file with its comments rewritten loads
+ * as it is. A `comment_id` column picks the comment; without one, the edit
+ * goes to the most recent comment the token's user left.
+ */
+export function parseCommentEdits(text: string, options: { asCsv?: boolean } = {}): CommentEdit[] {
+  return loadRecords(text, { asCsv: options.asCsv, scalarField: "comment" }).map(editFromMapping);
+}
+
+/**
+ * The most recent of `comments` written by `authorId`, or null.
+ *
+ * `comments` is a submission's `submission_comments`, straight from Canvas.
+ */
+export function latestCommentBy(comments: unknown, authorId: string): Record<string, unknown> | null {
+  if (!Array.isArray(comments)) return null;
+  let latest: Record<string, unknown> | null = null;
+  for (const item of comments) {
+    if (!isObject(item) || pyStr(item.author_id) !== authorId) continue;
+    // ISO 8601 timestamps in one zone sort as strings.
+    if (latest === null || pyStr(item.created_at) >= pyStr(latest.created_at)) latest = item;
+  }
+  return latest;
+}
+
+/** The comment in `comments` (a submission's `submission_comments`) with this id, or null. */
+export function commentById(comments: unknown, commentId: string): Record<string, unknown> | null {
+  if (!Array.isArray(comments)) return null;
+  for (const item of comments) {
+    if (isObject(item) && pyStr(item.id) === commentId) return item;
+  }
+  return null;
 }

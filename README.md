@@ -191,6 +191,10 @@ edutools grade [-c <id>] [-a <id>] -s <id> [grading options]
                                                    grade one submission, with feedback
 edutools grade [-c <id>] [-a <id>] --from-file <file|-> [--csv] [--dry-run]
                                                    grade a batch from JSON or CSV
+edutools edit-comment [-c <id>] [-a <id>] -s <id> [--comment-id <id>] --comment <text>
+                                                   rewrite a comment already left
+edutools edit-comment [-c <id>] [-a <id>] --from-file <file|-> [--csv] [--dry-run]
+                                                   rewrite a batch of comments
 ```
 
 Exit codes: 0 on success, 1 when a command fails or finds a problem (a failed
@@ -249,6 +253,20 @@ error, and passing neither leaves visibility alone.
 --from-file <path>       grade a batch from JSON or CSV; '-' reads stdin
 --csv                    treat --from-file as CSV (inferred from a .csv name)
 --dry-run                show what would be sent, write nothing
+```
+
+`edit-comment` takes:
+
+```
+-c, --course <id>        Canvas course ID (prompted if omitted)
+-a, --assignment <id>    assignment ID (prompted if omitted)
+-s, --student <id>       student user ID (omit with --from-file)
+--comment-id <id>        the comment to edit (default: your most recent one)
+--comment <text>         the new comment text
+--comment-file <path>    the new comment text, from a file
+--from-file <path>       edit a batch from JSON or CSV; '-' reads stdin
+--csv                    treat --from-file as CSV (inferred from a .csv name)
+--dry-run                show the old and new text, write nothing
 ```
 
 ### Reading course data
@@ -857,6 +875,23 @@ A rubric assessment rides along per row, keyed by criterion id:
 Grading is deliberately sequential: Canvas throttles parallel writes, and a
 per-student loop reports exactly which rows failed. `--dry-run` prints the table it
 would send and writes nothing; with `-c` and `-a` given it needs no token.
+
+Feedback already left is rewritten in place with `edit-comment`, so the student
+sees the corrected text rather than the old comment with a second one below it.
+The comment keeps its id, author and date. Without `--comment-id` the edit goes to
+the most recent comment the token's user wrote on that submission. A batch file
+has the same shape as a grades file (only the student and comment are read, plus
+an optional `comment_id`), so the file that graded a class can be edited and sent
+again:
+
+```bash
+edutools edit-comment -c 12345 -a 67890 -s 555 --comment "Clearer wording."
+edutools edit-comment -c 12345 -a 67890 --from-file grades.json --dry-run   # old beside new
+edutools edit-comment -c 12345 -a 67890 --from-file grades.json
+```
+
+Its `--dry-run` reads each submission to show the text it would replace, so unlike
+`grade --dry-run` it needs the token.
 
 If the assignment uses a **manual posting policy**, a grade written here lands on
 the submission but stays hidden from the student until it is posted from the Canvas

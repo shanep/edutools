@@ -236,3 +236,63 @@ describe("submission", () => {
     expect(result.output).toContain("Nice.");
   });
 });
+
+describe("edit-comment", () => {
+  const stored = {
+    submission_comments: [
+      { id: 11, author_id: 50, created_at: "2026-09-28T10:00:00Z", comment: "Old feedback." },
+      { id: 12, author_id: 99, created_at: "2026-09-28T11:00:00Z", comment: "Thanks!" },
+    ],
+  };
+
+  it("edits your most recent comment when no id is given", async () => {
+    canvas.getSelf.mockResolvedValue({ id: 50 });
+    canvas.getSubmission.mockResolvedValue(stored);
+    canvas.editSubmissionComment.mockResolvedValue({});
+    const result = await invoke(
+      ["edit-comment", "-c", "123", "-a", "456", "-s", "789", "--comment", "New feedback."],
+      { client: canvas },
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.editSubmissionComment.mock.calls[0]).toEqual(["123", "456", "789", "11", "New feedback."]);
+  });
+
+  it("an explicit comment id skips the self lookup", async () => {
+    canvas.getSubmission.mockResolvedValue(stored);
+    canvas.editSubmissionComment.mockResolvedValue({});
+    const result = await invoke(
+      ["edit-comment", "-c", "123", "-a", "456", "-s", "789", "--comment-id", "12", "--comment", "x"],
+      { client: canvas },
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.getSelf).not.toHaveBeenCalled();
+    expect(canvas.editSubmissionComment.mock.calls[0]?.[3]).toBe("12");
+  });
+
+  it("a batch dry run reads but writes nothing", async () => {
+    canvas.getSelf.mockResolvedValue({ id: 50 });
+    canvas.getSubmission.mockResolvedValue(stored);
+    const file = gradesFile("grades.json", '[{"student": 789, "score": "complete", "comment": "New."}]');
+    const result = await invoke(["edit-comment", "-c", "123", "-a", "456", "--from-file", file, "--dry-run"], {
+      client: canvas,
+    });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("nothing written");
+    expect(canvas.editSubmissionComment).not.toHaveBeenCalled();
+  });
+
+  it("a submission with none of your comments fails that row and exits non-zero", async () => {
+    canvas.getSelf.mockResolvedValue({ id: 7 });
+    canvas.getSubmission.mockResolvedValue(stored);
+    const result = await invoke(["edit-comment", "-c", "123", "-a", "456", "-s", "789", "--comment", "x"], {
+      client: canvas,
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("you have no comment on this submission");
+    expect(canvas.editSubmissionComment).not.toHaveBeenCalled();
+  });
+});

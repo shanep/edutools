@@ -30,6 +30,8 @@ const METHODS: Readonly<Record<keyof CanvasClient, true>> = {
   deleteObject: true,
   getSubmission: true,
   gradeSubmission: true,
+  editSubmissionComment: true,
+  getSelf: true,
   getCourseWithSyllabus: true,
   listPages: true,
   getPage: true,

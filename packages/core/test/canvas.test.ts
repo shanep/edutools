@@ -379,6 +379,17 @@ describe("object CRUD", () => {
   });
 });
 
+describe("editSubmissionComment", () => {
+  it("PUTs the new text to the comment's own url", async () => {
+    const fake = always(() => json({ id: 4321, comment: "New." }));
+    await client(fake.fetch).editSubmissionComment("123", "456", "789", "4321", "New.");
+    const call = last(fake.calls);
+    expect(call.method).toBe("PUT");
+    expect(call.url).toBe("https://c.test/api/v1/courses/123/assignments/456/submissions/789/comments/4321");
+    expect(formObject(call)).toEqual({ comment: "New." });
+  });
+});
+
 describe("gradeSubmission", () => {
   it("grades and comments together", async () => {
     const fake = always(() => json({ grade: "18" }));

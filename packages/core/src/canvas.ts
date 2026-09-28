@@ -806,6 +806,31 @@ export class CanvasLMS {
   }
 
   /**
+   * Replace the text of one comment already on a submission.
+   *
+   * Canvas keeps the comment's id, author and date, so the student sees one
+   * corrected comment rather than the old one with a second below it.
+   */
+  async editSubmissionComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    commentId: string,
+    text: string,
+  ): Promise<Payload> {
+    return this.json(
+      "PUT",
+      `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/comments/${commentId}`,
+      { comment: text },
+    );
+  }
+
+  /** The user the token belongs to. */
+  async getSelf(): Promise<Payload> {
+    return this.json("GET", "/api/v1/users/self");
+  }
+
+  /**
    * Stream a submission attachment or a course file to disk, return its size.
    */
   async downloadAttachment(url: string, dest: string): Promise<number> {

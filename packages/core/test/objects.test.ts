@@ -2,7 +2,10 @@ import {
   FieldError,
   GradeRow,
   buildFields,
+  commentById,
   formatG,
+  latestCommentBy,
+  parseCommentEdits,
   parseGrades,
   parseOverrides,
   specFor,
@@ -242,5 +245,50 @@ describe("parse grades", () => {
     expect(rows[0]?.comment).toBe('Good, but see "notes".\nSecond line.');
     expect(rows[1]?.grade).toBe("20");
     expect(rows[1]?.comment).toBe("plain");
+  });
+});
+
+describe("parseCommentEdits", () => {
+  it("reads a grades file as it is, ignoring the score", () => {
+    const edits = parseCommentEdits('[{"student": 789, "score": "complete", "comment": "New text."}]');
+    expect(edits).toHaveLength(1);
+    expect(edits[0]?.userId).toBe("789");
+    expect(edits[0]?.comment).toBe("New text.");
+    expect(edits[0]?.commentId).toBeNull();
+  });
+
+  it("takes an optional comment id", () => {
+    const edits = parseCommentEdits("student,comment_id,feedback\n789,4321,Fixed.\n", { asCsv: true });
+    expect(edits[0]?.commentId).toBe("4321");
+    expect(edits[0]?.comment).toBe("Fixed.");
+  });
+
+  it("an object keyed by student maps each key to its new text", () => {
+    const edits = parseCommentEdits('{"789": "Fixed."}');
+    expect(edits[0]?.userId).toBe("789");
+    expect(edits[0]?.comment).toBe("Fixed.");
+  });
+
+  it("refuses a row with no new text", () => {
+    expect(() => parseCommentEdits('[{"student": 789, "score": 18}]')).toThrow(FieldError);
+  });
+});
+
+describe("choosing the comment to edit", () => {
+  const comments = [
+    { id: 1, author_id: 50, created_at: "2026-09-28T10:00:00Z", comment: "old" },
+    { id: 2, author_id: 99, created_at: "2026-09-28T12:00:00Z", comment: "student reply" },
+    { id: 3, author_id: 50, created_at: "2026-09-28T11:00:00Z", comment: "newer" },
+  ];
+
+  it("latestCommentBy takes the newest comment by that author only", () => {
+    expect(latestCommentBy(comments, "50")?.id).toBe(3);
+    expect(latestCommentBy(comments, "7")).toBeNull();
+    expect(latestCommentBy(undefined, "50")).toBeNull();
+  });
+
+  it("commentById matches a numeric id given as a string", () => {
+    expect(commentById(comments, "2")?.comment).toBe("student reply");
+    expect(commentById(comments, "8")).toBeNull();
   });
 });

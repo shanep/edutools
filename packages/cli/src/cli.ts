@@ -46,6 +46,8 @@ export type CanvasClient = PullCanvas &
     | "deleteFile"
     | "getSubmission"
     | "gradeSubmission"
+    | "editSubmissionComment"
+    | "getSelf"
   >;
 
 /** Somewhere text is written: process.stdout, or a buffer in a test. */

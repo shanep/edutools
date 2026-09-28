@@ -21,6 +21,7 @@ import { register as create } from "./commands/create";
 import { register as dates } from "./commands/dates";
 import { register as deleteCommand } from "./commands/delete";
 import { register as download } from "./commands/download";
+import { register as editComment } from "./commands/edit-comment";
 import { register as grade } from "./commands/grade";
 import { register as groups } from "./commands/groups";
 import { register as init } from "./commands/init";
@@ -70,6 +71,7 @@ const COMMANDS: readonly Register[] = [
   submission,
   download,
   grade,
+  editComment,
 ];
 
 export function createProgram(cli: Cli): Command {
