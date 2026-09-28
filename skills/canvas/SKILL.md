@@ -480,6 +480,26 @@ edutools edit-comment -c 12345 -a 67890 --from-file grades.json
 - `submission --json` lists a submission's comments with their `id`s when a
   specific older comment is the one to change.
 
+### A rubric on an assignment no repo manages
+
+```bash
+edutools rubric -c 12345 -a 67890 --from-file rubric.json --dry-run
+edutools rubric -c 12345 -a 67890 --from-file rubric.json
+```
+
+The file is `{"title", "criteria": [{"description", "points", "long_description"?,
+"ratings"?: [{"description", "points"}]}]}`. Use it for partial credit, which a
+repo's `## Rubric` table cannot express (every table row is full or no marks).
+For a repo-backed course, edit the table and push instead; `rubric` on an
+assignment `push` manages is overwritten by the next push.
+
+- **An existing rubric is rewritten in place**, never replaced, so grades already
+  given with it stay attached.
+- **The highest rating must equal the criterion's points**, and the dry run warns
+  when the total differs from the assignment's points. Read that warning out.
+- To grade with it, read the criterion ids from `submission --json` or the
+  assignment's `rubric` field and pass them in each row's `rubric` object.
+
 ### A whole class
 
 Write a file, dry run it, then send it:

@@ -296,3 +296,67 @@ describe("edit-comment", () => {
     expect(canvas.editSubmissionComment).not.toHaveBeenCalled();
   });
 });
+
+describe("rubric", () => {
+  const rubricFile = () =>
+    gradesFile(
+      "rubric.json",
+      JSON.stringify({
+        title: "Final rubric",
+        criteria: [
+          {
+            description: "Feedback",
+            points: 6,
+            ratings: [
+              { description: "All", points: 6 },
+              { description: "One missed", points: 3 },
+              { description: "More", points: 0 },
+            ],
+          },
+          { description: "Media", points: 2 },
+        ],
+      }),
+    );
+
+  it("creates a rubric on an assignment that has none", async () => {
+    canvas.getJson.mockResolvedValue({ name: "06.02", points_possible: 8 });
+    canvas.createRubric.mockResolvedValue({});
+    const result = await invoke(["rubric", "-c", "123", "-a", "456", "--from-file", rubricFile()], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    const [courseId, fields] = canvas.createRubric.mock.calls[0] ?? [];
+    expect(courseId).toBe("123");
+    const form = Object.fromEntries(fields ?? []);
+    expect(form["rubric[title]"]).toBe("Final rubric");
+    expect(form["rubric_association[association_id]"]).toBe("456");
+    expect(form["rubric[criteria][0][ratings][1][points]"]).toBe("3");
+    expect(canvas.updateRubric).not.toHaveBeenCalled();
+  });
+
+  it("rewrites an attached rubric in place instead of adding another", async () => {
+    canvas.getJson.mockResolvedValue({
+      name: "06.02",
+      points_possible: 8,
+      rubric_settings: { id: 77 },
+      rubric: [{ description: "Old", points: 8 }],
+    });
+    canvas.updateRubric.mockResolvedValue({});
+    const result = await invoke(["rubric", "-c", "123", "-a", "456", "--from-file", rubricFile()], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.updateRubric.mock.calls[0]?.[1]).toBe("77");
+    expect(canvas.createRubric).not.toHaveBeenCalled();
+  });
+
+  it("a dry run says what it would do and writes nothing", async () => {
+    canvas.getJson.mockResolvedValue({ name: "06.02", points_possible: 40 });
+    const result = await invoke(["rubric", "-c", "123", "-a", "456", "--from-file", rubricFile(), "--dry-run"], {
+      client: canvas,
+    });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("would create");
+    expect(result.output).toContain("does not match");
+    expect(canvas.createRubric).not.toHaveBeenCalled();
+  });
+});

@@ -1063,9 +1063,18 @@ export function questionFields(question: Question, position: number): Array<[str
 // Rubric parsing
 // ---------------------------------------------------------------------------
 
+export interface Rating {
+  readonly description: string;
+  readonly points: number;
+}
+
 export interface Criterion {
   readonly description: string;
   readonly points: number;
+  /** The fuller explanation SpeedGrader shows under the description. */
+  readonly longDescription?: string;
+  /** Highest first. Without them a criterion is all or nothing: full marks or no marks. */
+  readonly ratings?: readonly Rating[];
 }
 
 /** Read the '## Rubric' table. Rows are '| n | description | points |'. */
@@ -1142,13 +1151,92 @@ export function rubricFields(
   criteria.forEach((criterion, index) => {
     const key = `rubric[criteria][${index}]`;
     fields.push([`${key}[description]`, criterionDescription(criterion.description)]);
+    if (criterion.longDescription) fields.push([`${key}[long_description]`, criterion.longDescription]);
     fields.push([`${key}[points]`, formatG(criterion.points)]);
-    fields.push([`${key}[ratings][0][description]`, "Full marks"]);
-    fields.push([`${key}[ratings][0][points]`, formatG(criterion.points)]);
-    fields.push([`${key}[ratings][1][description]`, "No marks"]);
-    fields.push([`${key}[ratings][1][points]`, "0"]);
+    const ratings = criterion.ratings ?? [
+      { description: "Full marks", points: criterion.points },
+      { description: "No marks", points: 0 },
+    ];
+    ratings.forEach((rating, r) => {
+      fields.push([`${key}[ratings][${r}][description]`, rating.description]);
+      fields.push([`${key}[ratings][${r}][points]`, formatG(rating.points)]);
+    });
   });
   return fields;
+}
+
+/** A rubric read from a JSON file: an optional title and its criteria. */
+export interface RubricFile {
+  readonly title: string | null;
+  readonly criteria: Criterion[];
+}
+
+export class RubricError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RubricError";
+  }
+}
+
+function pointsOf(value: unknown, where: string): number {
+  const points = typeof value === "number" ? value : parseFloatStrict(String(value ?? ""));
+  if (points === null || !Number.isFinite(points) || points < 0) {
+    throw new RubricError(`${where}: points must be a number of 0 or more, got ${JSON.stringify(value)}`);
+  }
+  return points;
+}
+
+/**
+ * Read a rubric from JSON: `{"title": ..., "criteria": [...]}` or a bare list of
+ * criteria. Each criterion has `description`, `points`, an optional
+ * `long_description`, and optional `ratings` (`description` and `points`).
+ *
+ * Ratings are checked here because Canvas accepts a criterion whose ratings do
+ * not reach its points, and SpeedGrader then cannot award full marks.
+ */
+export function parseRubricJson(text: string): RubricFile {
+  let loaded: unknown;
+  try {
+    loaded = JSON.parse(text);
+  } catch (error) {
+    throw new RubricError(`not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let title: string | null = null;
+  let rows: unknown = loaded;
+  if (isTable(loaded)) {
+    title = typeof loaded.title === "string" && loaded.title.trim() ? loaded.title.trim() : null;
+    rows = loaded.criteria;
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new RubricError("expected a non-empty list of criteria");
+  }
+  const criteria = rows.map((row: unknown, index): Criterion => {
+    const where = `criterion ${index + 1}`;
+    if (!isTable(row)) throw new RubricError(`${where}: expected an object`);
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (!description) throw new RubricError(`${where}: needs a description`);
+    const points = pointsOf(row.points, where);
+    const longDescription =
+      typeof row.long_description === "string" && row.long_description.trim()
+        ? row.long_description.trim()
+        : undefined;
+    if (row.ratings === undefined) return { description, points, longDescription };
+    if (!Array.isArray(row.ratings) || row.ratings.length === 0) {
+      throw new RubricError(`${where}: ratings must be a non-empty list`);
+    }
+    const ratings = row.ratings.map((rating: unknown, r): Rating => {
+      if (!isTable(rating) || typeof rating.description !== "string" || !rating.description.trim()) {
+        throw new RubricError(`${where}, rating ${r + 1}: needs a description`);
+      }
+      return { description: rating.description.trim(), points: pointsOf(rating.points, `${where}, rating ${r + 1}`) };
+    });
+    const sorted = [...ratings].sort((a, b) => b.points - a.points);
+    if (sorted[0]?.points !== points) {
+      throw new RubricError(`${where}: the highest rating must be worth the criterion's ${formatG(points)} points`);
+    }
+    return { description, points, longDescription, ratings: sorted };
+  });
+  return { title, criteria };
 }
 
 // ---------------------------------------------------------------------------

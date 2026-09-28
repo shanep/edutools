@@ -22,6 +22,7 @@ import {
   PublishError,
   parseQuiz,
   parseRubric,
+  parseRubricJson,
   pathIsDraft,
   type Question,
   questionFields,
@@ -29,6 +30,7 @@ import {
   renderInline,
   renderMarkdown,
   rewriteLinks,
+  RubricError,
   rubricFields,
   sameCriteria,
   stripInstructorSections,
@@ -367,6 +369,62 @@ describe("rubric parsing", () => {
     const fields = Object.fromEntries(rubricFields("Lab 1 rubric", criteria, "123"));
     expect(fields["rubric[points_possible]"]).toBe("38");
     expect(fields["rubric_association[association_id]"]).toBe("123");
+  });
+
+  it("sends partial ratings and a long description when a criterion has them", () => {
+    const fields = rubricFields(
+      "Final rubric",
+      [
+        {
+          description: "Instructor feedback",
+          points: 6,
+          longDescription: "Every item fixed.",
+          ratings: [
+            { description: "All", points: 6 },
+            { description: "One missed", points: 3 },
+            { description: "Two or more", points: 0 },
+          ],
+        },
+        { description: "Media", points: 2 },
+      ],
+      "9",
+    );
+    const form = Object.fromEntries(fields);
+    expect(form["rubric[points_possible]"]).toBe("8");
+    expect(form["rubric[criteria][0][long_description]"]).toBe("Every item fixed.");
+    expect(form["rubric[criteria][0][ratings][1][description]"]).toBe("One missed");
+    expect(form["rubric[criteria][0][ratings][1][points]"]).toBe("3");
+    expect(form["rubric[criteria][0][ratings][2][points]"]).toBe("0");
+    // A criterion without ratings keeps the all or nothing pair a push sends.
+    expect(form["rubric[criteria][1][ratings][0][description]"]).toBe("Full marks");
+    expect(form).not.toHaveProperty("rubric[criteria][1][long_description]");
+  });
+
+  it("reads a rubric file and sorts ratings highest first", () => {
+    const rubric = parseRubricJson(
+      JSON.stringify({
+        title: "Final rubric",
+        criteria: [
+          { description: "Peer", points: 4, ratings: [{ description: "none", points: 0 }, { description: "all", points: 4 }] },
+          { description: "Media", points: "2", long_description: "Sources named." },
+        ],
+      }),
+    );
+    expect(rubric.title).toBe("Final rubric");
+    expect(rubric.criteria[0]?.ratings?.map((r) => r.points)).toEqual([4, 0]);
+    expect(rubric.criteria[1]).toEqual({ description: "Media", points: 2, longDescription: "Sources named." });
+    expect(parseRubricJson('[{"description": "a", "points": 1}]').title).toBeNull();
+  });
+
+  it("refuses a rubric file Canvas would take but SpeedGrader could not use", () => {
+    const bad = (value: unknown) => () => parseRubricJson(JSON.stringify(value));
+    expect(bad([])).toThrow(RubricError);
+    expect(bad([{ points: 2 }])).toThrow(/needs a description/);
+    expect(bad([{ description: "a", points: -1 }])).toThrow(/0 or more/);
+    expect(bad([{ description: "a", points: 4, ratings: [{ description: "x", points: 2 }] }])).toThrow(
+      /highest rating/,
+    );
+    expect(() => parseRubricJson("{nope")).toThrow(/not valid JSON/);
   });
 
   it("formats points as Python's :g does", () => {

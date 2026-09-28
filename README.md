@@ -195,6 +195,8 @@ edutools edit-comment [-c <id>] [-a <id>] -s <id> [--comment-id <id>] --comment 
                                                    rewrite a comment already left
 edutools edit-comment [-c <id>] [-a <id>] --from-file <file|-> [--csv] [--dry-run]
                                                    rewrite a batch of comments
+edutools rubric [-c <id>] [-a <id>] --from-file <file> [--title <text>] [--dry-run]
+                                                   attach a rubric from JSON
 ```
 
 Exit codes: 0 on success, 1 when a command fails or finds a problem (a failed
@@ -892,6 +894,34 @@ edutools edit-comment -c 12345 -a 67890 --from-file grades.json
 
 Its `--dry-run` reads each submission to show the text it would replace, so unlike
 `grade --dry-run` it needs the token.
+
+### A rubric for one assignment
+
+A course repository's `## Rubric` table reaches Canvas through `push`. For an
+assignment no repository manages, `rubric` attaches one from a JSON file, and it
+can do what a table cannot: partial ratings and a long description per criterion.
+
+```json
+{"title": "Final draft rubric", "criteria": [
+  {"description": "Summary of changes", "points": 4,
+   "long_description": "The last section, 200 to 300 words."},
+  {"description": "Instructor feedback", "points": 6, "ratings": [
+    {"description": "All fixed", "points": 6},
+    {"description": "One missed", "points": 3},
+    {"description": "Two or more missed", "points": 0}]}
+]}
+```
+
+```bash
+edutools rubric -c 12345 -a 67890 --from-file rubric.json --dry-run
+edutools rubric -c 12345 -a 67890 --from-file rubric.json
+```
+
+A criterion without `ratings` is all or nothing, and the highest rating must be
+worth the criterion's points. The rubric is used for grading. An assignment that
+already has a rubric has it rewritten in place, as `push` does, so grades given
+with it stay attached. The dry run warns when the rubric's total differs from the
+assignment's points.
 
 If the assignment uses a **manual posting policy**, a grade written here lands on
 the submission but stays hidden from the student until it is posted from the Canvas
