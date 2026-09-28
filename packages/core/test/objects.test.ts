@@ -3,6 +3,7 @@ import {
   GradeRow,
   buildFields,
   commentById,
+  flattenDiscussion,
   formatG,
   latestCommentBy,
   parseCommentEdits,
@@ -290,5 +291,38 @@ describe("choosing the comment to edit", () => {
   it("commentById matches a numeric id given as a string", () => {
     expect(commentById(comments, "2")?.comment).toBe("student reply");
     expect(commentById(comments, "8")).toBeNull();
+  });
+});
+
+describe("flattenDiscussion", () => {
+  it("puts each reply after the post it answers, with the author's name", () => {
+    const view = {
+      participants: [
+        { id: 1, display_name: "Ann" },
+        { id: 2, display_name: "Bo" },
+      ],
+      view: [
+        {
+          id: 10,
+          user_id: 1,
+          created_at: "2026-10-01T00:00:00Z",
+          message: "<p>post</p>",
+          replies: [{ id: 11, user_id: 2, parent_id: 10, message: "<p>reply</p>" }],
+        },
+        { id: 12, user_id: 2, message: "<p>second</p>" },
+        { id: 13, deleted: true, replies: [{ id: 14, user_id: 1, message: "kept" }] },
+      ],
+    };
+    const entries = flattenDiscussion(view);
+    expect(entries.map((e) => e.id)).toEqual(["10", "11", "12", "14"]);
+    expect(entries[1]).toMatchObject({ author: "Bo", parentId: "10", message: "<p>reply</p>" });
+    expect(entries[0]?.parentId).toBeNull();
+    // A reply under a deleted post still names its parent.
+    expect(entries[3]?.parentId).toBe("13");
+  });
+
+  it("tolerates an empty or odd payload", () => {
+    expect(flattenDiscussion(null)).toEqual([]);
+    expect(flattenDiscussion({ view: "nope" })).toEqual([]);
   });
 });

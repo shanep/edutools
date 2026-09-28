@@ -379,6 +379,22 @@ describe("object CRUD", () => {
   });
 });
 
+describe("discussions and peer reviews", () => {
+  it("reads a discussion's thread view", async () => {
+    const fake = always(() => json({ view: [] }));
+    await client(fake.fetch).getDiscussionView("123", "77");
+    expect(last(fake.calls).url).toBe("https://c.test/api/v1/courses/123/discussion_topics/77/view");
+  });
+
+  it("lists peer reviews with the reviewers' comments", async () => {
+    const fake = always(() => json([]));
+    await client(fake.fetch).listPeerReviews("123", "456");
+    const url = new URL(last(fake.calls).url);
+    expect(url.pathname).toBe("/api/v1/courses/123/assignments/456/peer_reviews");
+    expect(url.searchParams.get("include[]")).toBe("submission_comments");
+  });
+});
+
 describe("editSubmissionComment", () => {
   it("PUTs the new text to the comment's own url", async () => {
     const fake = always(() => json({ id: 4321, comment: "New." }));

@@ -32,6 +32,8 @@ const METHODS: Readonly<Record<keyof CanvasClient, true>> = {
   gradeSubmission: true,
   editSubmissionComment: true,
   getSelf: true,
+  getDiscussionView: true,
+  listPeerReviews: true,
   getCourseWithSyllabus: true,
   listPages: true,
   getPage: true,

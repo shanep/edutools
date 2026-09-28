@@ -260,3 +260,41 @@ describe("the program", () => {
     expect(result.stderr).toContain("Canvas API error 401");
   });
 });
+
+describe("discussion", () => {
+  it("lists posts and replies from the thread view", async () => {
+    const canvas = fakeClient();
+    canvas.getDiscussionView.mockResolvedValue({
+      participants: [{ id: 5, display_name: "Pat Doe" }],
+      view: [{ id: 1, user_id: 5, message: "<p>My checkpoint post</p>", replies: [{ id: 2, user_id: 5, message: "fix" }] }],
+    });
+    const result = await invoke(["discussion", "77", "-c", "123"], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.getDiscussionView.mock.calls[0]).toEqual(["123", "77"]);
+    expect(result.output).toContain("Pat Doe");
+    expect(result.output).toContain("1 post(s), 1 repl(ies)");
+  });
+});
+
+describe("peer-reviews", () => {
+  it("counts only the reviewer's own comments", async () => {
+    const canvas = fakeClient();
+    canvas.listPeerReviews.mockResolvedValue([
+      {
+        assessor_id: 5,
+        user_id: 6,
+        workflow_state: "completed",
+        submission_comments: [
+          { author_id: 5, comment: "review" },
+          { author_id: 6, comment: "thanks" },
+        ],
+      },
+      { assessor_id: 6, user_id: 5, workflow_state: "assigned", submission_comments: [] },
+    ]);
+    const result = await invoke(["peer-reviews", "-c", "123", "-a", "456"], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("1 of 2 completed");
+  });
+});

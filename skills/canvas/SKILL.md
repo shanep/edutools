@@ -120,6 +120,8 @@ edutools submissions <course_id> <assignment_id> --json
 edutools ungraded <course_id> --json          # everything still needing a grade
 edutools groups <course_id> --json            # assignment groups and their weights
 edutools modules <course_id> --json           # modules, each with its items under "items"
+edutools discussion <topic_id> -c <course_id> --json   # a discussion's full thread
+edutools peer-reviews -c <course_id> -a <assignment_id> --json   # who reviews whom, and the reviews
 ```
 
 Ids are what these commands are for: get the assignment id from `assignments`,
@@ -479,6 +481,19 @@ edutools edit-comment -c 12345 -a 67890 --from-file grades.json
   text beside the new. Show that before writing, as with any bulk change.
 - `submission --json` lists a submission's comments with their `id`s when a
   specific older comment is the one to change.
+
+### Grading a discussion
+
+Discussion posts are not in `submission --json`. Read them with
+`discussion <topic_id> --json`: `participants` maps user ids to names, and `view`
+holds the top-level posts with their `replies` nested, each with `user_id`,
+`parent_id`, `created_at` and the HTML `message`. Canvas builds that view in the
+background, so a reply posted seconds ago can be missing from it.
+
+A graded discussion's peer reviews are listed by its **assignment id** (the
+topic's `assignment_id`), not the topic id. In `peer-reviews --json`, only
+comments whose `author_id` is the `assessor_id` are the review; the reviewee may
+have replied underneath.
 
 ### A rubric on an assignment no repo manages
 

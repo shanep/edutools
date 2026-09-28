@@ -825,6 +825,28 @@ export class CanvasLMS {
     );
   }
 
+  /**
+   * A discussion's whole thread: `participants` and `view`, the top-level
+   * entries with their replies nested under `replies`. Canvas builds this view
+   * in the background, so a topic answered seconds ago can be missing its
+   * newest entries for a moment.
+   */
+  async getDiscussionView(courseId: string, topicId: string): Promise<Payload> {
+    return this.json("GET", `/api/v1/courses/${courseId}/discussion_topics/${topicId}/view`);
+  }
+
+  /**
+   * Every peer review assigned on an assignment (a graded discussion's is its
+   * assignment id), with the comments each reviewer left. `assessor_id` wrote
+   * the review, `user_id` was reviewed, and `workflow_state` turns from
+   * "assigned" to "completed" once the reviewer comments.
+   */
+  async listPeerReviews(courseId: string, assignmentId: string): Promise<Payload[]> {
+    return this.listJson(`/api/v1/courses/${courseId}/assignments/${assignmentId}/peer_reviews`, {
+      "include[]": "submission_comments",
+    });
+  }
+
   /** The user the token belongs to. */
   async getSelf(): Promise<Payload> {
     return this.json("GET", "/api/v1/users/self");

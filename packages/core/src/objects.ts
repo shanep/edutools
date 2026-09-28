@@ -553,3 +553,56 @@ export function commentById(comments: unknown, commentId: string): Record<string
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Discussions
+// ---------------------------------------------------------------------------
+
+/** One post in a discussion thread, flattened out of Canvas's nested view. */
+export interface DiscussionEntry {
+  readonly id: string;
+  readonly userId: string;
+  readonly author: string;
+  /** Null for a top-level post. */
+  readonly parentId: string | null;
+  readonly createdAt: string;
+  /** The body as Canvas stores it, HTML. */
+  readonly message: string;
+}
+
+/**
+ * Flatten a discussion's `/view` payload into its posts in thread order, each
+ * reply right after the post it answers. Deleted entries, which Canvas keeps
+ * in the view with no message, are left out.
+ */
+export function flattenDiscussion(view: unknown): DiscussionEntry[] {
+  if (!isObject(view)) return [];
+  const names = new Map<string, string>();
+  if (Array.isArray(view.participants)) {
+    for (const person of view.participants) {
+      if (isObject(person)) names.set(pyStr(person.id), pyStr(person.display_name ?? ""));
+    }
+  }
+  const out: DiscussionEntry[] = [];
+  const walk = (entries: unknown, parentId: string | null): void => {
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (!isObject(entry)) continue;
+      const id = pyStr(entry.id);
+      if (entry.deleted !== true) {
+        const userId = entry.user_id === undefined || entry.user_id === null ? "" : pyStr(entry.user_id);
+        out.push({
+          id,
+          userId,
+          author: names.get(userId) ?? "",
+          parentId: entry.parent_id === undefined || entry.parent_id === null ? parentId : pyStr(entry.parent_id),
+          createdAt: typeof entry.created_at === "string" ? entry.created_at : "",
+          message: typeof entry.message === "string" ? entry.message : "",
+        });
+      }
+      walk(entry.replies, id);
+    }
+  };
+  walk(view.view, null);
+  return out;
+}

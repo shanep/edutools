@@ -48,6 +48,8 @@ export type CanvasClient = PullCanvas &
     | "gradeSubmission"
     | "editSubmissionComment"
     | "getSelf"
+    | "getDiscussionView"
+    | "listPeerReviews"
   >;
 
 /** Somewhere text is written: process.stdout, or a buffer in a test. */

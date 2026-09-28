@@ -185,6 +185,8 @@ edutools unpublish <kind> <object_id> -c <id> [--json]
 
 edutools submission [-c <id>] [-a <id>] -s <id> [--json]
                                                    one submission with its comments
+edutools discussion <topic_id> [-c <id>] [--json]  every post and reply in a discussion
+edutools peer-reviews [-c <id>] [-a <id>] [--json] who reviews whom, and what they wrote
 edutools download [-c <id>] [-a <id>] -o <dir> [-s <id>]
                                                    download submission attachments
 edutools grade [-c <id>] [-a <id>] -s <id> [grading options]
@@ -894,6 +896,28 @@ edutools edit-comment -c 12345 -a 67890 --from-file grades.json
 
 Its `--dry-run` reads each submission to show the text it would replace, so unlike
 `grade --dry-run` it needs the token.
+
+### Discussions and peer reviews
+
+A discussion's posts are not submissions, so `submission` cannot show them.
+`discussion` lists every post and reply, and `--json` gives Canvas's whole thread
+view (participants, and entries with their replies nested) for grading.
+
+```bash
+edutools discussion 1106493 -c 12345          # posts and replies, with authors and word counts
+edutools discussion 1106493 -c 12345 --json   # the full thread, HTML bodies included
+```
+
+When an assignment or graded discussion has peer reviews, `peer-reviews` lists
+each one: who reviews (`assessor_id`), who is reviewed (`user_id`), and whether
+it is `assigned` or `completed`. A graded discussion's reviews are listed by its
+assignment id. With `--json` each review carries its `submission_comments`,
+which is the review itself.
+
+```bash
+edutools peer-reviews -c 12345 -a 67890
+edutools peer-reviews -c 12345 -a 67890 --json
+```
 
 ### A rubric for one assignment
 
