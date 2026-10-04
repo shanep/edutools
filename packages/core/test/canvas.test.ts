@@ -764,3 +764,25 @@ describe("asNumber", () => {
     expect(asNumber("0x10")).toBe(0);
   });
 });
+
+describe("content exports", () => {
+  it("starts an export with the quiz selection repeated", async () => {
+    const fake = always(() => json({ id: 5, workflow_state: "created" }));
+    const started = await client(fake.fetch).startContentExport("123", [
+      ["export_type", "qti"],
+      ["select[quizzes][]", "1"],
+      ["select[quizzes][]", "2"],
+    ]);
+    expect(started.id).toBe(5);
+    const call = last(fake.calls);
+    expect(call.method).toBe("POST");
+    expect(call.url).toBe("https://c.test/api/v1/courses/123/content_exports");
+    expect(new URLSearchParams(String(call.body)).getAll("select[quizzes][]")).toEqual(["1", "2"]);
+  });
+
+  it("reads one export back", async () => {
+    const fake = always(() => json({ id: 5, workflow_state: "exported" }));
+    await client(fake.fetch).getContentExport("123", "5");
+    expect(last(fake.calls).url).toBe("https://c.test/api/v1/courses/123/content_exports/5");
+  });
+});

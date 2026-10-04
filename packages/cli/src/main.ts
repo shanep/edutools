@@ -23,6 +23,7 @@ import { register as discussion } from "./commands/discussion";
 import { register as deleteCommand } from "./commands/delete";
 import { register as download } from "./commands/download";
 import { register as editComment } from "./commands/edit-comment";
+import { register as exportCommand } from "./commands/export";
 import { register as grade } from "./commands/grade";
 import { register as groups } from "./commands/groups";
 import { register as init } from "./commands/init";
@@ -58,6 +59,7 @@ const COMMANDS: readonly Register[] = [
   submissions,
   ungraded,
   pull,
+  exportCommand,
   // course repositories
   push,
   verify,

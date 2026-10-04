@@ -165,6 +165,8 @@ edutools submissions [course_id] [assignment_id] [--json]
 edutools ungraded [course_id] [--json]             submissions with no grade set
 edutools pull [course_id] [-o|--out <dir>] [--only <kind>]... [--json]
                                                    snapshot the whole course to disk
+edutools export [course_id] [-t|--type <type>] [--quiz <id>]... [-o|--out <file>] [--json]
+                                                   download a course export (QTI by default)
 
 edutools push <repo> --course <id> [options]       publish a course repo into Canvas
 edutools verify <repo> --course <id> [--json]      read published content back and prove it landed
@@ -350,6 +352,42 @@ Quizzes arrives only as its assignment, with no questions, since the classic
 quizzes API cannot see it. `files.json` holds each file's download url, which
 carries a verifier that can work without a login, so treat a snapshot as you
 would the course itself.
+
+### Exporting quizzes and question banks
+
+`export` downloads the package Settings -> Export Course Content builds. Reach for
+it when a quiz draws its questions from a linked question bank. The quiz questions
+API lists none of those questions, and banks have no REST endpoint of their own,
+so `pull` writes an empty `.questions.json`.
+
+```bash
+edutools export 12345 --type common_cartridge # the whole course and every bank, as .imscc
+edutools export 12345                         # every quiz, to ./canvas-12345-qti.zip
+edutools export 12345 --quiz 393662 --quiz 394147 -o midterm.zip
+edutools export 12345 --json                  # {"path", "bytes", "export"}
+```
+
+Only the whole-course `common_cartridge` export has the banks. Each one is a QTI
+1.2 `<objectbank>` in `non_cc_assessments/`, beside the quizzes, and a quiz's
+question groups point at a bank by its ident in `<sourcebank_ref>`. A `qti`
+export, or a `common_cartridge` export narrowed with `--quiz`, keeps those
+references and leaves the banks out. A whole course with its files is big (135
+MB and 90 seconds for a course with a few textbook PDFs), so use `qti` when the
+quiz settings are all you need.
+
+`--type` is `qti` (the default), `common_cartridge` or `zip`. `--quiz` limits a
+`qti` or `common_cartridge` export to those quizzes and is repeatable. A `zip`
+export is only the course files, so `--quiz` with it is a usage error rather than
+an export of every file.
+
+Canvas builds the package in the background, so the command starts the export,
+checks on it every few seconds, and downloads it when it is done. It gives up
+after 30 minutes. Nothing in the course changes, and the export is started with
+`skip_notifications` so Canvas does not email you about it, but it does show up
+in the course's export history. The package is saved as Canvas built it and is
+not unzipped. With `--json` the `export` field is the content export as Canvas
+last reported it, and its `attachment.url` carries a verifier that can work
+without a login, so do not paste it anywhere public.
 
 ### Publishing a course repo
 

@@ -34,6 +34,8 @@ const METHODS: Readonly<Record<keyof CanvasClient, true>> = {
   getSelf: true,
   getDiscussionView: true,
   listPeerReviews: true,
+  startContentExport: true,
+  getContentExport: true,
   getCourseWithSyllabus: true,
   listPages: true,
   getPage: true,

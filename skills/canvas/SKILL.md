@@ -172,6 +172,41 @@ objects that are gone; nothing else in the directory is touched.
 - **`files.json` holds download urls that may work without a login.** Do not
   paste them anywhere public.
 
+## Exporting quizzes and question banks
+
+A quiz that draws from a linked question bank comes back from `pull` with an
+empty `.questions.json`: the quiz questions API cannot see bank questions, and
+banks have no REST endpoint. `export` downloads the package Settings -> Export
+Course Content builds. It only reads course content, so it is safe on any course
+the user names; it does show up in the course's export history.
+
+```bash
+edutools export <course_id> --type common_cartridge  # whole course with every bank, .imscc
+edutools export <course_id>                          # every quiz, ./canvas-<id>-qti.zip
+edutools export <course_id> --quiz <id> --quiz <id> -o exam.zip
+edutools export <course_id> --json                   # {"path", "bytes", "export"}
+```
+
+- **Only a whole-course `common_cartridge` export has the banks.** A `qti`
+  export, or any export narrowed with `--quiz`, names each bank in
+  `<sourcebank_ref>` and leaves its questions out. To read bank questions, export
+  the whole course and look in `non_cc_assessments/`: each bank is an
+  `<objectbank>` file (QTI 1.2) whose `bank_title` metadata names it, and each
+  quiz there lists its question groups with the bank ident, how many to pick,
+  and the points each.
+
+- **It waits.** Canvas builds the package in the background; the command polls
+  every few seconds and gives up after 30 minutes. A whole course with its files
+  takes a minute or two and can run past 100 MB; a few quizzes take seconds.
+- **The package is not unzipped.** Unpack it yourself (`.imscc` is a zip).
+  Course files sit under `web_resources/`, referenced from HTML as
+  `$IMS-CC-FILEBASE$/...`. A question's image may instead be an absolute url to
+  another host, such as a publisher's server, which the package does not copy.
+- **`--quiz` takes classic quiz ids** and only works with `qti` and
+  `common_cartridge`; with `zip` it is a usage error (exit 2).
+- **`export.attachment.url` in the `--json` output carries a verifier** that can
+  work without a login. Do not paste it anywhere public.
+
 ## Creating, changing, and removing one object
 
 The five kinds are `page`, `assignment`, `discussion`, `quiz`, `module`.

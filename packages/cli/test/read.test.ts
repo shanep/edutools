@@ -298,3 +298,33 @@ describe("peer-reviews", () => {
     expect(result.output).toContain("1 of 2 completed");
   });
 });
+
+describe("export", () => {
+  it("saves the package and emits where it went", async () => {
+    canvas.startContentExport.mockResolvedValue({ id: 5, workflow_state: "exported", attachment: { url: "https://c.test/f" } });
+    canvas.downloadAttachment.mockResolvedValue(4096);
+    const out = path.join(tmpDir(), "banks.zip");
+    const result = await invoke(["export", "42", "--quiz", "7", "--quiz", "8", "-o", out, "--json"], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.startContentExport.mock.calls[0]?.[1]).toContainEqual(["select[quizzes][]", "8"]);
+    expect(canvas.downloadAttachment).toHaveBeenCalledWith("https://c.test/f", out);
+    expect(JSON.parse(result.stdout)).toMatchObject({ path: out, bytes: 4096, export: { id: 5 } });
+  });
+
+  it("refuses quizzes in a zip export before touching Canvas", async () => {
+    const result = await invoke(["export", "42", "--type", "zip", "--quiz", "7"], { client: canvas });
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("only course files");
+    expect(canvas.startContentExport).not.toHaveBeenCalled();
+  });
+
+  it("a failed export exits 1", async () => {
+    canvas.startContentExport.mockResolvedValue({ id: 5, workflow_state: "failed" });
+    const result = await invoke(["export", "42", "-o", path.join(tmpDir(), "x.zip")], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("could not export course 42");
+  });
+});

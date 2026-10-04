@@ -852,6 +852,24 @@ export class CanvasLMS {
     return this.json("GET", "/api/v1/users/self");
   }
 
+  // -- content exports --------------------------------------------------
+
+  /**
+   * Ask Canvas to package the course, the same export as Settings -> Export
+   * Course Content. It runs in the background: the answer carries the export's
+   * id and a `workflow_state` of "created", and `getContentExport` reports when
+   * the package is ready. The fields are pairs because `select[quizzes][]`
+   * repeats.
+   */
+  async startContentExport(courseId: string, fields: Array<[string, string]>): Promise<Payload> {
+    return this.json("POST", `/api/v1/courses/${courseId}/content_exports`, fields);
+  }
+
+  /** One export, whose `attachment.url` is the package once it is "exported". */
+  async getContentExport(courseId: string, exportId: string): Promise<Payload> {
+    return this.json("GET", `/api/v1/courses/${courseId}/content_exports/${exportId}`);
+  }
+
   /**
    * Stream a submission attachment or a course file to disk, return its size.
    */
