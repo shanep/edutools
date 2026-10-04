@@ -239,6 +239,15 @@ describe("push", () => {
     expect(canvas.createAssignment).not.toHaveBeenCalled();
   });
 
+  it("a module pattern that matches nothing is refused before anything is written", async () => {
+    const error = await push(canvas, { repo, courseId: COURSE, modules: ["Week 99*"] }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(CourseError);
+    expect(error.message).toContain("--module 'Week 99*' matches no [[module]]");
+    expect(canvas.createAssignment).not.toHaveBeenCalled();
+    expect(canvas.listModules).not.toHaveBeenCalled();
+  });
+
   it("only limits the push to a group", async () => {
     const result = await push(canvas, { repo, courseId: COURSE, only: ["pages"], verify: false });
 

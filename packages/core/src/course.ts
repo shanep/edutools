@@ -46,6 +46,7 @@ import {
   crossCheckSyllabus,
   validate,
 } from "./dates";
+import { pyRepr } from "./objects";
 import { type OutlineModule, outline } from "./outline";
 import { fnmatch } from "./paths";
 import { type Entry, Manifest, PublishError, parseQuiz, rewriteLinks, ValueError } from "./publish";
@@ -590,6 +591,12 @@ export interface PushOptions extends Callbacks {
   readonly only?: readonly string[];
   /** Limit to these repo files, exact or glob. Skips the module rebuild. */
   readonly paths?: readonly string[];
+  /**
+   * Rebuild only the [[module]] tables these match, by title, exact or glob,
+   * ignoring case. Runs the module step even with --only or --path, and
+   * leaves every other module alone.
+   */
+  readonly modules?: readonly string[];
   /** Read everything back afterwards. Default true; never on a dry run or a push with problems. */
   readonly verify?: boolean;
   /**
@@ -653,11 +660,12 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
   const dryRun = options.dryRun ?? false;
   const only = options.only ?? [];
   const patterns = options.paths ?? [];
+  const modulePatterns = options.modules ?? [];
   const clean = options.clean ?? null;
   const progress = options.progress ?? (() => {});
 
-  if (clean !== null && (only.length > 0 || patterns.length > 0)) {
-    throw new CourseError("--clean syncs the whole course; it cannot be combined with --only or --path");
+  if (clean !== null && (only.length > 0 || patterns.length > 0 || modulePatterns.length > 0)) {
+    throw new CourseError("--clean syncs the whole course; it cannot be combined with --only, --path or --module");
   }
   if (!dryRun && canvas === null) throw new CourseError("a push that writes needs a Canvas client");
   if (clean !== null && (clean.repo !== path.resolve(options.repo) || clean.courseId !== options.courseId)) {
@@ -679,6 +687,14 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
     report: options.report ?? (() => {}),
   });
   const plans = planOf(publisher);
+  // Checked before anything is written, for the same reason as --path.
+  const missedModules = publisher.unmatchedModules(modulePatterns);
+  if (missedModules.length > 0) {
+    const titles = publisher.moduleTables().map((module) => pyRepr(String(module.title ?? "")));
+    throw new CourseError(
+      `--module ${missedModules.map((m) => pyRepr(m)).join(", ")} matches no [[module]]; the modules are: ${titles.join(", ")}`,
+    );
+  }
   const drafts = [...publisher.drafts].sort(compare);
   // A file that was pushed before it became a draft still has an object in
   // Canvas. Forgetting it here is what stops verify reporting it, but the
@@ -754,10 +770,10 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
   const droppedCss = [...publisher.droppedCss].sort(compare);
   if (droppedCss.length > 0) problems.push("canvas.css contains properties Canvas will not store");
 
-  if (wanted.has("modules") || (wanted.size === 0 && patterns.length === 0)) {
+  if (modulePatterns.length > 0 || wanted.has("modules") || (wanted.size === 0 && patterns.length === 0)) {
     progress({ message: "Building modules" });
     try {
-      const outcome = await publisher.pushModules();
+      const outcome = await publisher.pushModules(modulePatterns.length > 0 ? modulePatterns : null);
       created += outcome.created;
       updated += outcome.updated;
       problems.push(...outcome.errors);

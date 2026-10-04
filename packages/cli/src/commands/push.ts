@@ -23,6 +23,7 @@ interface Options {
   updatePublished?: boolean;
   only?: string[];
   path?: string[];
+  module?: string[];
   verify?: boolean;
   preview?: string;
   clean?: boolean;
@@ -177,6 +178,11 @@ export const register: Register = (program, cli) => {
         "same pipeline the full push does, so dates, links, rubric and styling all\n" +
         "still come from the repository. Whole-course module rebuilding is skipped,\n" +
         "since that is a structural change rather than a correction.\n\n" +
+        "To rebuild one module rather than all of them, name it with --module:\n\n" +
+        '    edutools push ./cs425 --course 48194 --only modules --module "Week 8*"\n\n' +
+        "--module matches a [[module]] title, exact or glob, ignoring case, and is\n" +
+        "repeatable. Every other module is left exactly as it is, so a published\n" +
+        "module can be rebuilt with --update-published without touching the rest.\n\n" +
         "--clean is for the start of a term, on a course copied from a shell or from\n" +
         "last term. It deletes every page, assignment, discussion, quiz and module\n" +
         "the repo does not own (keeping course files, the front page, the native\n" +
@@ -195,6 +201,11 @@ export const register: Register = (program, cli) => {
       collect,
     )
     .option("--path <file>", "Limit to specific repo files, exact or glob, repeatable", collect)
+    .option(
+      "--module <title>",
+      "Rebuild only the [[module]] tables whose title matches, exact or glob, repeatable",
+      collect,
+    )
     .option("--verify", "Read everything back from Canvas afterwards (the default)")
     .option("--no-verify", "Skip the read-back")
     .option(
@@ -205,8 +216,9 @@ export const register: Register = (program, cli) => {
     .option("-y, --yes", "With --clean, skip the confirmation prompt")
     .action(async (repoArg: string, options: Options) => {
       const repo = expandHome(repoArg);
-      if (options.clean && ((options.only ?? []).length > 0 || (options.path ?? []).length > 0)) {
-        throw cli.fail("--clean syncs the whole course; it cannot be combined with --only or --path");
+      const narrowed = [options.only, options.path, options.module].some((list) => (list ?? []).length > 0);
+      if (options.clean && narrowed) {
+        throw cli.fail("--clean syncs the whole course; it cannot be combined with --only, --path or --module");
       }
 
       // A dry run needs no token, unless a clean sync has to read the course.
@@ -226,6 +238,7 @@ export const register: Register = (program, cli) => {
             updatePublished: options.updatePublished || options.clean,
             only: options.only,
             paths: options.path,
+            modules: options.module,
             verify: options.verify,
             clean,
             report: (line) => cli.print(markup(cli.c, line)),

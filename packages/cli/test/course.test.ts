@@ -214,11 +214,11 @@ describe("push --clean", () => {
     canvas.getAssignments.mockResolvedValue([{ id: 77, name: "Old lab", published: false }]);
   });
 
-  it("cannot be combined with --only or --path", async () => {
+  it("cannot be combined with --only, --path or --module", async () => {
     const result = await invoke(["push", repo, "--course", "42", "--clean", "--only", "pages"], { client: canvas });
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("cannot be combined with --only or --path");
+    expect(result.stderr).toContain("cannot be combined with --only, --path or --module");
   });
 
   it("refuses when student work exists, and deletes nothing", async () => {

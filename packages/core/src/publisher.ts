@@ -23,13 +23,15 @@ import {
   isoformat,
   loadConfig,
   moduleTitle,
+  type Term,
 } from "./dates";
 import { pyRepr } from "./objects";
-import { globRepo, isFile, repoKey } from "./paths";
+import { fnmatch, globRepo, isFile, repoKey } from "./paths";
 import {
   addHeadingIcons,
   assertNoForbiddenTags,
   assignmentOptions,
+  attachedRubric,
   canvasPath,
   decorate,
   Entry,
@@ -43,7 +45,6 @@ import {
   PublishError,
   parseNativeItems,
   parseQuiz,
-  attachedRubric,
   parseRubric,
   pathIsDraft,
   questionFields,
@@ -152,6 +153,22 @@ function idOf(value: unknown): string {
  * other date span, "Module 3: Risk (January 25 - January 31)" from last term,
  * is the same module and is renamed rather than duplicated.
  */
+/** A [[module]] table's title as written and its Canvas name, for `--module` to match. */
+function moduleNames(module: Record<string, unknown>, index: number, term: Term): string[] {
+  const base = pyStr(module.title ?? `Module ${index + 1}`);
+  try {
+    return [base, moduleTitle(module, term)];
+  } catch (error) {
+    if (!(error instanceof DateConfigError)) throw error;
+    return [base];
+  }
+}
+
+function matchesModule(pattern: string, names: readonly string[]): boolean {
+  const wanted = pattern.toLowerCase();
+  return names.some((name) => fnmatch(name.toLowerCase(), wanted));
+}
+
 function findModule(stored: readonly Payload[], name: string, base: string): Payload | null {
   for (const module of stored) {
     if (pyStr(module.name) === name) return module;
@@ -930,12 +947,31 @@ export class Publisher {
     return keys.sort();
   }
 
+  /**
+   * The `--module` patterns that match no [[module]] table.
+   *
+   * A pattern is matched, ignoring case, against the table's title as written
+   * and against its Canvas name with the dates, so `"Week 8*"` finds
+   * "Week 8: Midterm Exam" either way. A pattern that matches nothing is a typo,
+   * and rebuilding zero modules looks exactly like a successful push.
+   */
+  unmatchedModules(patterns: readonly string[]): string[] {
+    const tables = this.moduleTables();
+    return patterns.filter(
+      (pattern) => !tables.some((module, index) => matchesModule(pattern, moduleNames(module, index, this.config.term))),
+    );
+  }
+
   /** Build the weekly modules from the [[module]] tables in canvas.toml. */
-  async pushModules(): Promise<Result> {
+  async pushModules(only: readonly string[] | null = null): Promise<Result> {
     const result = new Result();
     const modules = this.moduleTables();
+    // With `only`, just the tables a pattern names are rebuilt; the rest are
+    // left exactly as Canvas holds them, published or not.
+    const chosen = (module: Record<string, unknown>, index: number): boolean =>
+      only === null || only.some((pattern) => matchesModule(pattern, moduleNames(module, index, this.config.term)));
     if (this.dryRun) {
-      result.skipped = modules.length;
+      result.skipped = modules.filter(chosen).length;
       return result;
     }
 
@@ -950,10 +986,10 @@ export class Publisher {
       const base = pyStr(module.title ?? `Module ${index + 1}`);
       try {
         const name = moduleTitle(module, this.config.term);
-        return { module, name, error: null, stored: findModule(storedModules, name, base) };
+        return { module, name, error: null, stored: findModule(storedModules, name, base), picked: chosen(module, index) };
       } catch (error) {
         if (!(error instanceof DateConfigError)) throw error;
-        return { module, name: "", error: error.message, stored: null };
+        return { module, name: "", error: error.message, stored: null, picked: chosen(module, index) };
       }
     });
     const order = moduleOrder(storedModules);
@@ -961,7 +997,11 @@ export class Publisher {
 
     // The repo module placed or skipped last, which the next one goes after.
     let after: string | null = null;
-    for (const { module, name, error, stored } of named) {
+    for (const { module, name, error, stored, picked } of named) {
+      if (!picked) {
+        if (stored !== null) after = pyStr(stored.id);
+        continue;
+      }
       if (error !== null) {
         result.errors.push(error);
         continue;

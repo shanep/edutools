@@ -218,6 +218,7 @@ usage error such as a missing required option.
 --only <group>         limit to pages, assignments, discussions, quizzes, files,
                        modules, syllabus, rubrics, or groups (repeatable)
 --path <file>          limit to specific repo files, exact or glob (repeatable)
+--module <title>       rebuild only the modules whose title matches, exact or glob (repeatable)
 --verify               read everything back afterwards (the default)
 --no-verify            skip that read-back
 --preview <dir>        also write the rendered HTML to a directory; still pushes unless --dry-run
@@ -548,6 +549,24 @@ That leaves the assignment published. `--publish` makes an object visible; its
 absence means "leave visibility as it is", not "hide it", so a correction never
 pulls a live assignment out from under the class reading it.
 
+### Rebuilding one module
+
+A full push rebuilds every module, and `--update-published` would rebuild every
+published one, deleting and re-adding all of its items. `--module` narrows the
+rebuild to the `[[module]]` tables it names, by title, exact or glob, ignoring
+case, and leaves every other module exactly as it is:
+
+```bash
+edutools push ./cs425 --course 48194 --only modules --module "Week 8*" --update-published
+```
+
+That is how a new assignment gets into a module the class can already see. It is
+repeatable, it matches the title as written in `canvas.toml` or the Canvas name
+with its dates, and a pattern that matches no table is an error that lists them.
+It runs the module step even alongside `--only` or `--path`, so
+`--path assignments/x1.md --module "Week 8*"` pushes the file and places it in one
+go.
+
 A push also **leaves published content alone**. Rewriting a page or an assignment
 that a class is part-way through reading is worse than leaving it stale, so anything
 already visible to students is skipped and listed at the end. `--update-published`
@@ -652,7 +671,7 @@ keep = [{ quiz = 393731 }, { page = "welcome" }]
 It refuses outright if anything it would delete holds student work
 (submissions, or posts in a discussion), because deleting a graded object takes
 its grades with it. It asks before deleting unless given `--yes`, and it cannot
-be combined with `--only` or `--path`. Time passes between the list and the yes,
+be combined with `--only`, `--path` or `--module`. Time passes between the list and the yes,
 so right before deleting it checks every graded target for student work again,
 and re-reads the repository so a `canvas.toml` broken in the meantime stops the
 push while the course is still intact. Deletion stops at the first failure.

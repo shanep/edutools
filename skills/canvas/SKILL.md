@@ -347,6 +347,7 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
 | --- | --- |
 | `--dry-run` | Renders everything and writes nothing. Run it first. Needs no token, except with `--clean`. |
 | `--path <file or glob>` | Push one correction, not the whole course. Repeatable. Skips the module rebuild. |
+| `--module <title or glob>` | Rebuild only the `[[module]]` tables whose title matches, ignoring case. Repeatable. Every other module is left alone, so a published module can take `--update-published` without the rest being rebuilt. |
 | `--only <group>` | `pages`, `assignments`, `discussions`, `quizzes`, `files`, `modules`, `syllabus`, `rubrics`, `groups`. Repeatable. |
 | `--publish` | Makes what it writes visible. Leave it off unless asked. |
 | `--update-published` | Also rewrites content students can already see. See rule 5. |
@@ -387,7 +388,7 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
   student work; never try to get past that refusal. It checks for student work
   once more right before deleting, since a student may submit between the list
   and the yes, and stops at the first failed delete. It cannot be combined with
-  `--only` or `--path`. Never use it mid-term.
+  `--only`, `--path` or `--module`. Never use it mid-term.
 - **Retitling a page changes its Canvas url slug.** The push records the new one,
   so a module still finds it. A page created while an old page of the same title
   exists gets a `-2` slug; delete the old one (after confirming) if that matters.

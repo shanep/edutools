@@ -679,6 +679,35 @@ describe("drafts leave their module", () => {
     expect(errors[0]).toBe("module 'Week 1': assignments/p0.md has not been published");
   });
 
+  it("rebuilds only the modules --module names", async () => {
+    const repo = tmp();
+    mkdirSync(path.join(repo, "assignments"));
+    write(repo, "index.md", "# S\n");
+    write(repo, "assignments/p0.md", "# P0\n\n**Week 1 · 10 points**\n");
+    write(
+      repo,
+      "canvas.toml",
+      `${TERM}[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n` +
+        '[layout.gradable]\nproject = "assignments/p[0-9]*.md"\n\n' +
+        '[[module]]\ntitle = "Week 1: Intro"\nitems = ["assignments/p0.md"]\n\n' +
+        '[[module]]\ntitle = "Week 8: Midterm Exam"\nitems = ["assignments/p0.md"]\n',
+    );
+    const canvas = fakeCanvas();
+    canvas.listModules.mockResolvedValue([
+      { id: 1, name: "Week 1: Intro", position: 1, published: true },
+      { id: 8, name: "Week 8: Midterm Exam", position: 2, published: true },
+    ]);
+    const pub = new Publisher(repo, "42", canvas, { updatePublished: true });
+    pub.manifest.put("assignments/p0.md", new Entry({ kind: "assignment", canvasId: "7", title: "P0" }));
+
+    expect(pub.unmatchedModules(["week 8*", "Week 9*"])).toEqual(["Week 9*"]);
+    expect((await pub.pushModules(["week 8*"])).errors).toEqual([]);
+    // Week 1 is published and --update-published is on, yet nothing touches it.
+    expect(canvas.listModuleItems.mock.calls.map((call) => call[1])).toEqual(["8"]);
+    expect(canvas.updateModule.mock.calls.map((call) => call[1])).toEqual(["8"]);
+    expect(canvas.createModuleItem.mock.calls.every((call) => call[1] === "8")).toBe(true);
+  });
+
   it("clears the old items before adding the new ones", async () => {
     const [pub, canvas] = publisher();
     canvas.listModuleItems.mockResolvedValue([{ id: 31 }, { id: 32 }]);
