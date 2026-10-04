@@ -627,7 +627,7 @@ export class Publisher {
 
   /** The assignment group field for this item, or nothing if none applies. */
   private async groupFields(prefix: string, item: Plan): Promise<Record<string, string>> {
-    const group = item.itemKind ? this.config.groupFor(item.itemKind) : null;
+    const group = item.itemKind ? this.config.groupFor(item.itemKind, item.key) : null;
     if (group === null) return {};
     await this.syncGroups();
     const groupId = this.groups.get(group.name);

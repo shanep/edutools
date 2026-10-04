@@ -514,6 +514,24 @@ describe("assignment group placement", () => {
     expect(order.indexOf("setGroupWeighting")).toBeLessThan(order.indexOf("createAssignment"));
   });
 
+  it("files an item into the group its override names", async () => {
+    const canvas = fakeCanvas();
+    canvas.listAssignmentGroups.mockResolvedValue([
+      { id: 4, name: "Exams", group_weight: 50, position: 1 },
+      { id: 5, name: "Projects", group_weight: 10, position: 3 },
+    ]);
+    canvas.createAssignmentGroup.mockResolvedValue({ id: 9 });
+    canvas.createAssignment.mockResolvedValue({ id: "77" });
+    const publisher = groupPublisher(canvas, `${GROUPS}\n[override."assignments/p9.md"]\ngroup = "Exams"\n`);
+
+    const item = plan(publisher.repo, "assignments/p9.md", "assignment", "# P9\n\n**Week 8 · 160 points**\n");
+    item.itemKind = "project";
+    await publisher.createOrUpdate(item);
+
+    const fields = asRecord(canvas.createAssignment.mock.lastCall?.[1]);
+    expect(fields["assignment[assignment_group_id]"]).toBe("4");
+  });
+
   it("sends no group field for a kind in no group", async () => {
     const canvas = fakeCanvas();
     canvas.createAssignmentGroup.mockResolvedValue({ id: 9 });

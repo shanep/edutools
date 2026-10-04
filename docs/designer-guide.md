@@ -345,6 +345,10 @@ its path:
 due = "wed 23:59"
 ```
 
+An override can also take `group = "Midterm"` to count that one file in a different
+assignment group from the rest of its kind. The group has to be one of the
+`[[group]]` sections.
+
 More detail is in the README under [Date policies](../README.md#date-policies).
 
 #### Modules

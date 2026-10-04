@@ -371,8 +371,19 @@ export class DateConfig {
     this.icons = fields.icons ?? [];
   }
 
-  /** The assignment group an item of this kind belongs in, if any. */
-  groupFor(kind: string): Group | null {
+  /**
+   * The assignment group an item belongs in, if any.
+   *
+   * An `[override."<key>"] group` names the group for that one file, which is
+   * how a take home alternative to an exam lands in the exam's group while the
+   * rest of its kind stays where the kind puts it.
+   */
+  groupFor(kind: string, key?: string): Group | null {
+    const override = key !== undefined && Object.hasOwn(this.overrides, key) ? this.overrides[key] : undefined;
+    const named = override !== undefined ? get(override, "group") : undefined;
+    if (typeof named === "string") {
+      return this.groups.find((group) => group.name === named) ?? null;
+    }
     // Widened so any string can be looked up; a non-kind simply matches nothing.
     return this.groups.find((group) => (group.kinds as readonly string[]).includes(kind)) ?? null;
   }
@@ -473,14 +484,35 @@ export function loadConfig(repo: string): DateConfig {
       if (isTable(value)) overrides[key] = { ...value };
     }
   }
+  const groups = loadGroups(raw);
+  checkOverrideGroups(overrides, groups);
   return new DateConfig({
     term,
     policies,
     overrides,
     layout: loadLayout(raw),
-    groups: loadGroups(raw),
+    groups,
     icons: loadIcons(raw, repo),
   });
+}
+
+/**
+ * Every `[override."<key>"] group` must name a declared [[group]].
+ *
+ * Groups are paired with Canvas by name, so a misspelt name would otherwise
+ * leave the item wherever Canvas put it, with nothing to say so.
+ */
+function checkOverrideGroups(overrides: Record<string, Record<string, unknown>>, groups: readonly Group[]): void {
+  for (const [key, override] of Object.entries(overrides)) {
+    const named = get(override, "group");
+    if (named === undefined) continue;
+    if (typeof named !== "string" || !named.trim()) {
+      throw new DateConfigError(`[override.${pyRepr(key)}] group must be a non-empty string, got ${pyRepr(named)}`);
+    }
+    if (!groups.some((group) => group.name === named)) {
+      throw new DateConfigError(`[override.${pyRepr(key)}] group ${pyRepr(named)} is not a declared [[group]]`);
+    }
+  }
 }
 
 function day(date: ISODate): string {

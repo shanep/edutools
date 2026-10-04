@@ -252,11 +252,15 @@ weight = 10
 kinds  = ["project"]
 ```
 
-Two things to know before editing those blocks:
+Three things to know before editing those blocks:
 
 - **Groups are paired up by name.** Changing the name in `canvas.toml` does not
   rename the group in Canvas, it creates a second one beside it. Read the current
   names with `edutools groups` and match them character for character.
+- **One file can go into a different group than its kind** with
+  `[override."<path>"] group = "<name>"`, for example a take home exam
+  alternative that is a `project` by kind but counts in the exam's group. The
+  name must match a declared `[[group]]`, or the config fails to load.
 - **An omitted `weight` means the weight is managed in Canvas**, not that it is
   zero. The push positions and names the group but never writes a weight, which is
   how an extra credit group that is raised by hand before final grades survives a

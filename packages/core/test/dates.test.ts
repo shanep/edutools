@@ -440,6 +440,38 @@ describe("assignment groups", () => {
     expect(found?.name).toBe("In Class");
     expect(found?.weight).toBe(40.0);
   });
+
+  // A take home exam alternative is a project by kind but counts in the exam's group.
+  it("an override files one item into a named group", () => {
+    const config = new DateConfig({
+      term: makeTerm(),
+      policies: {},
+      overrides: { "assignments/x1.md": { group: "Midterm" } },
+      groups: loadGroups(raw('[[group]]\nname = "Midterm"\n\n[[group]]\nname = "Projects"\nkinds = ["project"]\n')),
+    });
+    expect(config.groupFor("project", "assignments/x1.md")?.name).toBe("Midterm");
+    expect(config.groupFor("project", "assignments/p1.md")?.name).toBe("Projects");
+    expect(config.groupFor("project")?.name).toBe("Projects");
+  });
+
+  it("an override group must be declared", () => {
+    const repo = tmpRepo();
+    const toml = (group: string): string =>
+      "[term]\n" +
+      'timezone = "America/Boise"\n' +
+      "first_monday = 2026-08-24\nweeks = 15\n" +
+      "last_day_of_instruction = 2026-12-11\n" +
+      "finals_start = 2026-12-14\nfinals_end = 2026-12-18\n\n" +
+      '[term.policy.project]\ndue = "tue 23:59"\n\n' +
+      `[override."assignments/x1.md"]\ngroup = ${group}\n\n` +
+      '[[group]]\nname = "Midterm"\n';
+    writeFileSync(path.join(repo, "canvas.toml"), toml('"Midterms"'), "utf-8");
+    expect(() => loadConfig(repo)).toThrow(/group 'Midterms' is not a declared \[\[group\]\]/);
+    writeFileSync(path.join(repo, "canvas.toml"), toml("3"), "utf-8");
+    expect(() => loadConfig(repo)).toThrow(/group must be a non-empty string/);
+    writeFileSync(path.join(repo, "canvas.toml"), toml('"Midterm"'), "utf-8");
+    expect(loadConfig(repo).groupFor("project", "assignments/x1.md")?.name).toBe("Midterm");
+  });
 });
 
 // A draft is not a Canvas object, so it never gets a due date.

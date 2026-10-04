@@ -760,6 +760,17 @@ declares a `weight`, the course itself is set to weight the final grade by group
 because Canvas stores weights and ignores them until that is on. A repo with no
 `[[group]]` blocks leaves the course's groups and its weighting setting untouched.
 
+One file can be filed into a different group from the rest of its kind with a
+`group` in its override, which must name a declared `[[group]]`. A take home
+alternative to the midterm is a project by kind, but it counts in the midterm's
+group:
+
+```toml
+[override."assignments/x1.md"]
+due   = "fri 23:59"
+group = "Midterm"
+```
+
 Groups are matched by name, so renaming one in `canvas.toml` creates a second group
 rather than renaming the first. Weights are not required to add to 100. A course
 with an extra credit group on top of a full 100% is a normal thing to want, so
