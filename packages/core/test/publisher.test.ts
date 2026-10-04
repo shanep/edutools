@@ -484,7 +484,8 @@ describe("assignment group sync", () => {
     });
     const result = await publisher.syncGroups();
     expect(canvas.listAssignmentGroups).not.toHaveBeenCalled();
-    expect(result.skipped).toBe(3);
+    // Listed but not counted: only Canvas knows whether a group would change.
+    expect([result.created, result.updated, result.skipped]).toEqual([0, 0, 0]);
     expect(reported[1]).toBe("[dim]group In Class (40%) <- lab[/dim]");
   });
 });

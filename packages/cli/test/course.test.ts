@@ -112,6 +112,8 @@ describe("push", () => {
 
     expect(result.code, result.output).toBe(0);
     expect(result.stdout).toContain("dry run: nothing was written to Canvas.");
+    expect(result.stdout).toContain("would create");
+    expect(result.stdout).not.toMatch(/^.*\bskipped\b/m);
     expect(existsSync(path.join(repo, ".canvas"))).toBe(false);
   });
 

@@ -161,13 +161,24 @@ describe("push", () => {
     const result = await push(null, { repo, courseId: COURSE, dryRun: true });
 
     expect(result.selected).toEqual(["pages/welcome.md", "assignments/p0.md", "assignments/p1.md", "index.md"]);
-    // The four objects. Skipped modules are not counted, as in the Python.
-    expect(result.skipped).toBe(4);
+    // Nothing is in the manifest yet, so all four objects would be created.
+    expect(result.created).toBe(4);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(0);
     expect(result.problems).toEqual([]);
     expect(result.rendered.get("pages/welcome.md")).toContain("Hello.");
     expect(result.unlisted).toEqual(["assignments/p1.md"]);
     expect(result.verify).toBeNull();
     expect(existsSync(path.join(repo, ".canvas"))).toBe(false);
+  });
+
+  it("a dry run counts an object the manifest records as an update", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    const result = await push(null, { repo, courseId: COURSE, dryRun: true, paths: ["assignments/p0.md"] });
+
+    expect(result.created).toBe(0);
+    expect(result.updated).toBe(1);
+    expect(result.skipped).toBe(0);
   });
 
   it("a push that writes needs a client", async () => {

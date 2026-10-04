@@ -215,7 +215,9 @@ usage error such as a missing required option.
 ```
 --course <id>          Canvas course ID (required)
 --dry-run              render everything, write nothing to Canvas; needs no token
-                       unless combined with --clean
+                       unless combined with --clean. Its counts come from the
+                       manifest: a recorded object is a "would update", a new one
+                       a "would create"; groups and modules are not counted
 --publish              make the objects student-visible (default: unpublished)
 --update-published     also rewrite content students can already see
 --only <group>         limit to pages, assignments, discussions, quizzes, files,

@@ -122,11 +122,17 @@ function report(cli: Cli, result: PushResult, options: Options): void {
     cli,
     "Canvas push",
     [{ name: "Outcome", style: c.cyan }, { name: "Count", align: "right" }],
-    [
-      ["created", String(result.created)],
-      ["updated", String(result.updated)],
-      ["skipped", String(result.skipped)],
-    ],
+    result.dryRun
+      ? [
+          ["would create", String(result.created)],
+          ["would update", String(result.updated)],
+          ["would skip", String(result.skipped)],
+        ]
+      : [
+          ["created", String(result.created)],
+          ["updated", String(result.updated)],
+          ["skipped", String(result.skipped)],
+        ],
   );
 
   if (result.problems.length > 0) {
@@ -142,6 +148,12 @@ function report(cli: Cli, result: PushResult, options: Options): void {
   }
 
   if (result.dryRun) {
+    cli.print(
+      c.dim(
+        "A dry run reads nothing from Canvas: an object the manifest records counts as an update,\n" +
+          "and the real push skips any that are published unless --update-published is given.",
+      ),
+    );
     cli.print(`\n${c.green("✓")} dry run: nothing was written to Canvas.`);
     return;
   }

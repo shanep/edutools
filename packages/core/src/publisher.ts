@@ -602,8 +602,9 @@ export class Publisher {
       for (const group of this.config.groups) {
         const weight = group.weight !== null ? ` (${formatG(group.weight)}%)` : "";
         const kinds = group.kinds.length > 0 ? ` <- ${group.kinds.join(", ")}` : "";
+        // Listed, not counted: whether a group changes depends on what Canvas
+        // holds, and a dry run does not read Canvas.
         this.report(`[dim]group ${group.name}${weight}${kinds}[/dim]`);
-        result.skipped += 1;
       }
       return result;
     }
@@ -663,8 +664,12 @@ export class Publisher {
     item.title = title || item.title;
     this.rendered.set(item.key, html);
 
+    // A dry run reads nothing from Canvas, so the manifest is the guess: an
+    // object it records would be updated, anything else created. A real push
+    // still skips one that turns out to be published.
     if (this.dryRun) {
-      result.skipped = 1;
+      if (this.manifest.get(item.key) !== null) result.updated = 1;
+      else result.created = 1;
       return result;
     }
 
@@ -804,8 +809,11 @@ export class Publisher {
   private async pushFile(item: Plan): Promise<Result> {
     const result = new Result();
     if (item.source === null) return result;
+    // A recorded file is matched by content and usually left alone; a new one
+    // would be uploaded.
     if (this.dryRun) {
-      result.skipped = 1;
+      if (this.manifest.get(item.key) !== null) result.skipped = 1;
+      else result.created = 1;
       return result;
     }
     const reused = await this.matchingCourseFile(item);

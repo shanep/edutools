@@ -345,7 +345,7 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
 
 | Option | Notes |
 | --- | --- |
-| `--dry-run` | Renders everything and writes nothing. Run it first. Needs no token, except with `--clean`. |
+| `--dry-run` | Renders everything and writes nothing. Run it first. Needs no token, except with `--clean`. It reads nothing from Canvas, so its "would update" means the manifest records the object; the real push still skips one that is published. |
 | `--path <file or glob>` | Push one correction, not the whole course. Repeatable. Skips the module rebuild. |
 | `--module <title or glob>` | Rebuild only the `[[module]]` tables whose title matches, ignoring case. Repeatable. Every other module is left alone, so a published module can take `--update-published` without the rest being rebuilt. |
 | `--only <group>` | `pages`, `assignments`, `discussions`, `quizzes`, `files`, `modules`, `syllabus`, `rubrics`, `groups`. Repeatable. |
