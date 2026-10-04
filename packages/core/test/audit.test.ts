@@ -194,6 +194,11 @@ describe("native items", () => {
 
   it("has no items without a canvas list", () => {
     expect(parseNativeItems({ title: "Week 1" })).toEqual([]);
+    expect(parseNativeItems({ canvas: [{ url: "https://example.edu/a", title: "Slides" }] })).toEqual([
+      { kind: "url", ident: "https://example.edu/a", title: "Slides" },
+    ]);
+    expect(() => parseNativeItems({ canvas: [{ url: "https://example.edu/a" }] })).toThrow(/a url needs a title/);
+    expect(() => parseNativeItems({ canvas: [{ url: "example.edu", title: "x" }] })).toThrow(/http:\/\/ or https:\/\//);
   });
 
   it("rejects two kinds in one entry", () => {

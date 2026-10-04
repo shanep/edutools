@@ -478,6 +478,10 @@ the object's own name. Ids come from `edutools assignments`, `edutools audit`, o
 address bar. A malformed entry is reported as an error for that module rather than
 built around.
 
+An external link is `{ url = "https://...", title = "A4 Slides" }`. It becomes a
+Canvas ExternalUrl item that opens in a new tab, and it needs a title, since there
+is no Canvas object to borrow one from. The site's schedule shows it as a link.
+
 A module can also carry text headers, and a native item can sit at a particular
 point instead of after the repo items. Both go straight into `items`:
 

@@ -75,6 +75,17 @@ describe("outline", () => {
     expect(result[0]?.items[0]?.title).toBe("quiz 7");
   });
 
+  it("shows an external link with its address, and only it gains a url field", () => {
+    const modules = [
+      { title: "W", page: "notes/ch01.md", items: [{ url: "https://example.edu/slides", title: "Slides" }] },
+    ];
+    const result = outline(repo(), modules, {}, {});
+    expect(result[0]?.items[1]).toEqual(item({ kind: "url", title: "Slides", url: "https://example.edu/slides" }));
+    const json = toJson(result);
+    expect(json[0]?.items[0]).not.toHaveProperty("url");
+    expect(json[0]?.items[1]?.url).toBe("https://example.edu/slides");
+  });
+
   it("serialises to plain objects with the Python field names", () => {
     const result = outline(repo(), [{ title: "W", page: "notes/ch01.md" }], {}, {});
     expect(toJson(result)).toEqual([

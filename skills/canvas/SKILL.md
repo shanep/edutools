@@ -412,6 +412,7 @@ items = [
     { header = "Due by Sunday at 11:59 p.m. Mountain Time" },
     "reminders/d03-replies.md",    # the `reminder` kind: an ungraded nudge
     { quiz = 393733, title = "5.04 Survey" },   # a Canvas-native item, kept in place
+    { url = "https://example.edu/slides", title = "Slides" },   # an external link, new tab
 ]
 ```
 

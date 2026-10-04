@@ -381,6 +381,8 @@ items = [
   Audit) with one of `page` (by its url slug), `assignment`, `discussion`, `quiz` or
   `file`, plus an optional `title`. Put it in `items` to place it among the files, or
   in a `canvas = [ ... ]` list to add it after them.
+- `{ url = "https://...", title = "Slides" }` adds a link to a web page outside
+  Canvas, opening in a new tab. It always needs a title.
 
 Each publish rebuilds a module from this list, so anything added to the module by hand
 in Canvas and not named here is dropped. If you add something to a module in Canvas,

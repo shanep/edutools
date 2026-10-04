@@ -21,12 +21,13 @@ import type { Payload } from "./types";
 
 /** One row under a module, as Canvas will show it. */
 export interface OutlineItem {
-  readonly kind: string; // page, assignment, discussion, quiz, file, header
+  readonly kind: string; // page, assignment, discussion, quiz, file, url, header
   readonly title: string;
   readonly path: string; // repo path without .md, for the site to link; "" for a native item
   readonly dueAt: string | null; // ISO 8601 with offset
   readonly points: number | null;
   readonly canvasId: string; // native items only
+  readonly url?: string; // url items only: where the link goes
 }
 
 export interface OutlineModule {
@@ -42,6 +43,7 @@ export interface OutlineItemJson {
   due_at: string | null;
   points: number | null;
   canvas_id: string;
+  url?: string;
 }
 
 export interface OutlineModuleJson {
@@ -61,6 +63,7 @@ function row(fields: Partial<OutlineItem> & Pick<OutlineItem, "kind" | "title">)
 }
 
 function nativeRow(n: NativeItem): OutlineItem {
+  if (n.kind === "url") return row({ kind: "url", title: n.title, url: n.ident });
   return row({ kind: n.kind, title: n.title || `${n.kind} ${n.ident}`, canvasId: n.ident });
 }
 
@@ -149,6 +152,8 @@ export function toJson(modules: readonly OutlineModule[]): OutlineModuleJson[] {
       due_at: i.dueAt,
       points: i.points,
       canvas_id: i.canvasId,
+      // Only a url row carries one, so no other row's JSON changes shape.
+      ...(i.url ? { url: i.url } : {}),
     })),
   }));
 }

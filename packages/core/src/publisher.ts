@@ -118,6 +118,7 @@ const MODULE_ITEM_TYPES: Readonly<Record<ItemKind, string>> = {
   quiz: "Quiz",
   file: "File",
   header: "SubHeader",
+  url: "ExternalUrl",
 };
 
 // What a `never_publish` module is written with on every push. Unpublished is the
@@ -1107,7 +1108,10 @@ export class Publisher {
         // is what a native item wants; a repo item sends the rendered one.
         if (title) fields["module_item[title]"] = title;
         if (kind === "page") fields["module_item[page_url]"] = ident;
-        else if (kind !== "header") fields["module_item[content_id]"] = ident;
+        else if (kind === "url") {
+          fields["module_item[external_url]"] = ident;
+          fields["module_item[new_tab]"] = "true";
+        } else if (kind !== "header") fields["module_item[content_id]"] = ident;
         await canvas.createModuleItem(course, moduleId, fields);
       }
 

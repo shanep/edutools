@@ -1281,9 +1281,9 @@ export class Entry {
   }
 }
 
-export type NativeKind = "page" | "assignment" | "discussion" | "quiz" | "file";
+export type NativeKind = "page" | "assignment" | "discussion" | "quiz" | "file" | "url";
 
-const NATIVE_KINDS: readonly NativeKind[] = ["page", "assignment", "discussion", "quiz", "file"];
+const NATIVE_KINDS: readonly NativeKind[] = ["page", "assignment", "discussion", "quiz", "file", "url"];
 
 /**
  * A module item that exists only in Canvas, named in a [[module]] table.
@@ -1297,7 +1297,9 @@ const NATIVE_KINDS: readonly NativeKind[] = ["page", "assignment", "discussion",
  *     page   = "notes/midterm-review.md"
  *     canvas = [{ quiz = 394147 }, { quiz = 393662, title = "Midterm" }]
  *
- * A page is named by its url slug; everything else by its numeric id.
+ * A page is named by its url slug, an external link by its address
+ * (`{ url = "https://...", title = "Slides" }`, which needs a title), and
+ * everything else by its numeric id.
  */
 export interface NativeItem {
   readonly kind: NativeKind;
@@ -1335,7 +1337,15 @@ function nativeItem(entry: unknown, index: number): NativeItem {
   }
   const ident = String(entry[kind]).trim();
   if (!ident) throw new ValueError(`canvas item ${index}: ${kind} needs an id`);
-  return { kind, ident, title: String(entry.title ?? "") };
+  const title = String(entry.title ?? "");
+  if (kind === "url") {
+    // Canvas has no content to borrow a title from, and only links out over http.
+    if (!/^https?:\/\//.test(ident)) {
+      throw new ValueError(`canvas item ${index}: url must start with http:// or https://, got ${pyRepr(ident)}`);
+    }
+    if (!title.trim()) throw new ValueError(`canvas item ${index}: a url needs a title`);
+  }
+  return { kind, ident, title };
 }
 
 /**

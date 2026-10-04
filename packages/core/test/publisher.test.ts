@@ -709,6 +709,27 @@ describe("drafts leave their module", () => {
     expect(canvas.createModuleItem.mock.calls.every((call) => call[1] === "8")).toBe(true);
   });
 
+  it("adds an external link as an ExternalUrl item that opens in a new tab", async () => {
+    const repo = tmp();
+    write(repo, "index.md", "# S\n");
+    write(
+      repo,
+      "canvas.toml",
+      `${TERM}[layout]\nsyllabus = "index.md"\npages = []\nfiles = []\n\n` +
+        '[[module]]\ntitle = "Week 7"\nitems = [{ url = "https://example.edu/slides", title = "A4 Slides" }]\n',
+    );
+    const canvas = fakeCanvas();
+    const pub = new Publisher(repo, "42", canvas);
+    expect((await pub.pushModules()).errors).toEqual([]);
+    expect(canvas.createModuleItem.mock.lastCall?.[2]).toEqual({
+      "module_item[type]": "ExternalUrl",
+      "module_item[position]": "1",
+      "module_item[title]": "A4 Slides",
+      "module_item[external_url]": "https://example.edu/slides",
+      "module_item[new_tab]": "true",
+    });
+  });
+
   it("clears the old items before adding the new ones", async () => {
     const [pub, canvas] = publisher();
     canvas.listModuleItems.mockResolvedValue([{ id: 31 }, { id: 32 }]);
