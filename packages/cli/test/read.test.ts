@@ -3,7 +3,7 @@
  * with --json, stdout is the raw payload and nothing else.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { type FakeClient, fakeClient, invoke, tmpDir } from "./harness";
@@ -326,5 +326,68 @@ describe("export", () => {
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("could not export course 42");
+  });
+});
+
+describe("quiz-questions", () => {
+  function questionFile(): string {
+    const file = path.join(tmpDir(), "q.json");
+    writeFileSync(
+      file,
+      JSON.stringify([
+        {
+          question_type: "multiple_choice_question",
+          question_text: "x",
+          points_possible: 2,
+          answers: [{ answer_text: "a", answer_weight: 100 }],
+        },
+      ]),
+    );
+    return file;
+  }
+
+  it("a dry run shows the plan and writes nothing", async () => {
+    canvas.getQuiz.mockResolvedValue({ id: 5, title: "Midterm", published: true });
+    canvas.listQuizQuestions.mockResolvedValue([]);
+    canvas.getQuizGroup.mockResolvedValue({ id: 7, quiz_id: 5, name: "Ch 1", pick_count: 20 });
+    const result = await invoke(
+      ["quiz-questions", "5", "-c", "1", "--from-file", questionFile(), "--remove-group", "7", "--update-published", "--dry-run"],
+      { client: canvas },
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.stdout).toContain("Would replace");
+    expect(result.stdout).toContain("remove group 7");
+    expect(canvas.createQuizQuestion).not.toHaveBeenCalled();
+  });
+
+  it("a published quiz needs --update-published", async () => {
+    canvas.getQuiz.mockResolvedValue({ id: 5, published: true });
+    canvas.listQuizQuestions.mockResolvedValue([]);
+    const result = await invoke(["quiz-questions", "5", "-c", "1", "--from-file", questionFile()], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("is published");
+  });
+
+  it("a malformed file is a usage error", async () => {
+    const file = path.join(tmpDir(), "q.json");
+    writeFileSync(file, "{}");
+    const result = await invoke(["quiz-questions", "5", "-c", "1", "--from-file", file], { client: canvas });
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("JSON list");
+  });
+
+  it("exits 1 when Canvas reports a different count afterwards", async () => {
+    canvas.getQuiz
+      .mockResolvedValueOnce({ id: 5, published: false })
+      .mockResolvedValueOnce({ id: 5, question_count: 0, points_possible: 0 });
+    canvas.listQuizQuestions.mockResolvedValue([]);
+    canvas.createQuizQuestion.mockResolvedValue({});
+    const result = await invoke(["quiz-questions", "5", "-c", "1", "--from-file", questionFile()], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Canvas now reports 0 question(s)");
   });
 });

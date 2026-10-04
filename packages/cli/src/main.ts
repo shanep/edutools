@@ -34,6 +34,7 @@ import { register as publish } from "./commands/publish";
 import { register as pull } from "./commands/pull";
 import { register as rubric } from "./commands/rubric";
 import { register as push } from "./commands/push";
+import { register as quizQuestions } from "./commands/quiz-questions";
 import { register as site } from "./commands/site";
 import { register as students } from "./commands/students";
 import { register as submission } from "./commands/submission";
@@ -80,6 +81,7 @@ const COMMANDS: readonly Register[] = [
   grade,
   editComment,
   rubric,
+  quizQuestions,
 ];
 
 export function createProgram(cli: Cli): Command {

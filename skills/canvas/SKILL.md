@@ -555,6 +555,41 @@ assignment `push` manages is overwritten by the next push.
 - To grade with it, read the criterion ids from `submission --json` or the
   assignment's `rubric` field and pass them in each row's `rubric` object.
 
+### Replacing a hand built quiz's questions
+
+```bash
+edutools quiz-questions <quiz_id> -c <course_id> --from-file questions.json \
+    [--remove-group <id>]... [--update-published] --dry-run
+```
+
+For a quiz no repo manages (an exam behind LockDown Browser). The file is a list
+of questions in the quiz questions API's shape, the same as `pull`'s
+`.questions.json`: `question_name`, `question_type` (any type, matching and short
+answer included), `points_possible`, `question_text` (HTML), the `*_comments`
+fields, `matching_answer_incorrect_matches`, and `answers` with `answer_weight`
+(100 or 0), `answer_text` or `answer_html`, `answer_match_left` and
+`answer_match_right`. Every existing question is deleted first.
+
+- **Relative image paths are uploaded and relinked**, into a hidden course folder
+  (`quiz images/<quiz_id>`), so students cannot browse an exam's figures. Remote
+  image urls are left alone and warned about; download them first if the quiz
+  should not depend on another server.
+- **`--remove-group` deletes a question group**, such as a draw from a bank.
+  Canvas cannot list a quiz's groups. Their ids come from a whole-course
+  `export --type common_cartridge`: each group is a `<section ident="g...">` in
+  the quiz's file in `non_cc_assessments/`, where the hex after the `g` is the
+  MD5 of `quizzes/quiz_group_<global id>`, and a global id is
+  `shard * 10**13 + id`. Recover the shard the same way from the quiz's own
+  ident, the MD5 of `quizzes:quiz_<global id>`, then try local group ids from 0
+  up (a few million take seconds). The dry run reads each group back and refuses one from another quiz,
+  which proves the ids before anything is deleted.
+- **A published quiz needs `--update-published`** (rule 5), and is unpublished,
+  rebuilt and published again, because Canvas freezes a published quiz's question
+  set. Canvas refuses the unpublish once a student has taken the quiz. Check
+  `submissions` first.
+- **It reads the quiz back** and exits 1 when Canvas reports a different question
+  count or point total than the file. Report that rather than retrying.
+
 ### A whole class
 
 Write a file, dry run it, then send it:

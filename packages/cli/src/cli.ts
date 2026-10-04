@@ -25,6 +25,7 @@ import {
 import type { CourseCanvas } from "@edutools/core/course";
 import type { ExportCanvas } from "@edutools/core/export";
 import type { PullCanvas } from "@edutools/core/pull";
+import type { QuizQuestionsCanvas } from "@edutools/core/quiz-questions";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -32,6 +33,7 @@ import pc from "picocolors";
 export type CanvasClient = PullCanvas &
   CourseCanvas &
   ExportCanvas &
+  QuizQuestionsCanvas &
   Pick<
     CanvasLMS,
     | "getCourses"

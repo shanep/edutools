@@ -786,3 +786,28 @@ describe("content exports", () => {
     expect(last(fake.calls).url).toBe("https://c.test/api/v1/courses/123/content_exports/5");
   });
 });
+
+describe("quiz groups and folders", () => {
+  it("reads and deletes a quiz group by id", async () => {
+    const fake = always(() => json({ id: 7 }));
+    await client(fake.fetch).getQuizGroup("1", "5", "7");
+    expect(last(fake.calls).url).toBe("https://c.test/api/v1/courses/1/quizzes/5/groups/7");
+    await client(fake.fetch).deleteQuizGroup("1", "5", "7");
+    expect(last(fake.calls).method).toBe("DELETE");
+  });
+
+  it("raises when a group delete fails", async () => {
+    const fake = always(() => text("not found", 404));
+    await expect(client(fake.fetch).deleteQuizGroup("1", "5", "7")).rejects.toThrow(/404/);
+  });
+
+  it("creates a hidden folder and hides an existing one", async () => {
+    const fake = always(() => json({ id: 3 }));
+    await client(fake.fetch).createFolder("1", { name: "5", parent_folder_path: "course files/quiz images", hidden: "true" });
+    expect(last(fake.calls).url).toBe("https://c.test/api/v1/courses/1/folders");
+    expect(new URLSearchParams(String(last(fake.calls).body)).get("hidden")).toBe("true");
+    await client(fake.fetch).updateFolder("3", { hidden: "true" });
+    expect(last(fake.calls).method).toBe("PUT");
+    expect(last(fake.calls).url).toBe("https://c.test/api/v1/folders/3");
+  });
+});

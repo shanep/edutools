@@ -201,6 +201,9 @@ edutools edit-comment [-c <id>] [-a <id>] --from-file <file|-> [--csv] [--dry-ru
                                                    rewrite a batch of comments
 edutools rubric [-c <id>] [-a <id>] --from-file <file> [--title <text>] [--dry-run]
                                                    attach a rubric from JSON
+edutools quiz-questions <quiz_id> -c <id> --from-file <file> [--remove-group <id>]...
+                        [--folder <path>] [--update-published] [--dry-run] [--json]
+                                                   replace a hand built quiz's questions
 ```
 
 Exit codes: 0 on success, 1 when a command fails or finds a problem (a failed
@@ -1019,6 +1022,56 @@ If the assignment uses a **manual posting policy**, a grade written here lands o
 the submission but stays hidden from the student until it is posted from the Canvas
 gradebook. Canvas exposes posting only through its GraphQL API, so `edutools` does
 not do it.
+
+### Replacing the questions in a quiz
+
+`quiz-questions` replaces every question in one classic quiz with the ones in a
+JSON file. It is for a quiz the repo does not manage, such as an exam built by
+hand behind LockDown Browser. `push` builds a repo quiz's questions from markdown
+and only knows multiple choice, multiple answer and true/false; this takes any
+question type, matching and short answer included.
+
+```bash
+edutools quiz-questions 393662 -c 12345 --from-file midterm/questions.json \
+    --remove-group 496891 --remove-group 496892 --update-published --dry-run
+```
+
+The file is a list of questions in the shape the quiz questions API returns,
+which is also what `pull` writes to `.questions.json`, so a pulled quiz can be
+edited and sent back. Canvas's own bookkeeping in it (`id`, `quiz_id`,
+`position`) is ignored, and the questions are added in file order.
+
+```json
+[{"question_name": "1.3-1", "question_type": "multiple_choice_question",
+  "points_possible": 2,
+  "question_text": "<p>How many calls?</p><p><img src=\"img/1.3-1.png\"></p>",
+  "answers": [{"answer_text": "70", "answer_weight": 100},
+              {"answer_text": "20", "answer_weight": 0}]},
+ {"question_name": "2.1-4", "question_type": "matching_question",
+  "points_possible": 2, "question_text": "<p>Match each protocol.</p>",
+  "matching_answer_incorrect_matches": "UDP\nIP",
+  "answers": [{"answer_match_left": "web", "answer_match_right": "HTTP", "answer_weight": 100}]}]
+```
+
+An `<img>` whose src is a relative path is read from beside the file, uploaded to
+a hidden course folder (`quiz images/<quiz_id>` unless `--folder` names another)
+and relinked, so the quiz does not depend on someone else's server. Hidden keeps
+the folder out of the Files list, so students cannot browse an exam's figures,
+while the quiz still shows them. An image that already points at a url is left
+alone and listed as a warning.
+
+`--remove-group` deletes a question group in the same run, which is how a quiz
+moves from a draw out of a question bank to a fixed set. Canvas has no endpoint
+that lists a quiz's groups; `export` (see above) names them, and the canvas skill
+says how to turn those names into ids. A group from another quiz is refused.
+
+A published quiz is only rebuilt with `--update-published`. Canvas freezes the
+question set of a published quiz, so the quiz is unpublished, rebuilt and
+published again, and Canvas refuses the unpublish once a student has taken it.
+Images are uploaded before anything in the quiz changes. Afterwards the command
+reads the quiz back and exits 1 if Canvas reports a different question count or
+point total. `--dry-run` reads the quiz and the groups and checks the image files,
+and writes nothing.
 
 ## Desktop app
 

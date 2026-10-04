@@ -544,6 +544,23 @@ export class CanvasLMS {
     );
   }
 
+  /**
+   * One question group: a set of questions, or a draw of `pick_count` from the
+   * bank `assessment_question_bank_id`. Canvas has no endpoint that lists a
+   * quiz's groups, so the id has to come from somewhere else.
+   */
+  async getQuizGroup(courseId: string, quizId: string, groupId: string): Promise<Payload> {
+    return this.json("GET", `/api/v1/courses/${courseId}/quizzes/${quizId}/groups/${groupId}`);
+  }
+
+  async deleteQuizGroup(courseId: string, quizId: string, groupId: string): Promise<void> {
+    const response = await this.request(
+      "DELETE",
+      `/api/v1/courses/${courseId}/quizzes/${quizId}/groups/${groupId}`,
+    );
+    if (!response.ok) throw new CanvasApiError(response.status, await response.text());
+  }
+
   // -- modules --------------------------------------------------------
 
   async listModules(courseId: string): Promise<Payload[]> {
@@ -600,6 +617,19 @@ export class CanvasLMS {
 
   async getFile(fileId: string): Promise<Payload> {
     return this.getJson(`/api/v1/files/${fileId}`);
+  }
+
+  /**
+   * Create a folder under `parent_folder_path`, which Canvas creates too if it is
+   * missing. `hidden` keeps it out of the Files list while its files still open
+   * from a link, which is what an image in a quiz needs.
+   */
+  async createFolder(courseId: string, fields: Record<string, string>): Promise<Payload> {
+    return this.json("POST", `/api/v1/courses/${courseId}/folders`, fields);
+  }
+
+  async updateFolder(folderId: string, fields: Record<string, string>): Promise<Payload> {
+    return this.json("PUT", `/api/v1/folders/${folderId}`, fields);
   }
 
   /**
