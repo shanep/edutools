@@ -40,6 +40,7 @@ export function toVerifySummary(result: VerifyResult): VerifySummary {
     checked: result.checked,
     drafts: [...result.drafts],
     failures: result.failures.map((f) => ({ key: f.key, check: f.check, detail: f.detail })),
+    overrides: result.overrides.map((o) => ({ key: o.key, detail: o.detail })),
   };
 }
 

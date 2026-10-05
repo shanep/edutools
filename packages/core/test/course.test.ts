@@ -121,6 +121,7 @@ function fakeCanvas(): Fake & { maxInFlight: () => number } {
     getPage: () => ({}),
     getAssignments: () => [],
     getAssignmentFull: () => ({}),
+    listAssignmentOverrides: () => [],
     listDiscussions: () => [],
     getDiscussion: () => ({}),
     listQuizzes: () => [],
@@ -463,6 +464,29 @@ describe("verify", () => {
       "points",
       "due_at",
     ]);
+  });
+
+  it("an extension is listed, not failed, and its date is not taken for the assignment's", async () => {
+    writeManifest(repo, {
+      "assignments/p0.md": { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} },
+    });
+    const item = courseDates(repo).items[0];
+    const utc = (stamp: NonNullable<typeof item>["dueAt"]): string => stamp.toUTC().toISO({ suppressMilliseconds: true }) ?? "";
+    canvas.getAssignmentFull.mockResolvedValue({
+      name: "P0",
+      points_possible: 50,
+      due_at: item ? utc(item.dueAt) : null,
+      lock_at: item ? utc(item.lockAt) : null,
+      has_overrides: true,
+    });
+    canvas.listAssignmentOverrides.mockResolvedValue([
+      { title: "1 student", lock_at: item ? utc(item.lockAt.plus({ days: 3 })) : null },
+    ]);
+    const result = await verifyCourse(canvas, { repo, courseId: COURSE });
+
+    expect(canvas.listAssignmentOverrides).toHaveBeenCalledWith(COURSE, "7");
+    expect(result.failures.filter((f) => ["lock_at", "override"].includes(f.check))).toEqual([]);
+    expect(result.overrides.map((o) => o.key)).toEqual(["assignments/p0.md"]);
   });
 
   it("a module is read back item by item against canvas.toml", async () => {

@@ -453,9 +453,15 @@ Both require `--course <id>`.
   editing in the Canvas UI: a body, points, a due, unlock or lock date (compared
   to the minute), or a module's items and their order. `push` runs it
   automatically. It exits 1 when anything failed. With `--json` it prints
-  `{"checked", "drafts", "failures": [{"key", "check", "detail"}]}`, where `key` is
-  the repo path (`[[module]] <name>` for a module) and `drafts` the paths skipped
-  because they are now drafts.
+  `{"checked", "drafts", "failures": [{"key", "check", "detail"}], "overrides": [{"key", "detail"}]}`,
+  where `key` is the repo path (`[[module]] <name>` for a module), `drafts` the
+  paths skipped because they are now drafts, and `overrides` the assignments with
+  per-student or per-section dates.
+- **An override is not drift.** Verify compares an assignment's own dates and
+  lists its overrides (extensions) as notes. Leave them alone; a push never
+  touches them. The one override it fails is one that now ends before the class
+  does, which means the repo moved the class's date past someone's extension:
+  tell the user so they can extend it again in Canvas.
 - **A date or module failure on published content is real drift**, usually an
   edit made in the Canvas UI. Ask the user which side is right: bring the change
   into the repo, or push the repo's version with `--update-published` (rule 5).

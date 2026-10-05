@@ -8,6 +8,7 @@ import { expandHome, printTable, progressLine } from "../format";
 export function printVerify(cli: Cli, result: VerifyResult): boolean {
   const { c } = cli;
   if (result.drafts.length > 0) cli.print(c.dim(`draft, not verified: ${result.drafts.join(", ")}`));
+  for (const note of result.overrides) cli.print(c.dim(`overrides, left alone: ${note.key}: ${note.detail}`));
   if (result.failures.length === 0) {
     cli.print(c.green(`\n✓ all ${result.checked} objects verified against Canvas`));
     return true;
@@ -33,7 +34,7 @@ export const register: Register = (program, cli) => {
     )
     .argument("<repo>", "Course repository containing canvas.toml")
     .requiredOption("--course <id>", "Canvas course ID")
-    .option("--json", "Emit {checked, drafts, failures: [{key, check, detail}]} as JSON")
+    .option("--json", "Emit {checked, drafts, failures: [{key, check, detail}], overrides: [{key, detail}]} as JSON")
     .action(async (repo: string, options: { course: string; json?: boolean }) => {
       const canvas = await cli.canvas();
       let result: VerifyResult;
@@ -54,6 +55,7 @@ export const register: Register = (program, cli) => {
           checked: result.checked,
           drafts: result.drafts,
           failures: result.failures.map((f) => ({ key: f.key, check: f.check, detail: f.detail })),
+          overrides: result.overrides.map((o) => ({ key: o.key, detail: o.detail })),
         });
         if (result.failures.length > 0) throw new CliExit(1);
         return;

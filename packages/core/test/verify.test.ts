@@ -17,6 +17,7 @@ import {
   checkModule,
   checkModuleMembership,
   checkModuleVisibility,
+  checkOverrides,
   checkQuizQuestions,
   type Intent,
   type ModuleSlot,
@@ -151,6 +152,37 @@ describe("metadata", () => {
     expect(checkMetadata("k", intent({ dueAt: "2027-02-28T23:59:00Z" }), { due_at: "2027-02-28T23:59:00Z" })).toEqual(
       [],
     );
+  });
+});
+
+describe("overrides", () => {
+  const base: Payload = { due_at: "2026-09-19T05:59:00Z", lock_at: "2026-09-21T05:59:00Z" };
+
+  it("lists an extension in the course's time zone and does not fail it", () => {
+    const { note, failures } = checkOverrides(
+      "k",
+      base,
+      [{ title: "1 student", due_at: "2026-09-19T05:59:59Z", lock_at: "2026-09-24T05:59:59Z" }],
+      "America/Boise",
+    );
+    expect(failures).toEqual([]);
+    expect(note).toEqual({ key: "k", detail: "1 override: 1 student (due Sep 18 23:59, lock Sep 23 23:59)" });
+  });
+
+  it("fails an override that now ends before the class does", () => {
+    const { failures } = checkOverrides(
+      "k",
+      { ...base, lock_at: "2026-09-28T05:59:00Z" },
+      [{ title: "1 student", lock_at: "2026-09-24T05:59:59Z" }],
+      "America/Boise",
+    );
+    expect(failures.map((f) => [f.check, f.detail])).toEqual([
+      ["override", "1 student: lock Sep 23 23:59 is earlier than the class's Sep 27 23:59"],
+    ]);
+  });
+
+  it("says nothing for an assignment with no overrides", () => {
+    expect(checkOverrides("k", base, [], "America/Boise")).toEqual({ note: null, failures: [] });
   });
 });
 

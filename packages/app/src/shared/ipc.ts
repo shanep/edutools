@@ -327,6 +327,8 @@ export interface VerifySummary {
   readonly checked: number;
   readonly drafts: readonly string[];
   readonly failures: readonly VerifyFailure[];
+  /** Assignments with per-student or per-section dates, listed but not failed. */
+  readonly overrides: readonly { readonly key: string; readonly detail: string }[];
 }
 
 export interface PushSummary {

@@ -93,6 +93,11 @@ export function VerifyResultView({ result }: { result: VerifySummary }) {
       {result.drafts.length > 0 && (
         <p className="muted">Drafts, not verified: {result.drafts.join(", ")}</p>
       )}
+      {result.overrides.map((o) => (
+        <p key={o.key} className="muted">
+          Overrides, left alone: <span className="mono">{o.key}</span>: {o.detail}
+        </p>
+      ))}
       {result.failures.length === 0 ? (
         <p className="message ok">All {plural(result.checked, "object")} verified against Canvas: each is there and intact.</p>
       ) : (

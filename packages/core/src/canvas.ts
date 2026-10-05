@@ -453,8 +453,22 @@ export class CanvasLMS {
 
   // -- assignments ----------------------------------------------------
 
+  /**
+   * One assignment with its own dates, the ones a push writes.
+   *
+   * By default Canvas applies the assignment's overrides for whoever is
+   * asking, and for a teacher that means the latest date any override grants:
+   * one student's extension comes back as the assignment's lock date.
+   */
   async getAssignmentFull(courseId: string, assignmentId: string): Promise<Payload> {
-    return this.getJson(`/api/v1/courses/${courseId}/assignments/${assignmentId}`);
+    return this.getJson(`/api/v1/courses/${courseId}/assignments/${assignmentId}`, {
+      override_assignment_dates: "false",
+    });
+  }
+
+  /** The per-student and per-section dates set on an assignment, such as an extension. */
+  async listAssignmentOverrides(courseId: string, assignmentId: string): Promise<Payload[]> {
+    return this.getPaginated(`/api/v1/courses/${courseId}/assignments/${assignmentId}/overrides`, {});
   }
 
   async createAssignment(courseId: string, fields: RequestData): Promise<Payload> {

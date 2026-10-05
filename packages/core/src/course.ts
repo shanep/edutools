@@ -63,9 +63,11 @@ import {
   checkModule,
   checkModuleMembership,
   checkModuleVisibility,
+  checkOverrides,
   checkQuizQuestions,
   type Failure,
   type Intent,
+  type OverrideNote,
   knownLinkTargets,
 } from "./verify";
 
@@ -79,6 +81,7 @@ export type CourseCanvas = PublisherCanvas &
     | "getPage"
     | "getAssignments"
     | "getAssignmentFull"
+    | "listAssignmentOverrides"
     | "listDiscussions"
     | "getDiscussion"
     | "listQuizzes"
@@ -431,6 +434,8 @@ export interface VerifyResult {
   /** Manifest entries not verified because their file is now a draft. */
   readonly drafts: readonly string[];
   readonly failures: readonly Failure[];
+  /** Assignments with per-student or per-section dates, which are not failures. */
+  readonly overrides: readonly OverrideNote[];
 }
 
 /** Verify was asked of a course the repo has never been pushed to. */
@@ -511,6 +516,7 @@ export async function verifyCourse(canvas: CourseCanvas, options: AuditOptions):
   const drafts = [...manifest.entries.keys()].filter((key) => publisher.isDraftKey(key)).sort(compare);
   const skip = new Set(drafts);
   const failures: Failure[] = [];
+  const overrides: OverrideNote[] = [];
   const known = knownLinkTargets(manifest, courseId);
   const resolves = (link: string): Promise<boolean> => canvas.exists(`/api/v1${link}`);
   const total = manifest.entries.size - drafts.length;
@@ -570,13 +576,22 @@ export async function verifyCourse(canvas: CourseCanvas, options: AuditOptions):
     // points or dates in Canvas to compare.
     const dated = entry.kind === "assignment" || entry.kind === "discussion" || entry.kind === "quiz";
     if (plan !== undefined && plan.dates !== null && dated) {
-      // A graded discussion keeps its points and dates on its assignment,
-      // not on the topic itself.
-      let holder: Payload | null = stored;
-      if (entry.kind === "discussion") {
-        holder = entry.extra.assignment_id ? await canvas.getAssignmentFull(courseId, entry.extra.assignment_id) : null;
+      // A graded discussion or quiz keeps its points and dates on its
+      // assignment, and only the assignment can be read without its overrides.
+      let assignmentId: string = entry.kind === "assignment" ? entry.canvasId : "";
+      if (entry.kind === "discussion") assignmentId = entry.extra.assignment_id ?? "";
+      if (entry.kind === "quiz" && stored.assignment_id) assignmentId = String(stored.assignment_id);
+      let holder: Payload | null = entry.kind === "assignment" || entry.kind === "quiz" ? stored : null;
+      if (assignmentId && entry.kind !== "assignment") holder = await canvas.getAssignmentFull(courseId, assignmentId);
+      if (holder !== null) {
+        failures.push(...checkMetadata(key, metadataIntent(publisher, plan), holder));
+        if (assignmentId && holder.has_overrides) {
+          const listed = await canvas.listAssignmentOverrides(courseId, assignmentId);
+          const checked = checkOverrides(key, holder, listed, publisher.config.term.timezone);
+          if (checked.note !== null) overrides.push(checked.note);
+          failures.push(...checked.failures);
+        }
       }
-      if (holder !== null) failures.push(...checkMetadata(key, metadataIntent(publisher, plan), holder));
     }
   }
 
@@ -604,7 +619,7 @@ export async function verifyCourse(canvas: CourseCanvas, options: AuditOptions):
   }
 
   failures.push(...checkModuleMembership(publisher.unlisted(plans.values())));
-  return { checked: total, drafts, failures };
+  return { checked: total, drafts, failures, overrides };
 }
 
 // ============================================================================

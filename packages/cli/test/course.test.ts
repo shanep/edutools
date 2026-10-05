@@ -332,6 +332,7 @@ describe("verify", () => {
       failures: [
         { key: "assignments/p0.md", check: "missing", detail: expect.stringContaining("does not resolve in Canvas") },
       ],
+      overrides: [],
     });
   });
 
@@ -342,7 +343,7 @@ describe("verify", () => {
     const result = await invoke(["verify", repo, "--course", "42", "--json"], { client: canvas });
 
     expect(result.code, result.output).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ checked: 1, drafts: [], failures: [] });
+    expect(JSON.parse(result.stdout)).toEqual({ checked: 1, drafts: [], failures: [], overrides: [] });
   });
 });
 

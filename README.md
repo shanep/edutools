@@ -421,9 +421,13 @@ intact, exiting 1 when anything failed. Besides the body, it compares each grada
 item's points and its due, unlock and lock dates (to the minute, since the Canvas date
 picker saves 11:59 PM as 23:59:59), and reads every `[[module]]` back item by item
 against `canvas.toml`, naming the first item that differs. A module's published state
-is only checked when `publish` or `never_publish` decides it. `verify --json` prints
-`{"checked", "drafts", "failures": [{"key", "check", "detail"}]}` instead of the
-table, with the same exit code. A module's failures use the key `[[module]] <name>`. `audit` asks the other question too: what does Canvas hold that no repo
+is only checked when `publish` or `never_publish` decides it. Dates are the
+assignment's own, read with its overrides turned off. An override (an extension for
+one student, or a section's own schedule) is listed as a note rather than a failure,
+unless it now ends before the class does. `verify --json` prints
+`{"checked", "drafts", "failures": [{"key", "check", "detail"}], "overrides": [{"key", "detail"}]}`
+instead of the table, with the same exit code. A module's failures use the key
+`[[module]] <name>`. `audit` asks the other question too: what does Canvas hold that no repo
 file produced, and what does the manifest still track that Canvas no longer has.
 
 ```bash

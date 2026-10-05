@@ -11,6 +11,7 @@
  * structural element counts, style declarations, and link targets before compare.
  */
 
+import { DateTime } from "luxon";
 import { formatG, pyRepr } from "./objects";
 import {
   canvasPath,
@@ -231,6 +232,62 @@ export function checkMetadata(key: string, intent: Intent, stored: Payload): Fai
   }
 
   return failures;
+}
+
+/** An assignment's overrides, listed so a deliberate extension is not mistaken for drift. */
+export interface OverrideNote {
+  readonly key: string;
+  readonly detail: string;
+}
+
+/** A Canvas stamp as the course's own clock reads it: "Sep 23 23:59". */
+function localStamp(value: string, zone: string): string {
+  const stamp = DateTime.fromISO(value, { setZone: true });
+  return stamp.isValid ? stamp.setZone(zone).toFormat("LLL d HH:mm") : value;
+}
+
+/**
+ * Check 13: what an assignment's overrides grant, next to its own dates.
+ *
+ * An override is an extension or a section's own schedule, set in Canvas on
+ * purpose, so it is listed rather than failed. The exception is an override
+ * that now ends before the class does, which happens when the repo moves the
+ * class's date later than an extension someone was given.
+ */
+export function checkOverrides(
+  key: string,
+  base: Payload,
+  overrides: readonly Payload[],
+  zone: string,
+): { note: OverrideNote | null; failures: Failure[] } {
+  if (overrides.length === 0) return { note: null, failures: [] };
+  const failures: Failure[] = [];
+  const parts: string[] = [];
+  for (const override of overrides) {
+    const title = pyStr(get(override, "title", "override"));
+    const dates: string[] = [];
+    for (const [field, label] of [
+      ["due_at", "due"],
+      ["lock_at", "lock"],
+    ] as const) {
+      const granted = iso(get(override, field));
+      if (granted === null) continue;
+      dates.push(`${label} ${localStamp(granted, zone)}`);
+      const own = iso(get(base, field));
+      if (own !== null && Date.parse(granted) < Date.parse(own) && !sameInstant(granted, own)) {
+        failures.push(
+          failure(
+            key,
+            "override",
+            `${title}: ${label} ${localStamp(granted, zone)} is earlier than the class's ${localStamp(own, zone)}`,
+          ),
+        );
+      }
+    }
+    parts.push(dates.length > 0 ? `${title} (${dates.join(", ")})` : title);
+  }
+  const count = overrides.length === 1 ? "1 override" : `${overrides.length} overrides`;
+  return { note: { key, detail: `${count}: ${parts.join(", ")}` }, failures };
 }
 
 /** Check 8: every question present, correctly typed and correctly keyed. */

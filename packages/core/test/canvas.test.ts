@@ -229,6 +229,25 @@ describe("getSubmissions", () => {
   });
 });
 
+describe("getAssignmentFull", () => {
+  it("asks for the assignment's own dates, not the latest an override grants", async () => {
+    const fake = always(() => json({ id: 456, lock_at: "2026-09-21T05:59:00Z" }));
+    await client(fake.fetch).getAssignmentFull("123", "456");
+    expect(last(fake.calls).url).toBe(
+      "https://c.test/api/v1/courses/123/assignments/456?override_assignment_dates=false",
+    );
+  });
+});
+
+describe("listAssignmentOverrides", () => {
+  it("returns every override on the assignment", async () => {
+    const fake = always(() => json([{ id: 1, title: "1 student" }]));
+    const overrides = await client(fake.fetch).listAssignmentOverrides("123", "456");
+    expect(overrides.map((o) => o.title)).toEqual(["1 student"]);
+    expect(last(fake.calls).url).toBe("https://c.test/api/v1/courses/123/assignments/456/overrides?per_page=100");
+  });
+});
+
 describe("getAssignment", () => {
   it("returns the one assignment", async () => {
     const fake = always(() => json({ id: 456, name: "Final Project", due_at: "2024-12-15" }));

@@ -256,6 +256,9 @@ export class FakeCanvas implements CanvasClient {
       structuredClone(this.find("assignment", assignmentId)),
     );
   }
+  listAssignmentOverrides(courseId: string, assignmentId: string) {
+    return this.answer("listAssignmentOverrides", [courseId, assignmentId], []);
+  }
   getDiscussion(courseId: string, topicId: string) {
     return this.answer("getDiscussion", [courseId, topicId], null).then(() =>
       structuredClone(this.find("discussion", topicId)),
