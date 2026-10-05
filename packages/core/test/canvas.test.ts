@@ -755,6 +755,26 @@ describe("assignment groups", () => {
     expect(call.url).toBe("https://c.test/api/v1/courses/123/assignment_groups/9");
   });
 
+  it("one group is read with its assignments", async () => {
+    // A delete has to know what is still in the group before it goes.
+    const fake = always(() => json({ id: 9, assignments: [] }));
+    await client(fake.fetch).getAssignmentGroup("123", "9");
+    const url = new URL(last(fake.calls).url);
+    expect(url.pathname).toBe("/api/v1/courses/123/assignment_groups/9");
+    expect(url.searchParams.get("include[]")).toBe("assignments");
+  });
+
+  it("delete sends move_assignments_to only when asked", async () => {
+    const fake = always(() => json({ id: 9 }));
+    await client(fake.fetch).deleteAssignmentGroup("123", "9");
+    const plain = last(fake.calls);
+    expect([plain.method, plain.url]).toEqual(["DELETE", "https://c.test/api/v1/courses/123/assignment_groups/9"]);
+    expect(formObject(plain)).toEqual({});
+
+    await client(fake.fetch).deleteAssignmentGroup("123", "9", "4");
+    expect(formObject(last(fake.calls))).toEqual({ move_assignments_to: "4" });
+  });
+
   it("weighting is a course setting", async () => {
     // Group weights do nothing until the course itself is set to weight by group.
     const fake = always(() => json({ id: 123 }));

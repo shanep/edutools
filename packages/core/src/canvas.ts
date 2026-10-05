@@ -393,6 +393,23 @@ export class CanvasLMS {
     return this.json("PUT", `/api/v1/courses/${courseId}/assignment_groups/${groupId}`, fields);
   }
 
+  /** One group, with its assignments, so a delete can say what it would take with it. */
+  async getAssignmentGroup(courseId: string, groupId: string): Promise<Payload> {
+    return this.getJson(`/api/v1/courses/${courseId}/assignment_groups/${groupId}`, {
+      "include[]": "assignments",
+    });
+  }
+
+  /**
+   * Delete a group. Canvas deletes every assignment still in it, with their
+   * submissions and grades, unless `moveTo` names a group to move them into
+   * first.
+   */
+  async deleteAssignmentGroup(courseId: string, groupId: string, moveTo?: string): Promise<Payload> {
+    const data = moveTo === undefined ? undefined : { move_assignments_to: moveTo };
+    return this.json("DELETE", `/api/v1/courses/${courseId}/assignment_groups/${groupId}`, data);
+  }
+
   /**
    * Weight the final grade by assignment group, or stop doing so.
    *

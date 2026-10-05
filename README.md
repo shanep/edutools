@@ -178,8 +178,8 @@ edutools dates <repo> [--show] [--shift <Nd>] [--json]
 edutools create <kind> -c <id> [options]           create one page/assignment/discussion/quiz/module
 edutools update <kind> <object_id> -c <id> [options]
                                                    change one object
-edutools delete <kind> <object_id> -c <id> [-y] [--json]
-                                                   delete one object or course file (asks first)
+edutools delete <kind> <object_id> -c <id> [--move-to <group_id>] [-y] [--json]
+                                                   delete one object, course file or group (asks first)
 edutools publish <kind> <object_id> -c <id> [--json]
                                                    make one object student-visible
 edutools unpublish <kind> <object_id> -c <id> [--json]
@@ -889,6 +889,7 @@ edutools publish assignment 98765 -c 12345
 edutools unpublish page week-1 -c 12345
 edutools delete assignment 98765 -c 12345
 edutools delete file 25200025 -c 12345
+edutools delete group 294290 -c 12345
 ```
 
 Like `push`, `create` leaves an object **unpublished** unless `--publish` is given.
@@ -900,7 +901,12 @@ exits 1 rather than sending an empty update. `delete` reads the object first,
 prints what it is about to remove, and asks for confirmation unless `--yes` is
 given; answering no exits 0 and leaves it alone. `delete` also takes `file`, by
 the id `edutools pull` or `audit` shows; the file is read through the course
-first, so an id from another course fails before anything goes. Publishing a module publishes
+first, so an id from another course fails before anything goes. It also takes
+`group`, an assignment group by the id `edutools groups` shows. Canvas deletes
+every assignment still in a group along with it, so `delete` refuses a group that
+holds any, even with `--yes`, unless `--move-to <group_id>` names a group to move
+them into first. A group `canvas.toml` still declares comes back on the next push,
+so drop its `[[group]]` block before deleting it. Publishing a module publishes
 everything in it, and Canvas refuses to unpublish anything with student
 submissions.
 

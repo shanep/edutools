@@ -86,6 +86,8 @@ const METHODS: Readonly<Record<keyof CanvasClient, true>> = {
   getFile: true,
   getCourseFile: true,
   deleteFile: true,
+  getAssignmentGroup: true,
+  deleteAssignmentGroup: true,
   listJson: true,
 };
 

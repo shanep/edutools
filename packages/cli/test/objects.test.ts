@@ -312,4 +312,46 @@ describe("delete", () => {
     expect(JSON.parse(result.stdout)).toEqual({ id: 42, name: "Lab 7" });
     expect(result.stderr).toContain("Delete it?");
   });
+
+  it("an empty group is read with its assignments and deleted", async () => {
+    canvas.getAssignmentGroup.mockResolvedValue({ id: 9, name: "Quizzes", assignments: [] });
+    canvas.deleteAssignmentGroup.mockResolvedValue({ id: 9 });
+    const result = await invoke(["delete", "group", "9", "-c", "123"], { client: canvas, input: "y\n" });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.getAssignmentGroup.mock.calls[0]).toEqual(["123", "9"]);
+    expect(canvas.deleteAssignmentGroup.mock.calls[0]).toEqual(["123", "9", undefined]);
+    expect(canvas.deleteObject).not.toHaveBeenCalled();
+    expect(result.output).toContain("Quizzes");
+  });
+
+  it("a group holding assignments is refused, even with yes", async () => {
+    // Canvas would delete the assignments and their grades along with the group.
+    canvas.getAssignmentGroup.mockResolvedValue({ id: 9, name: "Labs", assignments: [{ id: 1 }, { id: 2 }] });
+    const result = await invoke(["delete", "group", "9", "-c", "123", "--yes"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("2 assignment(s)");
+    expect(canvas.deleteAssignmentGroup).not.toHaveBeenCalled();
+  });
+
+  it("move-to keeps a group's assignments by moving them first", async () => {
+    canvas.getAssignmentGroup.mockResolvedValue({ id: 9, name: "Labs", assignments: [{ id: 1 }] });
+    canvas.deleteAssignmentGroup.mockResolvedValue({ id: 9 });
+    const result = await invoke(["delete", "group", "9", "-c", "123", "--move-to", "4"], {
+      client: canvas,
+      input: "y\n",
+    });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("move to group 4");
+    expect(canvas.deleteAssignmentGroup.mock.calls[0]).toEqual(["123", "9", "4"]);
+  });
+
+  it("move-to on anything but a group is a usage error", async () => {
+    const result = await invoke(["delete", "assignment", "42", "-c", "123", "--move-to", "4"], { client: canvas });
+
+    expect(result.code).toBe(2);
+    expect(canvas.getObject).not.toHaveBeenCalled();
+  });
 });

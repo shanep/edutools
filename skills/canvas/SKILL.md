@@ -268,6 +268,11 @@ mention. To change one thing, pass one flag. With no field at all it exits 1.
 - **`delete` also takes `file`** (`edutools delete file <file_id> -c <id>`), and only
   `delete` does. The id comes from `audit` or a `pull`'s `files.json`. A page that
   shows or links to the file breaks until a push relinks it, so rule 4 applies.
+- **`delete` also takes `group`** (`edutools delete group <group_id> -c <id>`), an
+  assignment group by the id `edutools groups --json` shows. Canvas deletes every
+  assignment still in the group with it, so a group that holds any is refused,
+  even with `--yes`, unless `--move-to <group_id>` names a group to move them into
+  first. Rule 4 applies either way.
 
 ### Assignment groups
 
@@ -300,6 +305,9 @@ Three things to know before editing those blocks:
   zero. The push positions and names the group but never writes a weight, which is
   how an extra credit group that is raised by hand before final grades survives a
   later push.
+- **Removing a `[[group]]` block does not delete the group in Canvas.** It stays,
+  with its old weight. Once it is empty, delete it with `edutools delete group`;
+  a group the repo still declares is recreated by the next push.
 
 ### When to use `push` instead
 
