@@ -16,8 +16,10 @@ import {
   checkMetadata,
   checkModule,
   checkModuleMembership,
+  checkModuleVisibility,
   checkQuizQuestions,
   type Intent,
+  type ModuleSlot,
   summarise,
 } from "@edutools/core/verify";
 import { describe, expect, it } from "vitest";
@@ -105,13 +107,32 @@ describe("links", () => {
 describe("metadata", () => {
   const intent = (fields: Partial<Intent> = {}): Intent => ({ key: "k", kind: "assignment", title: "Lab 4", ...fields });
 
-  it("compares dates as strings, so a different representation of the same instant fires", () => {
+  it("compares dates as instants, so Canvas's UTC copy of a local date passes", () => {
     const failures = checkMetadata("k", intent({ points: 38, published: false, dueAt: "2027-02-28T23:59:00-07:00" }), {
       points_possible: 38,
       published: false,
       due_at: "2027-03-01T06:59:00Z",
     });
-    expect(new Set(failures.map((f) => f.check))).toEqual(new Set(["due_at"]));
+    expect(failures).toEqual([]);
+  });
+
+  it("ignores the seconds the Canvas date picker adds to 11:59 PM", () => {
+    const failures = checkMetadata("k", intent({ dueAt: "2027-02-28T23:59:00-07:00" }), {
+      due_at: "2027-03-01T06:59:59Z",
+    });
+    expect(failures).toEqual([]);
+  });
+
+  it("catches a date moved in Canvas", () => {
+    const failures = checkMetadata("k", intent({ dueAt: "2027-02-28T23:59:00-07:00" }), {
+      due_at: "2027-03-02T06:59:00Z",
+    });
+    expect(failures.map((f) => f.check)).toEqual(["due_at"]);
+    expect(failures[0]?.detail).toBe("expected 2027-02-28T23:59:00-07:00, Canvas has 2027-03-02T06:59:00Z");
+  });
+
+  it("leaves visibility alone when the intent does not decide it", () => {
+    expect(checkMetadata("k", intent({ points: 38 }), { points_possible: 38, published: true })).toEqual([]);
   });
 
   it("catches wrong points", () => {
@@ -185,18 +206,46 @@ describe("files", () => {
 });
 
 describe("modules and gradebook", () => {
+  const slots: ModuleSlot[] = [
+    { type: "SubHeader", ident: "Due Thursday", title: "Due Thursday" },
+    { type: "Page", ident: "week-1", title: "Week 1" },
+    { type: "Assignment", ident: "7", title: "P0" },
+  ];
+  const live = (): Payload[] => [
+    { position: 1, type: "SubHeader", title: "Due Thursday" },
+    { position: 2, type: "Page", page_url: "week-1", title: "Week 1" },
+    { position: 3, type: "Assignment", content_id: 7, title: "P0" },
+  ];
+
   it("passes a module with the right items", () => {
-    expect(checkModule("k", 3, [{ position: 1 }, { position: 2 }, { position: 3 }])).toEqual([]);
+    expect(checkModule("k", slots, live())).toEqual([]);
   });
 
   it("catches a missing module item", () => {
-    const failures = checkModule("k", 3, [{ position: 1 }]);
+    const failures = checkModule("k", slots, live().slice(0, 1));
     expect(failures[0]?.detail).toContain("expected 3 items");
   });
 
   it("catches out of order items", () => {
-    const failures = checkModule("k", 2, [{ position: 2 }, { position: 1 }]);
+    const items = live();
+    items.reverse();
+    const failures = checkModule("k", slots, items);
     expect(failures.some((f) => f.detail.includes("out of order"))).toBe(true);
+  });
+
+  it("names the first item that differs, and only that one", () => {
+    const items = live();
+    items.splice(1, 0, { position: 2, type: "ExternalUrl", external_url: "https://x.org", title: "Slides" });
+    const failures = checkModule("k", slots, items);
+    expect(failures.map((f) => f.detail)).toEqual([
+      "expected 3 items, Canvas has 4",
+      "item 2: expected Page 'Week 1', Canvas has ExternalUrl 'Slides'",
+    ]);
+  });
+
+  it("catches a module published against canvas.toml", () => {
+    expect(checkModuleVisibility("k", false, { published: false })).toEqual([]);
+    expect(checkModuleVisibility("k", false, { published: true })[0]?.check).toBe("published");
   });
 
   it("passes a gradebook that adds up", () => {

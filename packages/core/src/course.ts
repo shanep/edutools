@@ -42,6 +42,7 @@ import {
   type DateConfig,
   DateConfigError,
   type ItemDates,
+  isoformat,
   loadConfig,
   crossCheckSyllabus,
   validate,
@@ -58,9 +59,13 @@ import {
   checkGradebookTotal,
   checkIdentity,
   checkLinks,
+  checkMetadata,
+  checkModule,
   checkModuleMembership,
+  checkModuleVisibility,
   checkQuizQuestions,
   type Failure,
+  type Intent,
   knownLinkTargets,
 } from "./verify";
 
@@ -468,6 +473,28 @@ async function readBack(
 }
 
 /**
+ * The points, dates and visibility a push writes for one gradable item.
+ *
+ * A quiz scores from its questions, so its points are only compared when the
+ * meta line makes it graded. Visibility is only known for an item in a module
+ * marked `publish = true`; a never_publish item has its own check above.
+ */
+function metadataIntent(publisher: Publisher, plan: Plan): Intent {
+  const dates = plan.dates;
+  const points = plan.kind === "quiz" && !(plan.points ?? 0) ? null : (plan.points ?? 0);
+  return {
+    key: plan.key,
+    kind: plan.kind,
+    title: plan.title,
+    points,
+    ...(publisher.alwaysPublished.has(plan.key) ? { published: true } : {}),
+    dueAt: dates ? isoformat(dates.dueAt) : null,
+    unlockAt: dates?.unlockAt ? isoformat(dates.unlockAt) : null,
+    lockAt: dates ? isoformat(dates.lockAt) : null,
+  };
+}
+
+/**
  * Read every published object back from Canvas and prove it arrived intact.
  *
  * Catches what a 200 response does not: silent sanitiser stripping, partial
@@ -537,6 +564,35 @@ export async function verifyCourse(canvas: CourseCanvas, options: AuditOptions):
       const expected = parseQuiz(source).length;
       const questions = await canvas.listQuizQuestions(courseId, entry.canvasId);
       failures.push(...checkQuizQuestions(key, expected, questions));
+    }
+
+    // An exam's guide is a gradable file published as a page, which has no
+    // points or dates in Canvas to compare.
+    const dated = entry.kind === "assignment" || entry.kind === "discussion" || entry.kind === "quiz";
+    if (plan !== undefined && plan.dates !== null && dated) {
+      // A graded discussion keeps its points and dates on its assignment,
+      // not on the topic itself.
+      let holder: Payload | null = stored;
+      if (entry.kind === "discussion") {
+        holder = entry.extra.assignment_id ? await canvas.getAssignmentFull(courseId, entry.extra.assignment_id) : null;
+      }
+      if (holder !== null) failures.push(...checkMetadata(key, metadataIntent(publisher, plan), holder));
+    }
+  }
+
+  // Modules are not in the manifest: the push pairs each [[module]] table with
+  // a Canvas module by name and rebuilds its items, so they are read back the
+  // same way.
+  if (publisher.moduleTables().length > 0) {
+    for (const module of publisher.expectedModules(await canvas.listModules(courseId))) {
+      const key = `[[module]] ${module.name}`;
+      const storedName = String(module.stored.name ?? "");
+      if (storedName !== module.name) {
+        failures.push({ key, check: "title", detail: `expected ${pyRepr(module.name)}, Canvas has ${pyRepr(storedName)}` });
+      }
+      const items = await canvas.listModuleItems(courseId, String(module.stored.id));
+      failures.push(...checkModule(key, module.items, items));
+      if (module.published !== null) failures.push(...checkModuleVisibility(key, module.published, module.stored));
     }
   }
 

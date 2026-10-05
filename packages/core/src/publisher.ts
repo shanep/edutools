@@ -56,6 +56,7 @@ import {
   wrapTables,
 } from "./publish";
 import type { Payload } from "./types";
+import type { ModuleSlot } from "./verify";
 
 export type Reporter = (message: string) => void;
 
@@ -109,6 +110,19 @@ export const KIND_TO_CANVAS: Readonly<Record<string, string>> = {
 };
 
 type ItemKind = NativeKind | "header";
+
+/** One item to place in a module: its kind, its Canvas id or page url, and its title. */
+type ModuleItem = [ItemKind, string, string];
+
+/** A [[module]] table next to the Canvas module it built, for verify. */
+export interface ExpectedModule {
+  /** The module's name in Canvas, with its dates. */
+  readonly name: string;
+  readonly stored: Payload;
+  readonly items: ModuleSlot[];
+  /** True or false when canvas.toml decides it (publish, never_publish), null when the push leaves it alone. */
+  readonly published: boolean | null;
+}
 
 // What the module items API calls each kind of object.
 const MODULE_ITEM_TYPES: Readonly<Record<ItemKind, string>> = {
@@ -971,6 +985,101 @@ export class Publisher {
     );
   }
 
+  /**
+   * The items a [[module]] table puts in its module, in order, and why any
+   * line was left out.
+   *
+   * Repo items and text headers first, in the order written, then the
+   * Canvas-native ones named under `canvas`: a hand built quiz or an uploaded
+   * file that has no repo file but still belongs in the module. Verify reads
+   * the same list, so it expects exactly what the push builds.
+   */
+  moduleItems(module: Record<string, unknown>, name: string): { placed: ModuleItem[]; errors: string[] } {
+    const errors: string[] = [];
+    let entries: ReturnType<typeof moduleEntries>;
+    try {
+      entries = moduleEntries(module);
+    } catch (error) {
+      if (!(error instanceof ValueError)) throw error;
+      errors.push(`module ${pyRepr(name)}: ${error.message}`);
+      entries = [];
+    }
+    const placed: ModuleItem[] = [];
+    for (const line of entries) {
+      if (line.header) {
+        placed.push(["header", "", line.header]);
+        continue;
+      }
+      if (line.native !== null) {
+        placed.push([line.native.kind, line.native.ident, line.native.title]);
+        continue;
+      }
+      if (this.isDraftKey(line.key)) continue;
+      const entry = this.manifest.get(line.key);
+      if (entry === null) {
+        errors.push(`module ${pyRepr(name)}: ${line.key} has not been published`);
+        continue;
+      }
+      const kind = entry.kind;
+      if (
+        kind === "page" ||
+        kind === "assignment" ||
+        kind === "discussion" ||
+        kind === "quiz" ||
+        kind === "file"
+      ) {
+        const ident = kind === "page" ? entry.pageUrl : entry.canvasId;
+        placed.push([kind, ident, entry.title]);
+      }
+    }
+    let native: ReturnType<typeof parseNativeItems>;
+    try {
+      native = parseNativeItems(module);
+    } catch (error) {
+      if (!(error instanceof ValueError)) throw error;
+      errors.push(`module ${pyRepr(name)}: ${error.message}`);
+      native = [];
+    }
+    for (const item of native) placed.push([item.kind, item.ident, item.title]);
+    return { placed, errors };
+  }
+
+  /**
+   * Each [[module]] table as verify needs it: the Canvas module it built, the
+   * items it should hold, and its published state when canvas.toml decides it.
+   * A table whose module does not exist yet is left out; audit lists it as
+   * pending, and the next push creates it.
+   */
+  expectedModules(stored: readonly Payload[]): ExpectedModule[] {
+    const out: ExpectedModule[] = [];
+    this.moduleTables().forEach((module, index) => {
+      const base = pyStr(module.title ?? `Module ${index + 1}`);
+      let name: string;
+      try {
+        name = moduleTitle(module, this.config.term);
+      } catch (error) {
+        if (!(error instanceof DateConfigError)) throw error;
+        return;
+      }
+      const found = findModule(stored, name, base);
+      if (found === null) return;
+      const hidden = module.never_publish === true;
+      const shown = module.publish === true && !hidden;
+      const { placed } = this.moduleItems(module, name);
+      out.push({
+        name,
+        stored: found,
+        items: placed.map(([kind, ident, title]) => ({
+          type: MODULE_ITEM_TYPES[kind],
+          ident: kind === "header" ? title : ident,
+          title,
+        })),
+        published: hidden ? false : shown ? true : null,
+      });
+    });
+    return out;
+  }
+
   /** Build the weekly modules from the [[module]] tables in canvas.toml. */
   async pushModules(only: readonly string[] | null = null): Promise<Result> {
     const result = new Result();
@@ -1048,54 +1157,8 @@ export class Publisher {
         await canvas.deleteModuleItem(course, moduleId, String(current.id));
       }
 
-      // Repo items and text headers first, in the order written, then the
-      // Canvas-native ones named under `canvas`: a hand built quiz or an
-      // uploaded file that has no repo file but still belongs in the module.
-      let entries: ReturnType<typeof moduleEntries>;
-      try {
-        entries = moduleEntries(module);
-      } catch (error) {
-        if (!(error instanceof ValueError)) throw error;
-        result.errors.push(`module ${pyRepr(name)}: ${error.message}`);
-        entries = [];
-      }
-      const placed: Array<[ItemKind, string, string]> = [];
-      for (const line of entries) {
-        if (line.header) {
-          placed.push(["header", "", line.header]);
-          continue;
-        }
-        if (line.native !== null) {
-          placed.push([line.native.kind, line.native.ident, line.native.title]);
-          continue;
-        }
-        if (this.isDraftKey(line.key)) continue;
-        const entry = this.manifest.get(line.key);
-        if (entry === null) {
-          result.errors.push(`module ${pyRepr(name)}: ${line.key} has not been published`);
-          continue;
-        }
-        const kind = entry.kind;
-        if (
-          kind === "page" ||
-          kind === "assignment" ||
-          kind === "discussion" ||
-          kind === "quiz" ||
-          kind === "file"
-        ) {
-          const ident = kind === "page" ? entry.pageUrl : entry.canvasId;
-          placed.push([kind, ident, entry.title]);
-        }
-      }
-      let native: ReturnType<typeof parseNativeItems>;
-      try {
-        native = parseNativeItems(module);
-      } catch (error) {
-        if (!(error instanceof ValueError)) throw error;
-        result.errors.push(`module ${pyRepr(name)}: ${error.message}`);
-        native = [];
-      }
-      for (const item of native) placed.push([item.kind, item.ident, item.title]);
+      const { placed, errors } = this.moduleItems(module, name);
+      result.errors.push(...errors);
 
       let index = 0;
       for (const [kind, ident, title] of placed) {

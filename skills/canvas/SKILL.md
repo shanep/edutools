@@ -450,10 +450,15 @@ Both require `--course <id>`.
 - `verify <repo> --course <id>` reads every object the repo pushed back from
   Canvas and compares it with what the repo says it should be. It catches the
   sanitizer stripping HTML, partial quiz writes, files stuck pending, and someone
-  editing in the Canvas UI. `push` runs it automatically. It exits 1 when anything
-  failed. With `--json` it prints
+  editing in the Canvas UI: a body, points, a due, unlock or lock date (compared
+  to the minute), or a module's items and their order. `push` runs it
+  automatically. It exits 1 when anything failed. With `--json` it prints
   `{"checked", "drafts", "failures": [{"key", "check", "detail"}]}`, where `key` is
-  the repo path and `drafts` the paths skipped because they are now drafts.
+  the repo path (`[[module]] <name>` for a module) and `drafts` the paths skipped
+  because they are now drafts.
+- **A date or module failure on published content is real drift**, usually an
+  edit made in the Canvas UI. Ask the user which side is right: bring the change
+  into the repo, or push the repo's version with `--update-published` (rule 5).
 - `audit <repo> --course <id> --json` answers the other direction: objects in
   Canvas the repo did not create (`untracked`, normal for a hand-built exam),
   modules `canvas.toml` declares that do not exist yet (`pending`), and manifest

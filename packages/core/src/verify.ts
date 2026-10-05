@@ -101,6 +101,23 @@ function iso(value: unknown): string | null {
   return value.replaceAll("+00:00", "Z");
 }
 
+/**
+ * Whether two ISO 8601 stamps name the same minute.
+ *
+ * The push sends local time with an offset (2026-10-14T23:59:00-06:00) and
+ * Canvas hands it back in UTC (2026-10-15T05:59:00Z), so the strings never
+ * match even when the date is right. Seconds are dropped because the Canvas
+ * date picker saves 11:59 PM as 23:59:59, so a date set by hand to the same
+ * minute the repo says is not drift.
+ */
+function sameInstant(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return a === b;
+  const x = Date.parse(a);
+  const y = Date.parse(b);
+  if (Number.isNaN(x) || Number.isNaN(y)) return a === b;
+  return Math.floor(x / 60_000) === Math.floor(y / 60_000);
+}
+
 /** First point of divergence between two visible-text renderings. */
 function diffText(intended: string, stored: string): string | null {
   if (intended === stored) return null;
@@ -183,9 +200,12 @@ export function checkMetadata(key: string, intent: Intent, stored: Payload): Fai
     }
   }
 
-  if (Object.hasOwn(stored, "published")) {
+  // Only a push with --publish, or a module marked publish or never_publish,
+  // decides visibility. Anything else is left as whoever last clicked it in
+  // Canvas set it, so there is nothing to compare unless the intent says.
+  if (intent.published !== undefined && Object.hasOwn(stored, "published")) {
     const actualPublished = truthy(stored.published);
-    const expected = intent.published ?? false;
+    const expected = intent.published;
     if (actualPublished !== expected) {
       failures.push(
         failure(
@@ -205,7 +225,7 @@ export function checkMetadata(key: string, intent: Intent, stored: Payload): Fai
   for (const [fieldName, expected] of fields) {
     if (expected === null || expected === undefined) continue;
     const actualDate = iso(get(stored, fieldName));
-    if (actualDate !== iso(expected)) {
+    if (!sameInstant(actualDate, iso(expected))) {
       failures.push(failure(key, fieldName, `expected ${pyStr(iso(expected))}, Canvas has ${pyStr(actualDate)}`));
     }
   }
@@ -269,17 +289,71 @@ export function checkFile(key: string, expectedSize: number, stored: Payload): F
   return failures;
 }
 
-/** Check 10: the module holds what it should, in order. */
-export function checkModule(key: string, expectedItems: number, items: readonly Payload[]): Failure[] {
+/** One item a module should hold, as the module items API describes it. */
+export interface ModuleSlot {
+  /** Canvas's item type: "Page", "Assignment", "SubHeader", "ExternalUrl", ... */
+  readonly type: string;
+  /** The page url, content id, or external url; the title for a header. */
+  readonly ident: string;
+  readonly title: string;
+}
+
+/** What identifies a live module item, read the way `ModuleSlot.ident` is written. */
+function slotIdent(item: Payload): string {
+  switch (pyStr(get(item, "type", ""))) {
+    case "Page":
+      return pyStr(get(item, "page_url", ""));
+    case "SubHeader":
+      return pyStr(get(item, "title", ""));
+    case "ExternalUrl":
+      return pyStr(get(item, "external_url", ""));
+    default:
+      return pyStr(get(item, "content_id", ""));
+  }
+}
+
+/**
+ * Check 10: the module holds what it should, in order.
+ *
+ * Only the first item that differs is reported. One item added or removed by
+ * hand shifts everything after it, and a line for each of those says nothing new.
+ */
+export function checkModule(key: string, expected: readonly ModuleSlot[], items: readonly Payload[]): Failure[] {
   const failures: Failure[] = [];
-  if (items.length !== expectedItems) {
-    failures.push(failure(key, "module", `expected ${expectedItems} items, Canvas has ${items.length}`));
+  if (items.length !== expected.length) {
+    failures.push(failure(key, "module", `expected ${expected.length} items, Canvas has ${items.length}`));
   }
   const positions = items.map((i) => Number.parseInt(pyStr(get(i, "position", 0)), 10));
   if (positions.some((p, index) => index > 0 && p < (positions[index - 1] as number))) {
     failures.push(failure(key, "module", "items are out of order"));
   }
+  const limit = Math.min(expected.length, items.length);
+  for (let index = 0; index < limit; index++) {
+    const want = expected[index] as ModuleSlot;
+    const item = items[index] as Payload;
+    const type = pyStr(get(item, "type", ""));
+    const ident = slotIdent(item);
+    if (type !== want.type || ident !== want.ident) {
+      const title = pyStr(get(item, "title", ""));
+      failures.push(
+        failure(
+          key,
+          "module",
+          `item ${index + 1}: expected ${want.type} ${pyRepr(want.title || want.ident)}, ` +
+            `Canvas has ${type} ${pyRepr(title || ident)}`,
+        ),
+      );
+      break;
+    }
+  }
   return failures;
+}
+
+/** A module's published state, when canvas.toml decides it. */
+export function checkModuleVisibility(key: string, expected: boolean, stored: Payload): Failure[] {
+  const actual = truthy(stored.published);
+  if (actual === expected) return [];
+  return [failure(key, "published", `expected published=${pyRepr(expected)}, Canvas has ${pyRepr(actual)}`)];
 }
 
 /** Check 11: nothing was lost between the repository and the gradebook. */

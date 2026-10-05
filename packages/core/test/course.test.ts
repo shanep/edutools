@@ -438,6 +438,57 @@ describe("verify", () => {
     expect(stripped.failures.map((f) => f.check)).toContain("content");
   });
 
+  it("points and due dates changed in Canvas are caught, and the UTC copy of the right date is not", async () => {
+    writeManifest(repo, {
+      "assignments/p0.md": { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} },
+    });
+    const due = courseDates(repo).items[0]?.dueAt;
+    const lock = courseDates(repo).items[0]?.lockAt;
+    const utc = (stamp: typeof due): string | null => stamp?.toUTC().toISO({ suppressMilliseconds: true }) ?? null;
+    canvas.getAssignmentFull.mockResolvedValue({ name: "P0", points_possible: 50, due_at: utc(due), lock_at: utc(lock) });
+    const intact = await verifyCourse(canvas, { repo, courseId: COURSE });
+    canvas.getAssignmentFull.mockResolvedValue({
+      name: "P0",
+      points_possible: 40,
+      due_at: utc(due?.plus({ days: 1 })),
+      lock_at: utc(lock),
+    });
+    const moved = await verifyCourse(canvas, { repo, courseId: COURSE });
+
+    // The body is not what this test is about, so only the metadata checks count.
+    const metadata = (failures: readonly { check: string }[]) =>
+      failures.filter((f) => ["points", "due_at", "unlock_at", "lock_at", "published"].includes(f.check));
+    expect(metadata(intact.failures)).toEqual([]);
+    expect(metadata(moved.failures).map((f) => f.check)).toEqual([
+      "points",
+      "due_at",
+    ]);
+  });
+
+  it("a module is read back item by item against canvas.toml", async () => {
+    writeManifest(repo, {
+      "pages/welcome.md": { kind: "page", canvas_id: "welcome", page_url: "welcome", title: "Welcome", extra: {} },
+    });
+    canvas.getPage.mockResolvedValue({ title: "Welcome", body: "<p>Hello.</p>" });
+    canvas.listModules.mockResolvedValue([{ id: 9, name: "Week 1", published: true }]);
+    // p0 has no manifest entry, so the push left it out and verify expects it gone too.
+    canvas.listModuleItems.mockResolvedValue([
+      { position: 1, type: "Page", page_url: "welcome", title: "Welcome" },
+      { position: 2, type: "Quiz", content_id: 900, title: "Exam 1" },
+    ]);
+    const intact = await verifyCourse(canvas, { repo, courseId: COURSE });
+    canvas.listModuleItems.mockResolvedValue([{ position: 1, type: "Quiz", content_id: 900, title: "Exam 1" }]);
+    const emptied = await verifyCourse(canvas, { repo, courseId: COURSE });
+
+    expect(canvas.listModuleItems).toHaveBeenCalledWith(COURSE, "9");
+    const modules = <T extends { key: string }>(failures: readonly T[]): T[] => failures.filter((f) => f.key.startsWith("[[module]]"));
+    expect(modules(intact.failures)).toEqual([]);
+    expect(modules(emptied.failures).map((f) => [f.key, f.detail])).toEqual([
+      ["[[module]] Week 1", "expected 2 items, Canvas has 1"],
+      ["[[module]] Week 1", "item 1: expected Page 'Welcome', Canvas has Quiz 'Exam 1'"],
+    ]);
+  });
+
   it("drafts are listed and not read back", async () => {
     writeManifest(repo, {
       "assignments/p0.md": { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} },

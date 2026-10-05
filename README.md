@@ -417,9 +417,13 @@ file to look at in a browser. It does not stop the push: without `--dry-run` the
 push still writes to Canvas, so combine the two to render without writing.
 
 `verify` walks the manifest and proves each tracked object is still in Canvas and
-intact, exiting 1 when anything failed. `verify --json` prints
+intact, exiting 1 when anything failed. Besides the body, it compares each gradable
+item's points and its due, unlock and lock dates (to the minute, since the Canvas date
+picker saves 11:59 PM as 23:59:59), and reads every `[[module]]` back item by item
+against `canvas.toml`, naming the first item that differs. A module's published state
+is only checked when `publish` or `never_publish` decides it. `verify --json` prints
 `{"checked", "drafts", "failures": [{"key", "check", "detail"}]}` instead of the
-table, with the same exit code. `audit` asks the other question too: what does Canvas hold that no repo
+table, with the same exit code. A module's failures use the key `[[module]] <name>`. `audit` asks the other question too: what does Canvas hold that no repo
 file produced, and what does the manifest still track that Canvas no longer has.
 
 ```bash
