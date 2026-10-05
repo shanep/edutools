@@ -595,7 +595,10 @@ A `## Rubric` table becomes the Canvas rubric its assignment is graded with. The
 push reads the rubric already attached first: unchanged criteria are left alone,
 changed criteria are rewritten in the same rubric, and a new rubric is created only
 for an assignment that has none. So pushing an assignment again, even with
-`--update-published`, never swaps out the rubric it was graded with.
+`--update-published`, never swaps out the rubric it was graded with. Canvas cuts a
+criterion's description at 255 characters, so a longer row sends its start, ending
+at a word, as the description and the whole row as the long description that
+SpeedGrader shows under it.
 
 `push` runs in two passes: the first pass creates or updates every Canvas object so
 each one has an id, and the second pass rewrites cross-references between them into

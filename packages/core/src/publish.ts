@@ -1089,14 +1089,30 @@ export function parseRubric(markdown: string): Criterion[] {
     if (cells.length < 3 || !/^\d+$/.test(cells[0] ?? "")) continue;
     const points = parseFloatStrict(stripChars(cells[cells.length - 1] ?? "", "*"));
     if (points === null) continue;
-    criteria.push({ description: cells[1] ?? "", points });
+    criteria.push(markdownCriterion(cells[1] ?? "", points));
   }
   return criteria;
 }
 
 /** Canvas caps a criterion description at 255 characters, counted by code point. */
+const DESCRIPTION_LIMIT = 255;
+
 function criterionDescription(description: string): string {
-  return Array.from(description).slice(0, 255).join("");
+  return Array.from(description).slice(0, DESCRIPTION_LIMIT).join("");
+}
+
+/**
+ * One rubric table row. A row longer than Canvas's limit would be cut off mid
+ * sentence, so it sends its start, ending at a word, as the description and the
+ * whole row as the long description SpeedGrader shows under it.
+ */
+function markdownCriterion(text: string, points: number): Criterion {
+  const chars = Array.from(text);
+  if (chars.length <= DESCRIPTION_LIMIT) return { description: text, points };
+  const head = chars.slice(0, DESCRIPTION_LIMIT - 1).join("");
+  const space = head.lastIndexOf(" ");
+  const short = `${(space > 0 ? head.slice(0, space) : head).trimEnd()}\u2026`;
+  return { description: short, points, longDescription: text };
 }
 
 /**
@@ -1112,7 +1128,12 @@ export function attachedRubric(assignment: Payload): { id: string; criteria: Cri
   const criteria: Criterion[] = [];
   for (const row of rows) {
     if (!isTable(row)) continue;
-    criteria.push({ description: String(row.description ?? ""), points: Number(row.points) });
+    const long = typeof row.long_description === "string" ? row.long_description : "";
+    criteria.push({
+      description: String(row.description ?? ""),
+      points: Number(row.points),
+      ...(long ? { longDescription: long } : {}),
+    });
   }
   return { id: String(id), criteria };
 }
@@ -1126,6 +1147,7 @@ export function sameCriteria(stored: readonly Criterion[], wanted: readonly Crit
       return (
         other !== undefined &&
         other.description === criterionDescription(criterion.description) &&
+        (other.longDescription ?? "") === (criterion.longDescription ?? "") &&
         other.points === criterion.points
       );
     })

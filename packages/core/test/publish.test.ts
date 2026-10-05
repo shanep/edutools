@@ -323,6 +323,17 @@ describe("rubric parsing", () => {
     expect(criteria[0]?.description).toBe("First thing");
   });
 
+  it("moves a row longer than 255 characters into the long description", () => {
+    const row = `Peer review: ${"a reply to a classmate's post ".repeat(10)}posted by the due date.`;
+    const [criterion] = parseRubric(
+      `## Rubric\n\n| n | description | points |\n| --- | --- | --- |\n| 1 | ${row} | 20 |\n`,
+    );
+    expect(criterion?.longDescription).toBe(row);
+    expect(Array.from(criterion?.description ?? "").length).toBeLessThanOrEqual(255);
+    expect(criterion?.description).toMatch(/^Peer review: a reply to .* post…$/);
+    expect(criterion?.points).toBe(20);
+  });
+
   it("returns nothing without a rubric section", () => {
     expect(parseRubric("## Goal\n\nNothing here.\n")).toEqual([]);
   });
@@ -360,6 +371,20 @@ describe("rubric parsing", () => {
     // Canvas stores a long description cut to 255 code points, so that is the same.
     const cut = [{ description: "x".repeat(255), points: 1 }];
     expect(sameCriteria(cut, [{ description: "x".repeat(300), points: 1 }])).toBe(true);
+    // A rubric pushed before long rows moved to the long description is rewritten.
+    const whole = { ...a, longDescription: "all of a" };
+    expect(sameCriteria([a], [whole])).toBe(false);
+    expect(sameCriteria([whole], [whole])).toBe(true);
+  });
+
+  it("reads a long description back from Canvas", () => {
+    const assignment = {
+      rubric_settings: { id: 1 },
+      rubric: [{ description: "Short", long_description: "The whole row", points: 4 }],
+    };
+    expect(attachedRubric(assignment)?.criteria).toEqual([
+      { description: "Short", points: 4, longDescription: "The whole row" },
+    ]);
   });
 
   it("makes the rubric fields total match", () => {
