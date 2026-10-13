@@ -55,6 +55,7 @@ import {
   ValueError,
   wrapTables,
 } from "./publish";
+import type { Component } from "./sync";
 import type { Payload } from "./types";
 import type { ModuleSlot } from "./verify";
 
@@ -332,6 +333,12 @@ export class Publisher {
   // Canvas assignment group name -> id, filled in by syncGroups().
   readonly groups = new Map<string, string>();
   readonly droppedCss = new Set<string>();
+  /**
+   * What this push wrote, or found already matching, by repo key or
+   * `[[module]] <name>`, and which parts of it. The sync baseline is recorded
+   * for exactly these afterwards, and for nothing a push skipped.
+   */
+  readonly written = new Map<string, Set<Component>>();
   private groupsSynced = false;
   private neverPublishedKeys: Set<string> | null = null;
   // The course's files, listed once per push by courseFiles().
@@ -532,6 +539,12 @@ export class Publisher {
     };
   }
 
+  private markWritten(key: string, ...parts: Component[]): void {
+    const seen = this.written.get(key) ?? new Set<Component>();
+    for (const part of parts) seen.add(part);
+    this.written.set(key, seen);
+  }
+
   private client(): PublisherCanvas {
     if (this.canvas === null) throw new PublishError("no Canvas client configured");
     return this.canvas;
@@ -703,6 +716,7 @@ export class Publisher {
     if (item.kind === "syllabus") {
       await canvas.updateSyllabus(course, html);
       this.manifest.put(item.key, new Entry({ kind: "syllabus", canvasId: course, title }));
+      this.markWritten(item.key, "body");
       result.updated = 1;
     } else if (item.kind === "page") {
       let pageUrl: string;
@@ -723,6 +737,7 @@ export class Publisher {
         result.created = 1;
       }
       this.manifest.put(item.key, new Entry({ kind: "page", canvasId: pageUrl, pageUrl, title }));
+      this.markWritten(item.key, "body", "settings");
     } else if (item.kind === "assignment") {
       const options = assignmentOptions(readFileSync(item.source, "utf-8"));
       // A list rather than a record: submission_types[] repeats once per type.
@@ -750,6 +765,7 @@ export class Publisher {
         result.created = 1;
       }
       this.manifest.put(item.key, new Entry({ kind: "assignment", canvasId, title }));
+      this.markWritten(item.key, "body", "settings");
     } else if (item.kind === "discussion") {
       const fields: Record<string, string> = { title, message: html };
       // A graded discussion hangs its points, group and dates off an
@@ -778,6 +794,7 @@ export class Publisher {
       }
       const extra = { assignment_id: idOf(stored.assignment_id) };
       this.manifest.put(item.key, new Entry({ kind: "discussion", canvasId, title, extra }));
+      this.markWritten(item.key, "body", "settings");
     } else if (item.kind === "quiz") {
       const graded = (item.points || 0) > 0;
       const fields: Record<string, string> = {
@@ -811,6 +828,7 @@ export class Publisher {
       }
       this.manifest.put(item.key, new Entry({ kind: "quiz", canvasId, title }));
       await this.pushQuestions(item, canvasId);
+      this.markWritten(item.key, "body", "settings", "questions");
       // wasLive: the write above forced published=false to let the question
       // set be rebuilt, so a quiz that arrived published has to go back.
       const wanted = this.publish || wasLive || this.alwaysPublished.has(item.key);
@@ -846,6 +864,7 @@ export class Publisher {
   }
 
   private recordFile(key: string, stored: Payload): void {
+    this.markWritten(key, "body");
     this.manifest.put(
       key,
       new Entry({
@@ -1181,6 +1200,7 @@ export class Publisher {
       if ((this.publish || shown) && !hidden) {
         await canvas.updateModule(course, moduleId, { "module[published]": "true" });
       }
+      this.markWritten(`[[module]] ${name}`, "items");
     }
     return result;
   }
@@ -1229,6 +1249,7 @@ export class Publisher {
         await canvas.updateRubric(this.courseId, current.id, fields);
         result.updated += 1;
       }
+      this.markWritten(key, "rubric");
     }
     return result;
   }

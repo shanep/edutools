@@ -36,6 +36,7 @@ import { register as rubric } from "./commands/rubric";
 import { register as push } from "./commands/push";
 import { register as quizQuestions } from "./commands/quiz-questions";
 import { register as site } from "./commands/site";
+import { register as status } from "./commands/status";
 import { register as students } from "./commands/students";
 import { register as submission } from "./commands/submission";
 import { register as submissions } from "./commands/submissions";
@@ -63,6 +64,7 @@ const COMMANDS: readonly Register[] = [
   exportCommand,
   // course repositories
   push,
+  status,
   verify,
   audit,
   outline,

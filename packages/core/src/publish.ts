@@ -22,6 +22,7 @@ import markdownit from "markdown-it";
 import type { MarkdownIt, RendererRule, StateCore, Token } from "markdown-it";
 import footnotePlugin from "markdown-it-footnote";
 import { fnmatch, toPosix } from "./paths";
+import type { Baseline, Component, Fingerprints } from "./sync";
 import type { Payload } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -1277,6 +1278,8 @@ export class Entry {
   pageUrl: string;
   title: string;
   extra: Record<string, string>;
+  /** Both sides as they were when they last agreed; null until a push or an adopt records it. */
+  synced: Baseline | null;
 
   constructor(fields: {
     kind: ObjectKind;
@@ -1284,12 +1287,14 @@ export class Entry {
     pageUrl?: string;
     title?: string;
     extra?: Record<string, string>;
+    synced?: Baseline | null;
   }) {
     this.kind = fields.kind;
     this.canvasId = fields.canvasId;
     this.pageUrl = fields.pageUrl ?? "";
     this.title = fields.title ?? "";
     this.extra = fields.extra ?? {};
+    this.synced = fields.synced ?? null;
   }
 
   toJson(): Payload {
@@ -1299,8 +1304,38 @@ export class Entry {
       page_url: this.pageUrl,
       title: this.title,
       extra: this.extra,
+      // Left out until there is one, so a manifest written before baselines
+      // existed reads back unchanged.
+      ...(this.synced === null ? {} : { synced: baselineJson(this.synced) }),
     };
   }
+}
+
+function fingerprintsOf(value: unknown): Fingerprints {
+  const out: Fingerprints = {};
+  if (!isTable(value)) return out;
+  for (const [part, hash] of Object.entries(value)) {
+    // Every part name in a manifest was written by baselineJson from a
+    // Component. One a newer edutools added is kept and compared all the same;
+    // sync.ts only ever looks up the parts it knows. (A value import of
+    // COMPONENTS would close an import cycle with sync.ts.)
+    if (typeof hash === "string") out[part as Component] = hash;
+  }
+  return out;
+}
+
+/** A baseline as the manifest stores it, or null for anything malformed. */
+export function parseBaseline(raw: unknown): Baseline | null {
+  if (!isTable(raw)) return null;
+  return {
+    repo: fingerprintsOf(raw.repo),
+    canvas: fingerprintsOf(raw.canvas),
+    at: typeof raw.at === "string" ? raw.at : "",
+  };
+}
+
+function baselineJson(baseline: Baseline): Payload {
+  return { repo: { ...baseline.repo }, canvas: { ...baseline.canvas }, at: baseline.at };
 }
 
 export type NativeKind = "page" | "assignment" | "discussion" | "quiz" | "file" | "url";
@@ -1471,6 +1506,11 @@ function pythonJson(payload: unknown): string {
 export class Manifest {
   readonly path: string;
   readonly entries = new Map<string, Entry>();
+  /**
+   * Baselines for the [[module]] tables, keyed `[[module]] <Canvas name>` as
+   * verify names them. Modules have no entry: a push pairs them by name.
+   */
+  readonly modules = new Map<string, Baseline>();
 
   constructor(file: string) {
     this.path = file;
@@ -1489,8 +1529,14 @@ export class Manifest {
             pageUrl: String(value.page_url ?? ""),
             title: String(value.title ?? ""),
             extra: Object.fromEntries(Object.entries(extra).map(([k, v]) => [k, String(v)])),
+            synced: parseBaseline(value.synced),
           }),
         );
+      }
+      const modules = isTable(raw) && isTable(raw.modules) ? raw.modules : {};
+      for (const [key, value] of Object.entries(modules)) {
+        const baseline = parseBaseline(value);
+        if (baseline !== null) this.modules.set(key, baseline);
       }
     }
   }
@@ -1503,7 +1549,16 @@ export class Manifest {
     return this.entries.get(key) ?? null;
   }
 
+  /**
+   * Record an object. A push rebuilds the entry from scratch on every write,
+   * so the baseline carries over from the entry it replaces, as long as it is
+   * still the same Canvas object; a recreated one starts without.
+   */
   put(key: string, entry: Entry): void {
+    const previous = this.entries.get(key);
+    if (entry.synced === null && previous !== undefined && previous.canvasId === entry.canvasId) {
+      entry.synced = previous.synced;
+    }
     this.entries.set(key, entry);
     this.save();
   }
@@ -1517,7 +1572,10 @@ export class Manifest {
     mkdirSync(path.dirname(this.path), { recursive: true });
     const entries: Payload = {};
     for (const [k, v] of this.entries) entries[k] = v.toJson();
-    writeFileSync(this.path, `${pythonJson({ entries })}\n`, "utf8");
+    const modules: Payload = {};
+    for (const [k, v] of this.modules) modules[k] = baselineJson(v);
+    const payload = this.modules.size > 0 ? { entries, modules } : { entries };
+    writeFileSync(this.path, `${pythonJson(payload)}\n`, "utf8");
   }
 }
 

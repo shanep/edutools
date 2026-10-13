@@ -1,5 +1,5 @@
 /**
- * The course repository commands: push, verify, audit, outline and dates,
+ * The course repository commands: push, status, verify, audit, outline and dates,
  * including the push tests ported from tests/test_cli.py.
  */
 
@@ -344,6 +344,67 @@ describe("verify", () => {
 
     expect(result.code, result.output).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ checked: 1, drafts: [], failures: [], overrides: [] });
+  });
+});
+
+describe("status", () => {
+  const P0 = { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} };
+
+  it("a course that matches says it is in sync and exits 0", async () => {
+    writeManifest(repo, { "index.md": { kind: "syllabus", canvas_id: "42", page_url: "", title: "S", extra: {} } });
+    const result = await invoke(["status", repo, "--course", "42", "--path", "index.md"], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.stdout).toContain("are in sync: 1 objects");
+  });
+
+  it("a difference with no baseline exits 1, and json lists every object", async () => {
+    writeManifest(repo, { "assignments/p0.md": P0 });
+    canvas.getAssignmentFull.mockResolvedValue({ name: "P0", description: "<p>Older text.</p>" });
+    const result = await invoke(["status", repo, "--course", "42", "--path", "assignments/p0.md", "--json"], {
+      client: canvas,
+    });
+
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      items: [
+        {
+          key: "assignments/p0.md",
+          kind: "assignment",
+          title: "P0",
+          state: "unknown",
+          repo: [],
+          canvas: [],
+          unknown: ["body", "settings"],
+          published: false,
+          detail: "",
+        },
+      ],
+      drafts: [],
+      adopted: 0,
+    });
+  });
+
+  it("adopt turns the difference into a repo change, writes the manifest, and exits 0", async () => {
+    writeManifest(repo, { "assignments/p0.md": P0 });
+    canvas.getAssignmentFull.mockResolvedValue({ name: "P0", description: "<p>Older text.</p>" });
+    const result = await invoke(["status", repo, "--course", "42", "--path", "assignments/p0.md", "--adopt"], {
+      client: canvas,
+    });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.stdout).toContain("adopted Canvas as the baseline for 1 object(s)");
+    expect(result.stdout).toContain("changed in the repo: push to update Canvas");
+    const manifest = JSON.parse(readFileSync(path.join(repo, ".canvas", "manifest-42.json"), "utf-8"));
+    expect(manifest.entries["assignments/p0.md"].synced.canvas.body).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("a path that matches nothing exits 1 and lists what exists", async () => {
+    const result = await invoke(["status", repo, "--course", "42", "--path", "nope.md"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("no file in the repo matches: nope.md");
+    expect(result.stdout).toContain("assignments/p0.md");
   });
 });
 

@@ -488,6 +488,34 @@ describe("manifest and links", () => {
     );
   });
 
+  it("round trips a sync baseline, and module baselines beside the entries", () => {
+    const root = tmp();
+    const file = path.join(root, ".canvas", "m.json");
+    const manifest = new Manifest(file);
+    const synced = { repo: { body: "aa" }, canvas: { body: "bb", settings: "cc" }, at: "2026-10-13T00:00:00Z" };
+    manifest.put("a.md", new Entry({ kind: "page", canvasId: "p", pageUrl: "p", synced }));
+    manifest.modules.set("[[module]] Week 1", { repo: { items: "dd" }, canvas: { items: "ee" }, at: "t" });
+    manifest.save();
+
+    const back = new Manifest(file);
+    expect(back.get("a.md")?.synced).toEqual(synced);
+    expect(back.modules.get("[[module]] Week 1")).toEqual({ repo: { items: "dd" }, canvas: { items: "ee" }, at: "t" });
+  });
+
+  it("a rewritten entry keeps its baseline while it is the same Canvas object", () => {
+    const root = tmp();
+    const manifest = new Manifest(path.join(root, ".canvas", "m.json"));
+    const synced = { repo: { body: "aa" }, canvas: { body: "bb" }, at: "t" };
+    manifest.put("a.md", new Entry({ kind: "assignment", canvasId: "7", synced }));
+
+    manifest.put("a.md", new Entry({ kind: "assignment", canvasId: "7", title: "Retitled" }));
+    expect(manifest.get("a.md")?.synced).toEqual(synced);
+
+    // Recreated in Canvas: the old baseline describes another object.
+    manifest.put("a.md", new Entry({ kind: "assignment", canvasId: "8" }));
+    expect(manifest.get("a.md")?.synced).toBeNull();
+  });
+
   it("builds Canvas paths", () => {
     expect(canvasPath(new Entry({ kind: "page", canvasId: "x", pageUrl: "week-01" }), "42")).toBe(
       "/courses/42/pages/week-01",

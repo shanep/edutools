@@ -12,6 +12,7 @@ import {
   CourseError,
   type CourseCanvas,
   courseDates,
+  courseStatus,
   courseOutline,
   executeClean,
   NothingToVerifyError,
@@ -21,6 +22,7 @@ import {
   verifyCourse,
   writePreview,
 } from "@edutools/core/course";
+import { CanvasApiError } from "@edutools/core/canvas";
 import type { Payload } from "@edutools/core/types";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
@@ -523,6 +525,160 @@ describe("verify", () => {
     expect(result.drafts).toEqual(["assignments/p0.md"]);
     expect(result.checked).toBe(0);
     expect(canvas.getAssignmentFull).not.toHaveBeenCalled();
+  });
+});
+
+describe("status", () => {
+  const P0 = { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} };
+  const stateOf = (items: readonly { key: string; state: string }[], key: string): string | undefined =>
+    items.find((item) => item.key === key)?.state;
+
+  it("everything is new before the first push", async () => {
+    const result = await courseStatus(canvas, { repo, courseId: COURSE });
+
+    expect(result.items.map((item) => item.state)).toEqual(["new", "new", "new", "new"]);
+  });
+
+  it("a push records a baseline, and right after it everything is in sync", async () => {
+    const pushed = await push(canvas, { repo, courseId: COURSE, verify: false });
+    expect(pushed.baselined).toBe(4);
+    expect(manifestOf(repo)["assignments/p0.md"]?.synced).toMatchObject({
+      repo: { body: expect.any(String), settings: expect.any(String) },
+      canvas: { body: expect.any(String), settings: expect.any(String) },
+    });
+
+    const result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(result.items.every((item) => item.state === "in-sync")).toBe(true);
+  });
+
+  it("an edit in Canvas is Canvas's, an edit in the repo is the repo's, and both is a conflict", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+
+    canvas.getPage.mockResolvedValue({ body: "<p>Edited in Canvas.</p>" });
+    let result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(result.items.find((item) => item.key === "pages/welcome.md")).toMatchObject({
+      state: "canvas",
+      canvas: ["body"],
+      repo: [],
+    });
+
+    writeFileSync(path.join(repo, "assignments", "p0.md"), "# P0\n\n**Week 2 · 50 points · x**\n\nMore.\n", "utf-8");
+    result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(result.items.find((item) => item.key === "assignments/p0.md")).toMatchObject({ state: "repo", repo: ["body"] });
+
+    writeFileSync(path.join(repo, "pages", "welcome.md"), "# Welcome\n\nHello again.\n", "utf-8");
+    result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(stateOf(result.items, "pages/welcome.md")).toBe("conflict");
+  });
+
+  it("a due date moved in Canvas is a settings change", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    canvas.getAssignmentFull.mockResolvedValue({ due_at: "2026-09-02T05:59:00Z" });
+
+    const result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(result.items.find((item) => item.key === "assignments/p0.md")).toMatchObject({
+      state: "canvas",
+      canvas: ["settings"],
+    });
+  });
+
+  it("a push that skips a published object leaves its baseline alone", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    const before = manifestOf(repo)["assignments/p0.md"]?.synced;
+    writeFileSync(path.join(repo, "assignments", "p0.md"), "# P0\n\n**Week 2 · 50 points · x**\n\nMore.\n", "utf-8");
+    canvas.getJson.mockImplementation(async (url: string) => (url.endsWith("/assignments/101") ? { published: true } : {}));
+
+    const pushed = await push(canvas, { repo, courseId: COURSE, verify: false });
+    expect(pushed.protected).toContain("assignments/p0.md");
+    expect(manifestOf(repo)["assignments/p0.md"]?.synced).toEqual(before);
+    const result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(stateOf(result.items, "assignments/p0.md")).toBe("repo");
+  });
+
+  it("with no baseline a difference is unknown, and adopt makes it the repo's", async () => {
+    writeManifest(repo, { "assignments/p0.md": P0 });
+    const due = courseDates(repo).items.find((item) => item.path === "assignments/p0.md");
+    const settings = {
+      name: "P0",
+      points_possible: 50,
+      due_at: due?.dueAt.toUTC().toISO(),
+      lock_at: due?.lockAt.toUTC().toISO(),
+    };
+    canvas.getAssignmentFull.mockResolvedValue({ ...settings, description: "<p>Older text.</p>" });
+
+    let result = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["assignments/p0.md"] });
+    expect(result.items).toMatchObject([{ key: "assignments/p0.md", state: "unknown", unknown: ["body"] }]);
+    expect(manifestOf(repo)["assignments/p0.md"]?.synced).toBeUndefined();
+
+    result = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["assignments/p0.md"], adopt: true });
+    expect(result.adopted).toBe(1);
+    expect(result.items).toMatchObject([{ state: "repo", repo: ["body"] }]);
+    // Title, points and dates agree, so settings are recorded on both sides; the body only on Canvas's.
+    expect(manifestOf(repo)["assignments/p0.md"]?.synced).toEqual({
+      repo: { settings: expect.any(String) },
+      canvas: { body: expect.any(String), settings: expect.any(String) },
+      at: expect.any(String),
+    });
+
+    canvas.getAssignmentFull.mockResolvedValue({ ...settings, description: "<p>Edited since.</p>" });
+    result = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["assignments/p0.md"] });
+    expect(result.items).toMatchObject([{ state: "conflict" }]);
+  });
+
+  it("a Canvas edit copied into the repo by hand is marked synced by adopt, with no push", async () => {
+    canvas.getPage.mockResolvedValue({ title: "Welcome", body: "<p>Hello.</p>" });
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    canvas.getPage.mockResolvedValue({ title: "Welcome", body: "<p>Hello, edited in Canvas.</p>" });
+    let result = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["pages/welcome.md"] });
+    expect(result.items).toMatchObject([{ state: "canvas", canvas: ["body"] }]);
+
+    writeFileSync(path.join(repo, "pages", "welcome.md"), "# Welcome\n\nHello, edited in Canvas.\n", "utf-8");
+    result = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["pages/welcome.md"], adopt: true });
+    expect(result.adopted).toBe(1);
+    expect(result.items).toMatchObject([{ state: "in-sync" }]);
+
+    // The baseline moved with it, so the next repo edit is a repo change, not a conflict.
+    writeFileSync(path.join(repo, "pages", "welcome.md"), "# Welcome\n\nHello again.\n", "utf-8");
+    result = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["pages/welcome.md"] });
+    expect(result.items).toMatchObject([{ state: "repo", repo: ["body"] }]);
+  });
+
+  it("an object Canvas no longer has, and a file the repo no longer has, are named", async () => {
+    writeManifest(repo, {
+      "assignments/p0.md": P0,
+      "assignments/gone.md": { kind: "assignment", canvas_id: "8", page_url: "", title: "Gone", extra: {} },
+    });
+    canvas.getAssignmentFull.mockRejectedValue(new CanvasApiError(404, "not found"));
+
+    const result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(stateOf(result.items, "assignments/p0.md")).toBe("canvas-deleted");
+    expect(stateOf(result.items, "assignments/gone.md")).toBe("repo-deleted");
+  });
+
+  it("a path that matches nothing is refused", async () => {
+    await expect(courseStatus(canvas, { repo, courseId: COURSE, paths: ["nope.md"] })).rejects.toThrow(UnmatchedPathError);
+  });
+
+  it("status reads Canvas and never writes it", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    const writes = (): number =>
+      canvas.updateAssignment.mock.calls.length + canvas.updatePage.mock.calls.length + canvas.createModuleItem.mock.calls.length;
+    const before = writes();
+    await courseStatus(canvas, { repo, courseId: COURSE, adopt: true });
+    expect(writes()).toBe(before);
+  });
+
+  it("a module edited in Canvas is reported against its items", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    canvas.listModules.mockResolvedValue([{ id: "9", name: "Week 1" }]);
+    canvas.listModuleItems.mockResolvedValue([]);
+    let result = await courseStatus(canvas, { repo, courseId: COURSE, adopt: true });
+    const key = "[[module]] Week 1";
+    expect(stateOf(result.items, key)).toBe("repo");
+
+    canvas.listModuleItems.mockResolvedValue([{ id: "1", type: "SubHeader", title: "Added by hand", position: 1 }]);
+    result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(result.items.find((item) => item.key === key)).toMatchObject({ state: "conflict", canvas: ["items"] });
   });
 });
 

@@ -36,7 +36,7 @@ import {
   liveQuizzes,
   studentWork,
 } from "./audit";
-import type { CanvasLMS } from "./canvas";
+import { CanvasApiError, type CanvasLMS } from "./canvas";
 import {
   compute,
   type DateConfig,
@@ -50,8 +50,35 @@ import {
 import { pyRepr } from "./objects";
 import { type OutlineModule, outline } from "./outline";
 import { fnmatch } from "./paths";
-import { type Entry, Manifest, PublishError, parseQuiz, rewriteLinks, ValueError } from "./publish";
-import { type Plan, Publisher, type PublisherCanvas, type Reporter } from "./publisher";
+import {
+  attachedRubric,
+  type Entry,
+  Manifest,
+  PublishError,
+  parseQuiz,
+  parseRubric,
+  rewriteLinks,
+  sameCriteria,
+  ValueError,
+} from "./publish";
+import { type ExpectedModule, type Plan, Publisher, type PublisherCanvas, type Reporter } from "./publisher";
+import {
+  adopt,
+  afterPush,
+  type Baseline,
+  type Component,
+  canvasHtml,
+  canvasQuestions,
+  compareSides,
+  fingerprint,
+  fingerprintBytes,
+  type Fingerprints,
+  type Matches,
+  minute,
+  plainCriteria,
+  type Sides,
+  type SyncState,
+} from "./sync";
 import type { Payload } from "./types";
 import {
   checkBody,
@@ -69,6 +96,7 @@ import {
   type Intent,
   type OverrideNote,
   knownLinkTargets,
+  slotIdent,
 } from "./verify";
 
 export type { Reporter } from "./publisher";
@@ -623,6 +651,351 @@ export async function verifyCourse(canvas: CourseCanvas, options: AuditOptions):
 }
 
 // ============================================================================
+// status: which side moved since the last sync
+// ============================================================================
+
+/** Canvas has no object at this id any more: deleted, or never there. */
+async function orMissing<T>(read: Promise<T>): Promise<T | null> {
+  try {
+    return await read;
+  } catch (error) {
+    if (error instanceof CanvasApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+function text(value: unknown): string {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+/** One object's two sides, read now, and whether students can see it. */
+interface ObjectSides {
+  readonly sides: Sides;
+  /** Null for the syllabus and files, which have no published flag of their own. */
+  readonly published: boolean | null;
+}
+
+/** Points and the three dates, to the minute, as a settings fingerprint holds them. */
+function dated(points: unknown, dueAt: unknown, unlockAt: unknown, lockAt: unknown): Payload {
+  return { points: points ?? null, due: minute(dueAt), unlock: minute(unlockAt), lock: minute(lockAt) };
+}
+
+/**
+ * Read one tracked object from both sides: the repo rendered as a push would
+ * send it, and Canvas as it stores it. Null when Canvas no longer has it.
+ *
+ * A part is only fingerprinted when the repo manages it: settings for
+ * everything with a title, a rubric only when the file has a rubric table,
+ * questions only for a repo quiz. Canvas's side of each part is read the same
+ * way every time, whatever the repo holds, so a change in the repo never
+ * looks like a change in Canvas.
+ */
+async function readSides(canvas: CourseCanvas, publisher: Publisher, plan: Plan, entry: Entry): Promise<ObjectSides | null> {
+  const courseId = publisher.courseId;
+  const source = plan.source;
+  if (source === null) return null;
+  const repo: Fingerprints = {};
+  const seen: Fingerprints = {};
+  const matches: Matches = {};
+
+  if (entry.kind === "file") {
+    const stored = await orMissing(canvas.getFile(entry.canvasId));
+    if (stored === null) return null;
+    const bytes = readFileSync(source);
+    repo.body = fingerprintBytes(bytes);
+    seen.body = fingerprint({ id: stored.id ?? null, size: stored.size ?? null, modified: stored.modified_at ?? stored.updated_at ?? null });
+    matches.body = Number(stored.size) === bytes.length;
+    return { sides: { repo, canvas: seen, matches }, published: null };
+  }
+
+  const [title, html] = publisher.render(source);
+  const [intended] = rewriteLinks(html, source, publisher.repo, publisher.manifest, courseId);
+  repo.body = fingerprint(intended);
+
+  let stored: Payload | null;
+  let body: string;
+  switch (entry.kind) {
+    case "syllabus":
+      stored = await orMissing(canvas.getJson(`/api/v1/courses/${courseId}`, { "include[]": "syllabus_body" }));
+      body = text(stored?.syllabus_body);
+      break;
+    case "page":
+      stored = await orMissing(canvas.getPage(courseId, entry.pageUrl));
+      body = text(stored?.body);
+      break;
+    case "assignment":
+      stored = await orMissing(canvas.getAssignmentFull(courseId, entry.canvasId));
+      body = text(stored?.description);
+      break;
+    case "discussion":
+      stored = await orMissing(canvas.getDiscussion(courseId, entry.canvasId));
+      body = text(stored?.message);
+      break;
+    case "quiz":
+      stored = await orMissing(canvas.getQuiz(courseId, entry.canvasId));
+      body = text(stored?.description);
+      break;
+    default:
+      return null;
+  }
+  if (stored === null) return null;
+  seen.body = fingerprint(canvasHtml(body));
+  matches.body = checkBody(plan.key, intended, body).length === 0;
+  if (entry.kind === "syllabus") return { sides: { repo, canvas: seen, matches }, published: null };
+
+  // A graded discussion or quiz keeps its points, dates and rubric on its
+  // assignment, as verify reads them.
+  let holder: Payload | null = entry.kind === "assignment" || entry.kind === "quiz" ? stored : null;
+  let assignmentId = entry.kind === "assignment" ? entry.canvasId : "";
+  if (entry.kind === "discussion") assignmentId = entry.extra.assignment_id ?? "";
+  if (entry.kind === "quiz" && stored.assignment_id) assignmentId = String(stored.assignment_id);
+  if (assignmentId && entry.kind !== "assignment") holder = await orMissing(canvas.getAssignmentFull(courseId, assignmentId));
+
+  const storedTitle = text(stored.title || stored.name);
+  const wantTitle = title || plan.title;
+  const intent = plan.dates !== null && entry.kind !== "page" ? metadataIntent(publisher, plan) : null;
+  repo.settings = fingerprint({
+    title: wantTitle,
+    ...(intent === null ? {} : dated(intent.points, intent.dueAt, intent.unlockAt, intent.lockAt)),
+  });
+  seen.settings = fingerprint({
+    title: storedTitle,
+    ...(holder === null ? {} : dated(holder.points_possible, holder.due_at, holder.unlock_at, holder.lock_at)),
+  });
+  // Visibility is left out: publishing is a decision made apart from content.
+  const settingsIntent = intent === null ? null : { ...intent, published: undefined };
+  matches.settings =
+    storedTitle === wantTitle &&
+    (settingsIntent === null || holder === null || checkMetadata(plan.key, settingsIntent, holder).length === 0);
+
+  const criteria = entry.kind === "assignment" || entry.kind === "discussion" ? parseRubric(readFileSync(source, "utf-8")) : [];
+  if (criteria.length > 0) {
+    const attached = holder === null ? null : attachedRubric(holder);
+    const plain = attached === null ? null : plainCriteria(attached.criteria);
+    repo.rubric = fingerprint(criteria);
+    seen.rubric = fingerprint(plain);
+    matches.rubric = plain !== null && sameCriteria(plain, criteria);
+  }
+
+  if (entry.kind === "quiz") {
+    const questions = parseQuiz(source);
+    const live = await canvas.listQuizQuestions(courseId, entry.canvasId);
+    repo.questions = fingerprint(questions);
+    seen.questions = fingerprint(canvasQuestions(live));
+    matches.questions = live.length === questions.length;
+  }
+
+  return { sides: { repo, canvas: seen, matches }, published: Boolean(stored.published) };
+}
+
+/** A [[module]]'s two sides: the items canvas.toml lists, and the items the module holds. */
+function moduleSides(module: ExpectedModule, items: readonly Payload[], key: string): Sides {
+  const storedName = text(module.stored.name);
+  const live = items.map((item) => ({ type: text(item.type), ident: slotIdent(item), title: text(item.title) }));
+  return {
+    repo: { items: fingerprint({ name: module.name, items: module.items }) },
+    canvas: { items: fingerprint({ name: storedName, items: live }) },
+    matches: { items: storedName === module.name && checkModule(key, module.items, items).length === 0 },
+  };
+}
+
+/**
+ * - `new`: in the repo, never pushed.
+ * - `canvas-deleted`: the manifest tracks it, Canvas no longer has it.
+ * - `repo-deleted`: the manifest tracks it, the repo no longer has the file.
+ */
+export type StatusState = SyncState | "new" | "canvas-deleted" | "repo-deleted";
+
+export interface StatusItem {
+  /** The repo path, or `[[module]] <name>`. */
+  readonly key: string;
+  readonly kind: string;
+  readonly title: string;
+  readonly state: StatusState;
+  /** Parts the repo changed since the last sync. */
+  readonly repo: readonly Component[];
+  /** Parts Canvas changed since the last sync. */
+  readonly canvas: readonly Component[];
+  /** Parts that differ with no baseline to say which side moved. */
+  readonly unknown: readonly Component[];
+  /** Whether students can see it; null when that does not apply. */
+  readonly published: boolean | null;
+  /** Why the object could not be compared, when it could not. */
+  readonly detail: string;
+}
+
+export interface StatusOptions extends AuditOptions {
+  /**
+   * Record Canvas as it is now as the baseline, for every part that has none.
+   * Where the two sides differ, the repo's version then counts as the change.
+   * Also records both sides again where both changed and now agree: a Canvas
+   * edit copied into the repo by hand. Writes only the manifest, never Canvas.
+   */
+  readonly adopt?: boolean;
+  /** Limit to these repo files, exact or glob. Modules are left out. */
+  readonly paths?: readonly string[];
+}
+
+export interface StatusResult {
+  readonly items: readonly StatusItem[];
+  /** Repo files marked `draft: true`, not compared. */
+  readonly drafts: readonly string[];
+  /** Objects and modules `adopt` recorded a baseline for. */
+  readonly adopted: number;
+}
+
+/** The states that need a person to decide something before the next push. */
+export const NEEDS_ATTENTION: ReadonlySet<StatusState> = new Set(["canvas", "conflict", "unknown", "canvas-deleted"]);
+
+function statusItem(
+  key: string,
+  kind: string,
+  title: string,
+  state: StatusState,
+  fields: Partial<Pick<StatusItem, "repo" | "canvas" | "unknown" | "published" | "detail">> = {},
+): StatusItem {
+  return { key, kind, title, state, repo: [], canvas: [], unknown: [], published: null, detail: "", ...fields };
+}
+
+/**
+ * Which side has moved since the repo and Canvas last agreed, for every object
+ * the repo publishes and every [[module]].
+ *
+ * Reads Canvas, never writes it. With `adopt` it writes the manifest: the
+ * baseline for a course whose objects were pushed, or adopted, before
+ * baselines existed.
+ */
+export async function courseStatus(canvas: CourseCanvas, options: StatusOptions): Promise<StatusResult> {
+  const courseId = options.courseId;
+  const publisher = openRepo(options.repo, courseId, canvas, { report: () => {} });
+  const plans = planOf(publisher);
+  const manifest = publisher.manifest;
+  const patterns = options.paths ?? [];
+  const byKey = new Map(plans.map((p) => [p.key, p]));
+  const drafts = new Set(publisher.drafts);
+  for (const key of manifest.entries.keys()) if (publisher.isDraftKey(key)) drafts.add(key);
+
+  let keys = [...new Set([...byKey.keys(), ...manifest.entries.keys()])].filter((key) => !drafts.has(key));
+  if (patterns.length > 0) {
+    const hits = (pattern: string): string[] => keys.filter((key) => fnmatch(key, pattern));
+    const missed = patterns.filter((pattern) => hits(pattern).length === 0);
+    if (missed.length > 0) throw new UnmatchedPathError(missed, [...keys].sort(compare));
+    const chosen = new Set(patterns.flatMap(hits));
+    keys = keys.filter((key) => chosen.has(key));
+  }
+  keys.sort(compare);
+
+  const at = new Date().toISOString();
+  const items: StatusItem[] = [];
+  let adopted = 0;
+  let done = 0;
+  for (const key of keys) {
+    options.progress?.({ message: `Comparing ${key}`, done, total: keys.length });
+    done += 1;
+    const plan = byKey.get(key);
+    const entry = manifest.get(key);
+    if (entry === null) {
+      items.push(statusItem(key, plan?.kind ?? "", plan?.title ?? "", "new"));
+      continue;
+    }
+    if (plan === undefined) {
+      items.push(statusItem(key, entry.kind, entry.title, "repo-deleted"));
+      continue;
+    }
+    let read: ObjectSides | null;
+    try {
+      read = await readSides(canvas, publisher, plan, entry);
+    } catch (error) {
+      if (!(error instanceof PublishError || error instanceof ValueError)) throw error;
+      items.push(statusItem(key, entry.kind, entry.title, "unknown", { detail: messageOf(error) }));
+      continue;
+    }
+    if (read === null) {
+      items.push(statusItem(key, entry.kind, entry.title, "canvas-deleted"));
+      continue;
+    }
+    if (options.adopt) {
+      const next = adopt(entry.synced, read.sides, at);
+      if (next !== null) {
+        entry.synced = next;
+        adopted += 1;
+      }
+    }
+    const compared = compareSides(entry.synced, read.sides);
+    items.push(
+      statusItem(key, entry.kind, entry.title, compared.state, {
+        repo: compared.repo,
+        canvas: compared.canvas,
+        unknown: compared.unknown,
+        published: read.published,
+      }),
+    );
+  }
+
+  if (patterns.length === 0 && publisher.moduleTables().length > 0) {
+    options.progress?.({ message: "Comparing modules" });
+    for (const module of publisher.expectedModules(await canvas.listModules(courseId))) {
+      const key = `[[module]] ${module.name}`;
+      const live = await canvas.listModuleItems(courseId, String(module.stored.id));
+      const sides = moduleSides(module, live, key);
+      let baseline: Baseline | null = manifest.modules.get(key) ?? null;
+      if (options.adopt) {
+        const next = adopt(baseline, sides, at);
+        if (next !== null) {
+          manifest.modules.set(key, next);
+          baseline = next;
+          adopted += 1;
+        }
+      }
+      const compared = compareSides(baseline, sides);
+      items.push(
+        statusItem(key, "module", module.name, compared.state, {
+          repo: compared.repo,
+          canvas: compared.canvas,
+          unknown: compared.unknown,
+          published: Boolean(module.stored.published),
+        }),
+      );
+    }
+  }
+
+  if (adopted > 0) manifest.save();
+  return { items, drafts: [...drafts].sort(compare), adopted };
+}
+
+/**
+ * Record the baseline for everything a push wrote: read each object back and
+ * fingerprint both sides of the parts it wrote. Returns how many were recorded.
+ */
+async function recordBaseline(canvas: CourseCanvas, publisher: Publisher, plans: ReadonlyMap<string, Plan>): Promise<number> {
+  const manifest = publisher.manifest;
+  const at = new Date().toISOString();
+  let recorded = 0;
+  for (const [key, parts] of publisher.written) {
+    const entry = manifest.get(key);
+    const plan = plans.get(key);
+    if (entry === null || plan === undefined) continue;
+    const read = await readSides(canvas, publisher, plan, entry);
+    if (read === null) continue;
+    entry.synced = afterPush(entry.synced, read.sides, parts, at);
+    recorded += 1;
+  }
+  const modules = [...publisher.written.keys()].filter((key) => key.startsWith("[[module]] "));
+  if (modules.length > 0) {
+    for (const module of publisher.expectedModules(await canvas.listModules(publisher.courseId))) {
+      const key = `[[module]] ${module.name}`;
+      const parts = publisher.written.get(key);
+      if (parts === undefined) continue;
+      const live = await canvas.listModuleItems(publisher.courseId, String(module.stored.id));
+      manifest.modules.set(key, afterPush(manifest.modules.get(key) ?? null, moduleSides(module, live, key), parts, at));
+      recorded += 1;
+    }
+  }
+  manifest.save();
+  return recorded;
+}
+
+// ============================================================================
 // push
 // ============================================================================
 
@@ -711,6 +1084,8 @@ export interface PushResult {
   readonly rendered: ReadonlyMap<string, string>;
   /** The read-back that follows a clean push, or null when it did not run. */
   readonly verify: VerifyResult | null;
+  /** Objects and modules whose sync baseline this push recorded. */
+  readonly baselined: number;
 }
 
 /**
@@ -817,6 +1192,9 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
       skipped += outcome.skipped;
       problems.push(...outcome.errors);
     } catch (error) {
+      // Part of it may have landed; with no baseline, status reports what
+      // differs instead of calling it synced.
+      publisher.written.delete(item.key);
       problems.push(`${item.key}: ${messageOf(error)}`);
     }
     done += 1;
@@ -832,6 +1210,7 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
           problems.push(`${item.key}: unresolved link ${link}`);
         }
       } catch (error) {
+        publisher.written.delete(item.key);
         problems.push(`${item.key}: ${messageOf(error)}`);
       }
       done += 1;
@@ -864,6 +1243,18 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
     }
   }
 
+  // Recorded even when something else failed: what did land is synced, and
+  // status should say so rather than call it unknown.
+  let baselined = 0;
+  if (!dryRun && canvas !== null && publisher.written.size > 0) {
+    progress({ message: "Recording the sync baseline" });
+    try {
+      baselined = await recordBaseline(canvas, publisher, new Map(plans.map((p) => [p.key, p])));
+    } catch (error) {
+      problems.push(`sync baseline: ${messageOf(error)}`);
+    }
+  }
+
   // Over `selected` rather than every plan: a full push names every orphan, a
   // --path push names only the file just pushed, --only pages says nothing.
   const unlisted = publisher.unlisted(selected);
@@ -890,6 +1281,7 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
     protected: [...publisher.protected].sort(compare),
     rendered: publisher.rendered,
     verify,
+    baselined,
   };
 }
 

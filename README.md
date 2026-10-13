@@ -169,6 +169,8 @@ edutools export [course_id] [-t|--type <type>] [--quiz <id>]... [-o|--out <file>
                                                    download a course export (QTI by default)
 
 edutools push <repo> --course <id> [options]       publish a course repo into Canvas
+edutools status <repo> --course <id> [--path <file>]... [--adopt] [--all] [--json]
+                                                   which side changed since the repo and Canvas last agreed
 edutools verify <repo> --course <id> [--json]      read published content back and prove it landed
 edutools audit <repo> --course <id> [--json]       compare the manifest with the live course, both ways
 edutools outline <repo> [--out <file>]             the module outline a push builds, from the repo alone
@@ -207,8 +209,8 @@ edutools quiz-questions <quiz_id> -c <id> --from-file <file> [--remove-group <id
 ```
 
 Exit codes: 0 on success, 1 when a command fails or finds a problem (a failed
-push, verify failures, a stale audit entry, a declined confirmation), and 2 for a
-usage error such as a missing required option.
+push, verify failures, a stale audit entry, a Canvas change `status` found, a
+declined confirmation), and 2 for a usage error such as a missing required option.
 
 `push` takes these flags:
 
@@ -408,7 +410,9 @@ Objects are created **unpublished** unless `--publish` is given, so a push is sa
 run against a live course before students should see the content. `push` runs
 `verify` automatically when it finishes; pass `--no-verify` to skip that. A dry run
 reads nothing from Canvas, so it needs no token; `--clean --dry-run` is the
-exception, since listing what to delete means reading the course.
+exception, since listing what to delete means reading the course. A push also
+reads back what it wrote and records it as the sync baseline in the manifest,
+which is what `status` compares against (see [Two-way sync](#two-way-sync)).
 
 A push that hits a problem (a malformed `canvas.toml`, a `--path` that matches
 nothing, a file that fails to render, a Canvas error on one object) lists every
@@ -450,6 +454,71 @@ item with due dates and points, from `canvas.toml` and the files themselves; wit
 `--out` it writes that as JSON, which is how a course website renders a schedule
 page that matches Canvas's Modules page exactly. The JSON is byte for byte what
 earlier versions wrote, so a site that commits it sees no churn.
+
+### Two-way sync
+
+The repo is not the only place a course changes. A typo gets fixed in the Canvas
+editor during class, a due date gets moved for a snow day, a rubric row gets
+reworded in SpeedGrader. `verify` sees that the two sides differ but cannot say
+which one moved, so `status` answers that:
+
+```bash
+edutools status ./cs121 --course 12345            # what changed, and on which side
+edutools status ./cs121 --course 12345 --all      # list the objects in sync too
+edutools status ./cs121 --course 12345 --json     # the same, for scripts
+```
+
+Every push records a baseline in the manifest for each object it wrote. The
+baseline is a fingerprint of each part of the object, taken twice: once from the
+repo as the push rendered it, and once from what Canvas stored. The parts are the
+body, the settings (title, points and the three dates), the rubric, a quiz's
+questions, and a module's items. `status` fingerprints both sides again and
+compares each one with its own baseline, never with the other side, so Canvas
+rewriting markup on save is not a change. A part is only compared when the repo
+manages it: a rubric attached by hand to an assignment with no `## Rubric`
+table belongs to Canvas, and a push never touches it.
+
+Each object lands in one state:
+
+| State | Means | What to do |
+|---|---|---|
+| `in-sync` | neither side moved, or both made the same change | nothing |
+| `repo` | the repo changed | push it (published content needs `--update-published`) |
+| `canvas` | Canvas changed | copy the change into the repo and run `status --adopt`, or a push overwrites it |
+| `conflict` | both changed, differently | decide which side wins first |
+| `unknown` | no baseline, and the two sides differ | check which is right, then push it or adopt it |
+| `new` | in the repo, never pushed | the next push creates it |
+| `canvas-deleted` | the manifest tracks it, Canvas does not have it | see `audit` |
+| `repo-deleted` | the manifest tracks it, the repo file is gone | its Canvas object is left alone |
+
+`status` exits 1 for `canvas`, `conflict`, `unknown` and `canvas-deleted`, since
+each needs a decision before the next push. A repo that is only ahead of Canvas
+exits 0. `--path` limits it to some repo files (modules are left out then).
+
+`status` only reads Canvas. `--adopt` writes the manifest, and nothing else:
+
+- **A course pushed before baselines existed.** Its manifest has no baseline,
+  so every difference is `unknown`. `--adopt` records Canvas as it is now as the
+  baseline. Where the repo matches Canvas both sides are recorded, and where it
+  differs only Canvas is, so the difference reads as a repo change from then on.
+  Run it once, after checking that nothing in Canvas needs to come back first.
+- **A Canvas change copied into the repo.** Edit the markdown to match what
+  Canvas holds, then run `status --adopt`. Once the two sides agree, it records
+  both again, and the object is in sync without pushing it back.
+
+`--adopt` never covers a change the repo made alone, even one that looks the
+same in Canvas: a changed link target does not show up in the comparison, so it
+stays a push to make.
+
+`--json` prints
+`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted"}`,
+where `repo`, `canvas` and `unknown` list the parts each side changed. A module's
+key is `[[module]] <name>`, as in `verify`.
+
+What `status` does not cover yet: assignment group weights, a module's published
+state, and whether something is published at all (publishing is a decision made
+apart from content). It also does not write a Canvas change into the repo for
+you; that is still an edit by hand.
 
 ### Modules
 

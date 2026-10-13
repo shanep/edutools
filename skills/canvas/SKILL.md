@@ -1,6 +1,6 @@
 ---
 name: canvas
-description: Work with Canvas LMS through the `edutools` CLI - list courses, students, assignments, modules and submissions; snapshot a whole course to disk; publish a course repository of markdown into Canvas and verify or audit what landed; preview the module outline and due dates; create, update, delete, publish and unpublish pages, assignments, discussions, quizzes and modules; and grade submissions with written feedback. Use whenever the request touches Canvas, an LMS course, course design or course content, a backup or snapshot of a course, a gradebook, a course page or module, an assignment or quiz, student submissions, grading, or leaving feedback on student work.
+description: Work with Canvas LMS through the `edutools` CLI - list courses, students, assignments, modules and submissions; snapshot a whole course to disk; publish a course repository of markdown into Canvas, verify or audit what landed, and see which side (the repo or Canvas) changed since the last push; preview the module outline and due dates; create, update, delete, publish and unpublish pages, assignments, discussions, quizzes and modules; and grade submissions with written feedback. Use whenever the request touches Canvas, an LMS course, course design or course content, a backup or snapshot of a course, a gradebook, a course page or module, an assignment or quiz, student submissions, grading, or leaving feedback on student work.
 ---
 
 # Canvas LMS
@@ -14,6 +14,33 @@ Run `edutools --help`, or `edutools <command> --help`, whenever the exact flags
 matter. This file covers what the help text cannot: which command to reach for,
 and what goes wrong. `--help` does not mark which options are required; the ones
 that are say so below.
+
+## What this skill does
+
+This skill is a guide to `edutools`, and nothing more. It holds no Canvas API
+knowledge of its own: every action below is an `edutools` command, and when a
+task cannot be expressed with one, the fix is a new command in edutools (see the
+last section), not a workaround here.
+
+It covers five jobs, each with its own section:
+
+1. **Reading a course**: courses, students, assignments, modules, groups,
+   submissions, and whole-course snapshots and exports. Reads are always safe.
+2. **Publishing a course repository**: a directory of markdown plus a
+   `canvas.toml` that `push` turns into Canvas pages, assignments, discussions,
+   quizzes, rubrics and modules. `verify` proves what landed, `audit` finds what
+   Canvas holds that the repo did not put there, and `status` says which side
+   changed since the last push, so edits made in the Canvas UI are not lost.
+3. **Changing one object** that no repo manages: `create`, `update`, `delete`,
+   `publish`, `unpublish`.
+4. **Grading**: reading submissions and discussion posts, writing scores and
+   feedback, fixing feedback already sent, and rubrics for one assignment.
+5. **Changing edutools itself**, when none of the above fits.
+
+How a session goes: check the edutools version and the credentials once (next
+section), read with `--json` whenever a value matters, and treat every write as
+landing on a live course with real students. The rules after that are what keep
+those writes safe.
 
 ## Before anything else
 
@@ -109,6 +136,10 @@ Canvas writes are immediate and land on real courses with real students.
    did and exit non-zero on failure. If something failed, say what and why.
 7. **Never handle tokens.** Do not run `site add`, `site token`, `site remove` or
    `site default` on the user's behalf unless they ask, and never put a token on a command line.
+8. **Check `status` before pushing a course repository.** A push overwrites any
+   Canvas edit to an object it writes. If `status` reports `canvas`, `conflict`
+   or `unknown`, show the user what changed in Canvas and settle each one before
+   pushing (see Two-way sync below).
 
 ## Reading
 
@@ -330,8 +361,9 @@ The usual loop, and the order to run it in:
 ```bash
 edutools dates <repo> --json                       # due dates, from canvas.toml alone
 edutools outline <repo>                            # the modules a push will build
+edutools status <repo> --course <id>               # did anything change in Canvas since the last push?
 edutools push <repo> --course <id> --dry-run       # render everything, write nothing
-edutools push <repo> --course <id>                 # write it, unpublished, then verify
+edutools push <repo> --course <id>                 # write it, unpublished, verify, record the baseline
 edutools audit <repo> --course <id> --json         # what Canvas holds that the repo did not put there
 ```
 
@@ -481,6 +513,101 @@ Both require `--course <id>`.
   repo file still exists is recreated by the next push; if the deletion was
   deliberate, the repo file goes (or becomes a draft) and so does its manifest
   entry. Ask the user which it was rather than guessing.
+
+### Two-way sync: `status`
+
+The repo is the source for a course, but Canvas gets edited too: a typo fixed in
+the Canvas editor during class, a due date moved for a snow day, a rubric row
+reworded in SpeedGrader. `verify` sees that the two sides differ but not which
+one moved. `status` answers that, so a change made in Canvas can come back into
+the repo instead of being overwritten by the next push.
+
+```bash
+edutools status <repo> --course <id>               # what changed, and on which side
+edutools status <repo> --course <id> --json        # the same, to parse
+edutools status <repo> --course <id> --path <file> # some repo files only; repeatable, glob ok
+edutools status <repo> --course <id> --adopt       # record a baseline (see below); writes the manifest only
+```
+
+`--course <id>` is required.
+
+**How it works.** Every push, after writing, reads each object back and records a
+baseline in `.canvas/manifest-<id>.json`: under the entry's `synced` key (and
+under `modules` for a `[[module]]`), a fingerprint of each part of the object,
+taken from the repo as rendered and from what Canvas stored. The parts are
+`body`, `settings` (title, points and the three dates), `rubric`, `questions`
+(a repo quiz) and `items` (a module). Only the parts a push actually wrote are
+recorded: a full push does not attach rubrics, so it leaves the rubric's
+baseline as it was, and a published object the push skipped keeps its old
+baseline. `status` fingerprints both sides again and compares each one with its
+own baseline. The two sides are never compared with each other through a
+fingerprint, so Canvas rewriting markup on save is not a change. A part is only
+looked at when the repo manages it: a rubric attached by hand to an assignment
+with no `## Rubric` table belongs to Canvas.
+
+**The states, and what to do about each:**
+
+| State | Means | What to do |
+| --- | --- | --- |
+| `in-sync` | Neither side moved, or both made the same change. | Nothing. |
+| `repo` | The repo changed. | Push it. Published content needs `--update-published` (rule 5). |
+| `canvas` | Canvas changed. | Show the user. Copy the change into the markdown, then `status --adopt`. Or, if the user says the repo wins, push. |
+| `conflict` | Both changed, differently. | Show the user both versions and let them decide. Never push over it unasked. |
+| `unknown` | No baseline, and the sides differ. | Cannot tell who changed. Ask, or run `--adopt` once the user agrees Canvas holds nothing to keep. |
+| `new` | In the repo, never pushed. | The next push creates it. |
+| `canvas-deleted` | The manifest tracks it; Canvas does not have it. | Same as a `stale` audit entry: ask whether the deletion was deliberate. |
+| `repo-deleted` | The manifest tracks it; the repo file is gone. | Its Canvas object is left alone; ask before deleting it. |
+
+Each row also names the parts that moved (`repo: body, settings`), which says
+where to look. To see what Canvas holds now, read the object (`assignments`,
+`modules`, `discussion` with `--json`) or `pull` the course, and compare it
+with the markdown.
+
+**`--adopt`** writes the manifest and never Canvas. It does two things:
+
+- **A course pushed before baselines existed** has none, so every difference is
+  `unknown`. `--adopt` records Canvas as it is now as the baseline: where the
+  repo matches Canvas, both sides are recorded; where it differs, only Canvas
+  is, so from then on the difference reads as a repo change. Run it only after
+  the user has looked at the differences and agreed that nothing in Canvas has
+  to come back first, because it turns every difference into "the repo is
+  right".
+- **A Canvas change copied into the repo by hand.** Once the markdown matches
+  what Canvas holds, `--adopt` records both sides again, and the object is in
+  sync without pushing it back to a class that is reading it.
+
+It never absorbs a change the repo made alone, even one that looks the same in
+Canvas (a changed link target is invisible to the comparison), so that stays a
+push to make.
+
+**Bringing a Canvas change into the repo**, the whole loop:
+
+```bash
+edutools status <repo> --course <id>                           # 1. find it: state canvas, parts body
+edutools pull <id> --out /tmp/snap --only assignments          # 2. read what Canvas holds now
+#                                                                 3. edit the markdown to match
+edutools status <repo> --course <id> --path <file> --adopt     # 4. both sides agree: in-sync
+```
+
+Nothing converts Canvas HTML back to markdown yet, so step 3 is an edit by hand.
+A date moved in Canvas cannot go back into a `Week N` meta line; it becomes an
+`[override."<path>"]` in `canvas.toml`, and that is the user's call. A module
+changed in Canvas comes back as edits to its `[[module]]` table.
+
+**Exit codes and JSON.** `status` exits 1 for `canvas`, `conflict`, `unknown` and
+`canvas-deleted`, the states that need a decision before the next push, and 0
+when the repo is only ahead. With `--json` it prints
+`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted"}`
+for every object, in sync or not; `repo`, `canvas` and `unknown` list the parts,
+`published` is null for the syllabus and files (for a module it is the module's
+own flag), and `detail` says why an object could not be compared. `--path` leaves
+modules out. Without `--json` it lists only what is not in sync (`--all` lists
+everything).
+
+**What it does not cover:** assignment group weights, a module's published
+state, and whether an object is published at all, since publishing is a decision
+made apart from content. Classic quiz questions are compared by fingerprint, but
+a quiz built by hand in Canvas has no repo file and no baseline.
 
 ## Grading with feedback
 

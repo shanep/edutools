@@ -356,7 +356,7 @@ export interface ModuleSlot {
 }
 
 /** What identifies a live module item, read the way `ModuleSlot.ident` is written. */
-function slotIdent(item: Payload): string {
+export function slotIdent(item: Payload): string {
   switch (pyStr(get(item, "type", ""))) {
     case "Page":
       return pyStr(get(item, "page_url", ""));

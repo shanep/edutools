@@ -164,6 +164,7 @@ function report(cli: Cli, result: PushResult, options: Options): void {
         ? "(published)"
         : `(${c.bold("new objects unpublished")}; existing visibility unchanged)`),
   );
+  if (result.baselined > 0) cli.print(c.dim(`recorded the sync baseline for ${result.baselined} object(s)`));
   if (result.protected.length > 0) {
     cli.print(
       `${c.yellow("!")} left ${result.protected.length} published object(s) untouched; ` +
