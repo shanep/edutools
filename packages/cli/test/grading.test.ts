@@ -209,6 +209,44 @@ describe("download", () => {
   });
 });
 
+describe("download linked files", () => {
+  it("a file linked from the text is downloaded beside it", async () => {
+    canvas.getSubmissions.mockResolvedValue([
+      { user_id: 555, body: '<p><a href="/users/555/files/42?verifier=v">report.docx</a></p>', attachments: [] },
+    ]);
+    canvas.downloadLinkedFile.mockResolvedValue(5);
+    const out = path.join(tmpDir(), "subs");
+    const result = await invoke(["download", "-c", "123", "-a", "456", "--out", out], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.downloadLinkedFile.mock.calls[0]?.[0]).toBe("/users/555/files/42?verifier=v");
+    expect(canvas.downloadLinkedFile.mock.calls[0]?.[1]).toBe(path.join(out, "555", "report.docx"));
+  });
+
+  it("a linked file already on disk is left alone", async () => {
+    const out = path.join(tmpDir(), "subs");
+    mkdirSync(path.join(out, "555"), { recursive: true });
+    writeFileSync(path.join(out, "555", "report.docx"), "abcde");
+    canvas.getSubmissions.mockResolvedValue([
+      { user_id: 555, body: '<a href="/files/42">report.docx</a>', attachments: [] },
+    ]);
+    const result = await invoke(["download", "-c", "123", "-a", "456", "--out", out], { client: canvas });
+
+    expect(result.output).toContain("already present");
+    expect(canvas.downloadLinkedFile).not.toHaveBeenCalled();
+  });
+
+  it("a failed linked download is reported and exits 1", async () => {
+    canvas.getSubmissions.mockResolvedValue([{ user_id: 555, body: '<a href="/files/42">r.docx</a>' }]);
+    canvas.downloadLinkedFile.mockRejectedValue(new Error("HTTP 401"));
+    const out = path.join(tmpDir(), "subs");
+    const result = await invoke(["download", "-c", "123", "-a", "456", "--out", out], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("linked r.docx: HTTP 401");
+  });
+});
+
 describe("submission", () => {
   it("json emits the raw payload", async () => {
     canvas.getSubmission.mockResolvedValue({ user_id: 789, grade: "18" });

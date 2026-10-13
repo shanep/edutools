@@ -1,5 +1,6 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { linkedFiles } from "@edutools/core/objects";
 import { safeComponent } from "@edutools/core/pull";
 import { CliExit, type Register } from "../cli";
 import { expandHome, isRecord, messageOf, str } from "../format";
@@ -27,8 +28,10 @@ export const register: Register = (program, cli) => {
     .description(
       "Download submission attachments so the work can be read locally.\n\n" +
         "Writes <out>/<user_id>/<filename>, plus submission.txt for any typed-in\n" +
-        "text. Nothing is overwritten silently: an existing file of the same size is\n" +
-        "left alone.",
+        "text. A Canvas file the typed-in text links to is downloaded beside it, since\n" +
+        "a file uploaded through the text editor is only linked, never attached.\n" +
+        "Nothing is overwritten silently: an existing file of the same size is left\n" +
+        "alone, and so is any existing file of a linked file's name.",
     )
     .requiredOption("-o, --out <dir>", "Directory to write into; one subdirectory per student")
     .option("-c, --course <id>", "Canvas course ID (prompted if omitted)")
@@ -62,6 +65,22 @@ export const register: Register = (program, cli) => {
             mkdirSync(folder, { recursive: true });
             writeFileSync(path.join(folder, "submission.txt"), str(sub.body), "utf-8");
             written += 1;
+
+            for (const file of linkedFiles(str(sub.body))) {
+              // A linked file's size is not in the submission, so an existing file
+              // of its name is taken to be it.
+              const dest = path.join(folder, safeComponent(file.name));
+              if (sizeOf(dest) !== null) {
+                skipped += 1;
+                continue;
+              }
+              try {
+                await canvas.downloadLinkedFile(file.href, dest);
+                written += 1;
+              } catch (error) {
+                problems.push(`user ${userId}, linked ${file.name}: ${messageOf(error)}`);
+              }
+            }
           }
 
           const attachments = Array.isArray(sub.attachments) ? sub.attachments.filter(isRecord) : [];

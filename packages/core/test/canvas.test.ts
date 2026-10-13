@@ -614,6 +614,24 @@ describe("downloadAttachment", () => {
   });
 });
 
+describe("downloadLinkedFile", () => {
+  it("downloads a linked file from this Canvas with its verifier", async () => {
+    const fake = always(() => new Response("bytes", { status: 200 }));
+    const dest = path.join(mkdtempSync(path.join(os.tmpdir(), "edutools-")), "r.docx");
+    const written = await client(fake.fetch).downloadLinkedFile("/users/9/files/42?verifier=v&wrap=1", dest);
+    expect(written).toBe(5);
+    expect(last(fake.calls).url).toBe("https://c.test/users/9/files/42/download?verifier=v");
+  });
+
+  it("never sends the token to another host", async () => {
+    const fake = always(() => new Response("bytes", { status: 200 }));
+    await expect(
+      client(fake.fetch).downloadLinkedFile("https://evil.test/files/42", path.join(os.tmpdir(), "x")),
+    ).rejects.toThrow(/not a file on/);
+    expect(fake.calls).toEqual([]);
+  });
+});
+
 describe("uploadFile", () => {
   function file(content: string): string {
     const dir = mkdtempSync(path.join(os.tmpdir(), "edutools-"));

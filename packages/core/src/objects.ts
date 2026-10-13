@@ -606,3 +606,83 @@ export function flattenDiscussion(view: unknown): DiscussionEntry[] {
   walk(view.view, null);
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Files linked from a submission body
+// ---------------------------------------------------------------------------
+
+/** A Canvas file a student linked from a text entry instead of attaching it. */
+export interface LinkedFile {
+  readonly id: string;
+  /** The link text, else its title, else `file-<id>`. */
+  readonly name: string;
+  /** The href as written, entities decoded; relative or absolute. */
+  readonly href: string;
+}
+
+// A Canvas file link, under a user, course or group or bare, with or without /download.
+const FILE_PATH_RE = /^((?:\/(?:users|courses|groups)\/\d+)?)\/files\/(\d+)(?:\/download)?\/?$/;
+const ANCHOR_RE = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+
+function attribute(attrs: string, name: string): string | null {
+  const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(attrs);
+  return match === null ? null : (match[1] ?? match[2] ?? "");
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function filePathOf(href: string): RegExpExecArray | null {
+  // Any base will do: only the path is looked at here.
+  return FILE_PATH_RE.exec(new URL(href, "https://canvas.invalid").pathname);
+}
+
+/**
+ * The Canvas files a submission's HTML body links to, once each.
+ *
+ * The rich content editor's upload button stores the file in the student's own
+ * files and puts only a link in the body, so `attachments` is empty and the work
+ * is reachable only through that link.
+ */
+export function linkedFiles(body: string): LinkedFile[] {
+  const seen = new Set<string>();
+  const out: LinkedFile[] = [];
+  for (const match of body.matchAll(ANCHOR_RE)) {
+    const attrs = match[1] ?? "";
+    const raw = attribute(attrs, "href");
+    if (raw === null) continue;
+    const href = decodeEntities(raw);
+    const path = filePathOf(href);
+    const id = path?.[2];
+    if (id === undefined || seen.has(id)) continue;
+    seen.add(id);
+    const text = decodeEntities((match[2] ?? "").replace(/<[^>]*>/g, "")).trim();
+    const title = decodeEntities(attribute(attrs, "title") ?? "").trim();
+    out.push({ id, name: text || title || `file-${id}`, href });
+  }
+  return out;
+}
+
+/**
+ * The download url for a linked Canvas file, keeping its `verifier`, or null when
+ * the link points anywhere but `endpoint`. The token goes with the request, so a
+ * student's link to another host must never be followed.
+ */
+export function fileDownloadUrl(href: string, endpoint: string): string | null {
+  const base = new URL(endpoint);
+  const url = new URL(href, base);
+  if (url.origin !== base.origin) return null;
+  const match = filePathOf(url.toString());
+  if (match === null) return null;
+  const download = new URL(`${match[1] ?? ""}/files/${match[2]}/download`, base);
+  const verifier = url.searchParams.get("verifier");
+  if (verifier !== null) download.searchParams.set("verifier", verifier);
+  return download.toString();
+}

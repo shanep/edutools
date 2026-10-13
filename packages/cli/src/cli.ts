@@ -51,6 +51,7 @@ export type CanvasClient = PullCanvas &
     | "getAssignmentGroup"
     | "deleteAssignmentGroup"
     | "getSubmission"
+    | "downloadLinkedFile"
     | "gradeSubmission"
     | "editSubmissionComment"
     | "getSelf"

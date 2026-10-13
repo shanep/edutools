@@ -55,6 +55,7 @@ const METHODS: Readonly<Record<keyof CanvasClient, true>> = {
   listFolders: true,
   listFiles: true,
   downloadAttachment: true,
+  downloadLinkedFile: true,
   downloadBytes: true,
   getJson: true,
   exists: true,

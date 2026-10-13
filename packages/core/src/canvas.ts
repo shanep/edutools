@@ -9,6 +9,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { fileDownloadUrl } from "./objects";
 import type { Payload, RequestData, RequestParams } from "./types";
 
 export const DEFAULT_ENDPOINT = "https://boisestatecanvas.instructure.com";
@@ -956,6 +957,18 @@ export class CanvasLMS {
       createWriteStream(dest),
     );
     return written;
+  }
+
+  /**
+   * Download a file a submission body links to (see `linkedFiles`), return its size.
+   * Refuses a link to any host but this Canvas, since the token goes with it.
+   */
+  async downloadLinkedFile(href: string, dest: string): Promise<number> {
+    const url = fileDownloadUrl(href, this.endpoint);
+    if (url === null) {
+      throw new Error(`not a file on ${this.endpoint}: ${href}`);
+    }
+    return this.downloadAttachment(url, dest);
   }
 
   /** Read a course file's bytes into memory, for comparing with a repo file. */

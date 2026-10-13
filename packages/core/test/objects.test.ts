@@ -3,9 +3,11 @@ import {
   GradeRow,
   buildFields,
   commentById,
+  fileDownloadUrl,
   flattenDiscussion,
   formatG,
   latestCommentBy,
+  linkedFiles,
   parseCommentEdits,
   parseGrades,
   parseOverrides,
@@ -324,5 +326,41 @@ describe("flattenDiscussion", () => {
   it("tolerates an empty or odd payload", () => {
     expect(flattenDiscussion(null)).toEqual([]);
     expect(flattenDiscussion({ view: "nope" })).toEqual([]);
+  });
+});
+
+describe("linkedFiles", () => {
+  it("finds the files the rich content editor linked, once each", () => {
+    const body =
+      '<link rel="stylesheet" href="https://x.test/a.css"><p>' +
+      '<a class="instructure_file_link" title="Link" href="https://c.test/users/9/files/42?verifier=v1&amp;wrap=1">report.docx</a>' +
+      '<a href="/files/43/download?download_frd=1&amp;verifier=v2">notes &amp; more.md</a>' +
+      '<a href="https://c.test/users/9/files/42?verifier=v1">again</a>' +
+      '<a href="https://github.com/me/repo">my repo</a></p>';
+    expect(linkedFiles(body)).toEqual([
+      { id: "42", name: "report.docx", href: "https://c.test/users/9/files/42?verifier=v1&wrap=1" },
+      { id: "43", name: "notes & more.md", href: "/files/43/download?download_frd=1&verifier=v2" },
+    ]);
+  });
+
+  it("falls back to the title, then the id, for a link with no text", () => {
+    const body = '<a title="lab.c" href="/files/1"><span></span></a><a href="/files/2"></a>';
+    expect(linkedFiles(body).map((f) => f.name)).toEqual(["lab.c", "file-2"]);
+  });
+});
+
+describe("fileDownloadUrl", () => {
+  it("points a user file link at its download, keeping the verifier", () => {
+    expect(fileDownloadUrl("https://c.test/users/9/files/42?verifier=v1&wrap=1", "https://c.test")).toBe(
+      "https://c.test/users/9/files/42/download?verifier=v1",
+    );
+    expect(fileDownloadUrl("/files/43/download?download_frd=1&verifier=v2", "https://c.test")).toBe(
+      "https://c.test/files/43/download?verifier=v2",
+    );
+  });
+
+  it("refuses a link to another host, which would be handed the token", () => {
+    expect(fileDownloadUrl("https://evil.test/files/42", "https://c.test")).toBeNull();
+    expect(fileDownloadUrl("https://c.test/courses/1/pages/x", "https://c.test")).toBeNull();
   });
 });
