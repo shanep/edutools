@@ -614,6 +614,16 @@ describe("downloadAttachment", () => {
   });
 });
 
+describe("getSubmissions", () => {
+  it("asks for the comments only when told to", async () => {
+    const fake = always(() => json([]));
+    await client(fake.fetch).getSubmissions("1", "2");
+    await client(fake.fetch).getSubmissions("1", "2", { withComments: true });
+    expect(fake.calls[0]?.url).not.toContain("include");
+    expect(fake.calls[1]?.url).toContain("include%5B%5D=submission_comments");
+  });
+});
+
 describe("downloadLinkedFile", () => {
   it("downloads a linked file from this Canvas with its verifier", async () => {
     const fake = always(() => new Response("bytes", { status: 200 }));

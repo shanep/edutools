@@ -29,7 +29,9 @@ export const register: Register = (program, cli) => {
       "Download submission attachments so the work can be read locally.\n\n" +
         "Writes <out>/<user_id>/<filename>, plus submission.txt for any typed-in\n" +
         "text. A Canvas file the typed-in text links to is downloaded beside it, since\n" +
-        "a file uploaded through the text editor is only linked, never attached.\n" +
+        "a file uploaded through the text editor is only linked, never attached. Files\n" +
+        "a student attached to their own submission comments, such as work sent after\n" +
+        "the assignment closed, go in <out>/<user_id>/comments/.\n" +
         "Nothing is overwritten silently: an existing file of the same size is left\n" +
         "alone, and so is any existing file of a linked file's name.",
     )
@@ -42,7 +44,7 @@ export const register: Register = (program, cli) => {
       const assignmentId = options.assignment ?? (await selectAssignment(cli, courseId));
       const canvas = await cli.canvas();
       let submissions = await cli.status("Fetching submissions...", () =>
-        canvas.getSubmissions(courseId, assignmentId),
+        canvas.getSubmissions(courseId, assignmentId, { withComments: true }),
       );
       if (options.student !== undefined) {
         submissions = submissions.filter((s) => str(s.user_id) === options.student);
@@ -83,11 +85,22 @@ export const register: Register = (program, cli) => {
             }
           }
 
-          const attachments = Array.isArray(sub.attachments) ? sub.attachments.filter(isRecord) : [];
-          for (const item of attachments) {
+          const attachments: Array<{ item: Record<string, unknown>; dir: string }> = (
+            Array.isArray(sub.attachments) ? sub.attachments.filter(isRecord) : []
+          ).map((item) => ({ item, dir: folder }));
+          // A student whose assignment closed often attaches the work to a comment
+          // instead. Only their own comments count: the grader's are not the work.
+          const comments = Array.isArray(sub.submission_comments) ? sub.submission_comments.filter(isRecord) : [];
+          for (const comment of comments) {
+            if (str(comment.author_id) !== userId || !Array.isArray(comment.attachments)) continue;
+            for (const item of comment.attachments.filter(isRecord)) {
+              attachments.push({ item, dir: path.join(folder, "comments") });
+            }
+          }
+          for (const { item, dir } of attachments) {
             if (!item.url) continue;
             const name = str(item.display_name || item.filename || item.id);
-            const dest = path.join(folder, safeComponent(name));
+            const dest = path.join(dir, safeComponent(name));
             const size = item.size;
             if (typeof size === "number" && Number.isInteger(size) && sizeOf(dest) === size) {
               skipped += 1;

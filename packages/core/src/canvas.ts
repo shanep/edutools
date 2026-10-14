@@ -241,11 +241,13 @@ export class CanvasLMS {
     });
   }
 
-  async getSubmissions(courseId: string, assignmentId: string): Promise<Payload[]> {
-    return this.getPaginated(
-      `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`,
-      {},
-    );
+  async getSubmissions(
+    courseId: string,
+    assignmentId: string,
+    options: { withComments?: boolean } = {},
+  ): Promise<Payload[]> {
+    const params: Record<string, string> = options.withComments ? { "include[]": "submission_comments" } : {};
+    return this.getPaginated(`/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`, params);
   }
 
   async getAssignment(courseId: string, assignmentId: string): Promise<Payload> {

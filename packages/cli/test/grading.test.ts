@@ -209,6 +209,30 @@ describe("download", () => {
   });
 });
 
+describe("download comment attachments", () => {
+  it("files the student attached to their own comments go in comments/", async () => {
+    canvas.getSubmissions.mockResolvedValue([
+      {
+        user_id: 555,
+        attachments: [],
+        submission_comments: [
+          { author_id: 555, attachments: [{ id: 1, display_name: "report.docx", size: 5, url: "https://f.test/1" }] },
+          { author_id: 9, attachments: [{ id: 2, display_name: "key.pdf", size: 5, url: "https://f.test/2" }] },
+        ],
+      },
+    ]);
+    canvas.downloadAttachment.mockResolvedValue(5);
+    const out = path.join(tmpDir(), "subs");
+    const result = await invoke(["download", "-c", "123", "-a", "456", "--out", out], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(canvas.getSubmissions.mock.calls[0]?.[2]).toEqual({ withComments: true });
+    expect(canvas.downloadAttachment.mock.calls).toEqual([
+      ["https://f.test/1", path.join(out, "555", "comments", "report.docx")],
+    ]);
+  });
+});
+
 describe("download linked files", () => {
   it("a file linked from the text is downloaded beside it", async () => {
     canvas.getSubmissions.mockResolvedValue([

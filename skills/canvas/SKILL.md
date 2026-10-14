@@ -629,6 +629,8 @@ comments already left. `download` writes `<out>/<user_id>/<filename>` plus
 size. A file uploaded through the text editor is only a link in the text, never an
 attachment; `download` follows those Canvas file links and saves each file beside
 `submission.txt` under its link text (links to other hosts are never followed).
+Files a student attached to their own comments, often work sent after the
+assignment closed, land in `<out>/<user_id>/comments/`.
 **Read the actual work before grading it.** Do not assign a score from a
 filename or a submission timestamp.
 

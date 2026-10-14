@@ -1014,7 +1014,9 @@ typed-in text, and leaves an existing file of the same size alone. A file a
 student uploaded through the text editor is only linked from the text, never
 attached, so `download` follows each Canvas file link in `submission.txt` and
 saves that file beside it under its link text. A link to any other host is never
-followed, since the request carries the token.
+followed, since the request carries the token. Files a student attached to their
+own submission comments, which is where work sent after the assignment closed
+tends to end up, go in `<out>/<user_id>/comments/`.
 
 `--score` takes whatever the assignment's grading type accepts: points (`18`), a
 percentage (`92%`), a letter (`B+`), or `pass`/`fail`. A `--comment` with no
