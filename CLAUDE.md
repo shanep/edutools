@@ -75,6 +75,11 @@ unless you are running the app. Run the CLI from source with
 `npm run edutools -- <command> ...` (from the repo root, so relative paths resolve
 from there), or build the bundle with `npm run build --workspace @edutools/cli`.
 
+The git hooks in `.githooks/` are the checks. `pre-commit` lints what is staged,
+typechecks, and runs the tests related to the staged files; `pre-push` runs
+`npm run check`. Commit and push rather than running the suite by hand first. A
+fresh clone turns them on with `git config core.hooksPath .githooks`.
+
 Tests never hit the network. Pass a fake `fetch` to `new CanvasLMS({ fetch })` and
 assert on the URL and the form body it received, which is where the bugs actually
 are; hand the orchestrators a fake client object. CLI tests drive the real

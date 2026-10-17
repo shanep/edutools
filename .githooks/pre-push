@@ -1,0 +1,6 @@
+#!/bin/sh
+# What the CI checks job runs. The installer jobs need signing secrets and
+# a Windows runner, so they stay in CI.
+set -eu
+
+npm run check

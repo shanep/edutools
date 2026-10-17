@@ -1,0 +1,12 @@
+#!/bin/sh
+# Fast checks on what is staged. pre-push runs the full suite, as CI does.
+set -eu
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- 'packages/*.ts' 'packages/*.tsx')
+[ -n "$staged" ] || exit 0
+
+npx biome lint --staged --no-errors-on-unmatched
+npm run typecheck
+# Word splitting is wanted here: one argument per staged file.
+# shellcheck disable=SC2086
+npx vitest related --run --passWithNoTests $staged
