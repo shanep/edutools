@@ -90,9 +90,12 @@ write a developer's real keychain. Temporary directories come from
 
 ## The skill moves with the CLI
 
-`skills/canvas/SKILL.md` is how an agent learns to drive this tool
-(`~/.claude/skills/canvas` is a symlink to it). Any change to a command's name, its
-flags, its behaviour, or its `--json` output updates that file in the same commit.
+`skills/canvas/` is how an agent learns to drive this tool
+(`~/.claude/skills/canvas` is a symlink to it). `SKILL.md` holds the setup and the
+rules every session needs, and `references/` one file per job, read only when the job
+comes up, so keep detail out of `SKILL.md`. Any change to a command's name, its
+flags, its behaviour, or its `--json` output updates the file that documents it in
+the same commit.
 The README's command reference is its raw material, so keep that exact too.
 
 ## Canvas API conventions
