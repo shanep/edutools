@@ -262,6 +262,25 @@ describe("push", () => {
     expect(canvas.listModules).not.toHaveBeenCalled();
   });
 
+  it("a [layout] file that is missing is refused before anything is written, dry run or not", async () => {
+    const toml = TOML.replace("files = []", 'files = ["docs/book.pdf", "data/*"]');
+    writeFileSync(path.join(repo, "canvas.toml"), toml, "utf-8");
+
+    for (const dryRun of [true, false]) {
+      const error = await push(canvas, { repo, courseId: COURSE, dryRun, verify: false }).catch((e) => e);
+      expect(error).toBeInstanceOf(CourseError);
+      expect(error.message).toBe("[layout] files names a file the repo does not have: docs/book.pdf");
+    }
+    expect(canvas.createPage).not.toHaveBeenCalled();
+    expect(canvas.createAssignment).not.toHaveBeenCalled();
+
+    // Once the file is there, the glob that still matches nothing is fine.
+    mkdirSync(path.join(repo, "docs"));
+    writeFileSync(path.join(repo, "docs", "book.pdf"), "%PDF-1.4\n", "utf-8");
+    const result = await push(null, { repo, courseId: COURSE, dryRun: true });
+    expect(result.selected).toContain("docs/book.pdf");
+  });
+
   it("only limits the push to a group", async () => {
     const result = await push(canvas, { repo, courseId: COURSE, only: ["pages"], verify: false });
 

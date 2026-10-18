@@ -54,8 +54,10 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
   already exists. It does not unpublish a live assignment.
 - **A push that hits a problem exits 1** and lists each problem on stderr: a
   malformed `canvas.toml`, a `--path` that matches nothing (it lists the paths
-  that exist), a file that fails to render, a Canvas error on one object. Read
-  the list and report it; do not retry blindly.
+  that exist), a `[layout] files` entry naming one file the repo does not have
+  (often a large file kept out of git that this clone is missing), a file that
+  fails to render, a Canvas error on one object. Read the list and report it;
+  do not retry blindly.
 - **A `## Rubric` table is kept in step, not recreated.** The push reads the
   rubric already attached to the assignment: unchanged criteria are skipped,
   changed ones are rewritten in that same rubric, and one is created only when

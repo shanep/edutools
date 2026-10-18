@@ -733,6 +733,11 @@ are pushed with no points, group or dates, so Canvas keeps them out of the
 gradebook. They are matched before `pages`, so a board can sit in a directory a
 page glob also covers.
 
+A `files` glob that matches nothing is fine, but an entry that names one file
+outright, such as `"docs/textbook.pdf"`, has to exist. If it does not, `push`
+(dry run included) stops before writing anything and names the file, since
+skipping it would leave every link to it broken in Canvas.
+
 Every path in `canvas.toml` and in the manifest uses forward slashes, on Windows
 too, so one repository works from any platform.
 

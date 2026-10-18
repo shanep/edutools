@@ -1005,6 +1005,19 @@ export class Publisher {
   }
 
   /**
+   * The `[layout] files` entries that name one file, with no glob, that the
+   * repo does not have.
+   *
+   * A glob that matches nothing is normal (a course with no PDFs yet), but a
+   * file named outright is one the course expects, often a large file kept out
+   * of git that a fresh clone or worktree is missing. Skipping it looks exactly
+   * like a successful push, and every link to it in Canvas stays broken.
+   */
+  missingFiles(): string[] {
+    return this.config.layout.files.filter((pattern) => !/[*?[\]{}]/.test(pattern) && !isFile(this.repo, pattern));
+  }
+
+  /**
    * The items a [[module]] table puts in its module, in order, and why any
    * line was left out.
    *

@@ -207,6 +207,14 @@ function planOf(publisher: Publisher): Plan[] {
   }
 }
 
+/** Refuses a push whose `[layout] files` names a file the repo does not have. */
+function assertFilesPresent(publisher: Publisher): void {
+  const missing = publisher.missingFiles();
+  if (missing.length > 0) {
+    throw new CourseError(`[layout] files names a file the repo does not have: ${missing.join(", ")}`);
+  }
+}
+
 // ============================================================================
 // Reading the whole course, for audit and the clean sync
 // ============================================================================
@@ -1122,7 +1130,9 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
   if (clean !== null && !dryRun && canvas !== null && (clean.targets.length > 0 || clean.stale.length > 0)) {
     // Planned once more before the clean sync deletes anything, so a repo
     // broken since the plan was made stops the push while the course is intact.
-    planOf(openRepo(options.repo, options.courseId, null, { dryRun: true, report: () => {} }));
+    const check = openRepo(options.repo, options.courseId, null, { dryRun: true, report: () => {} });
+    planOf(check);
+    assertFilesPresent(check);
     cleaned = await executeClean(canvas, clean, options);
   }
 
@@ -1134,6 +1144,7 @@ export async function push(canvas: CourseCanvas | null, options: PushOptions): P
   });
   const plans = planOf(publisher);
   // Checked before anything is written, for the same reason as --path.
+  assertFilesPresent(publisher);
   const missedModules = publisher.unmatchedModules(modulePatterns);
   if (missedModules.length > 0) {
     const titles = publisher.moduleTables().map((module) => pyRepr(String(module.title ?? "")));
