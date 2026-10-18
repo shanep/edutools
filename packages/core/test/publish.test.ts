@@ -157,6 +157,13 @@ describe("the renderer emits pandoc's HTML", () => {
     );
   });
 
+  it("ends a bare URL at a backslash escape, which no URL contains", () => {
+    expect(renderGfm("https://github.com/\\<user\\>/tree/cp6 and www.example.com\\_x\n")).toBe(
+      '<p><a href="https://github.com/">https://github.com/</a>&lt;user&gt;/tree/cp6 and ' +
+        '<a href="http://www.example.com">www.example.com</a>_x</p>\n',
+    );
+  });
+
   it("writes task lists as pandoc does", () => {
     expect(renderGfm("- [ ] one\n- [x] two\n")).toBe(
       '<ul class="task-list">\n<li><label><input type="checkbox" />one</label></li>\n' +
@@ -667,6 +674,19 @@ describe("stripVitepress", () => {
     const out = strip(root, source);
     expect(out).toContain("<img");
     expect(out).toContain("<br>");
+  });
+
+  it("keeps a capitalised placeholder that is escaped or is not a tag", () => {
+    const root = tmp();
+    const source = write(
+      root,
+      "a.md",
+      "| \\<Done, Partial or Not started\\> | \\<Evidence\\> |\n\nPick <Done, Partial or Not started>.\n",
+    );
+    const out = strip(root, source);
+    expect(out).toContain("\\<Done, Partial or Not started\\>");
+    expect(out).toContain("\\<Evidence\\>");
+    expect(out).toContain("Pick <Done, Partial or Not started>.");
   });
 });
 

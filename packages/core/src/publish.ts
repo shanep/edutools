@@ -350,8 +350,10 @@ const CONTAINER_RE =
   /^:::+[ \t]*(?<kind>[a-z-]+)[ \t]*(?<title>[^\n]*)\n(?<body>[\s\S]*?)^:::+[ \t]*$/gm;
 
 // "<OfficeHoursLink />" or "<CourseSchedule :weeks="x" />": a capitalised tag is a
-// Vue component, which means nothing outside the website.
-const COMPONENT_RE = /<(?<tag>[A-Z]\w*)\b[^>]*?\/?>(?:<\/\k<tag>>)?/g;
+// Vue component, which means nothing outside the website. The name has to end at
+// a space, "/" or ">", and the "<" must not be escaped, so a placeholder such as
+// "\<Done, Partial or Not started\>" in a template stays as text.
+const COMPONENT_RE = /(?<!\\)<(?<tag>[A-Z]\w*)(?=[\s/>])[^>]*?\/?>(?:<\/\k<tag>>)?/g;
 
 // "<script setup> ... </script>" blocks that feed those components.
 const SCRIPT_RE = /^<script\b[^>]*>[\s\S]*?<\/script>[ \t]*$/gm;
@@ -582,19 +584,50 @@ function taskLists(state: StateCore): void {
  */
 type LinkMatch = NonNullable<ReturnType<MarkdownIt["linkify"]["match"]>>[number];
 
+/**
+ * A match cut short at its first backslash.
+ *
+ * markdown-it links a `https://` URL from the raw source, before escapes are
+ * resolved, and linkify-it accepts a backslash in a path. So
+ * `https://github.com/\<user\>` linked `https://github.com/\`, leaving a stray
+ * backslash in the link. No real URL contains one, so the link ends there and
+ * the escape renders as the `<` it stands for.
+ */
+function stopAtBackslash(m: LinkMatch): LinkMatch | null {
+  const cut = m.raw.indexOf("\\");
+  if (cut === -1) return m;
+  const drop = m.raw.length - cut;
+  if (drop >= m.url.length) return null;
+  m.raw = m.raw.slice(0, cut);
+  m.text = m.text.slice(0, m.text.length - drop);
+  m.url = m.url.slice(0, m.url.length - drop);
+  m.lastIndex -= drop;
+  return m;
+}
+
 function gfmAutolinks(md: MarkdownIt): void {
   const linkify = md.linkify;
   linkify.set({ fuzzyLink: true, fuzzyEmail: true, fuzzyIP: false });
   const match = linkify.match.bind(linkify);
+  const matchAtStart = linkify.matchAtStart.bind(linkify);
   const gfm = (text: string) =>
-    (match(text) ?? []).filter(
-      (m: LinkMatch) => m.schema === "http:" || m.schema === "https:" || m.schema === "mailto:" || /^www\./i.test(m.raw),
-    );
+    (match(text) ?? [])
+      .filter(
+        (m: LinkMatch) =>
+          m.schema === "http:" || m.schema === "https:" || m.schema === "mailto:" || /^www\./i.test(m.raw),
+      )
+      .map(stopAtBackslash)
+      .filter((m): m is LinkMatch => m !== null);
   linkify.match = (text: string) => {
     const found = gfm(text);
     return found.length > 0 ? found : null;
   };
   linkify.test = (text: string) => gfm(text).length > 0;
+  // The inline rule that links `scheme://` URLs calls this one, not match.
+  linkify.matchAtStart = (text: string) => {
+    const found = matchAtStart(text);
+    return found === null ? null : stopAtBackslash(found);
+  };
 }
 
 /** A token attribute as a string; markdown-it types them loosely as string or number. */

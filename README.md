@@ -818,6 +818,11 @@ Ordinary lowercase HTML is left alone, and an include written inline in prose,
 rather than alone on its own line, stays as text so it can be documented. An
 include whose target does not exist fails the push, naming the file.
 
+A capitalised tag counts as a component only when its name ends at a space, `/`
+or `>` and its `<` is not escaped, so placeholders such as `\<Done or Partial\>`
+and `<PUBLIC-IP>` reach Canvas as text. A bare URL also ends at a backslash, so
+`https://github.com/\<user\>` links only `https://github.com/`.
+
 Markdown is GitHub flavoured: tables, task lists, footnotes, autolinks and fenced
 code blocks all render, and headings get GitHub-style ids so `#section` links work.
 
