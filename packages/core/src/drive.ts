@@ -19,6 +19,7 @@ export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 export const DOC_MIME = "application/vnd.google-apps.document";
 export const FOLDER_MIME = "application/vnd.google-apps.folder";
+export const SHEET_MIME = "application/vnd.google-apps.spreadsheet";
 
 /** The OAuth client edutools signs in as: a "Desktop app" client from Google Cloud. */
 export interface GoogleClient {
@@ -299,10 +300,13 @@ export class GoogleDrive {
     });
   }
 
-  /** A new, empty Google Doc. Its content comes later, from replaceContent. */
-  async createDoc(name: string, parent: string): Promise<DriveFile> {
+  /**
+   * A new, empty Google Doc, or a Sheet with SHEET_MIME. Its content comes
+   * later, from replaceContent.
+   */
+  async createDoc(name: string, parent: string, mimeType: string = DOC_MIME): Promise<DriveFile> {
     return this.file("POST", `${DRIVE_API}/files?fields=${FILE_FIELDS}`, {
-      json: { name, mimeType: DOC_MIME, parents: [parent] },
+      json: { name, mimeType, parents: [parent] },
     });
   }
 
@@ -318,7 +322,8 @@ export class GoogleDrive {
 
   /**
    * Replace a file's content, keeping its id and URL. HTML sent to a Google
-   * Doc is converted, so the Doc's body becomes the page.
+   * Doc is converted, so the Doc's body becomes the page, and CSV sent to a
+   * Sheet becomes its cells.
    */
   async replaceContent(id: string, content: Uint8Array<ArrayBuffer>, contentType: string): Promise<DriveFile> {
     return this.upload("PATCH", `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(id)}`, {}, content, contentType);

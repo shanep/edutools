@@ -7,9 +7,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { CourseError } from "@edutools/core/course";
-import { DOC_MIME, type DriveFile, FOLDER_MIME } from "@edutools/core/drive";
+import { DOC_MIME, type DriveFile, FOLDER_MIME, SHEET_MIME } from "@edutools/core/drive";
 import { type DriveClient, defaultFolderName, drivePush, driveStatus, setDriveFolder } from "@edutools/core/drive-push";
 import {
+  ALIGNMENT_KEY,
   contentType,
   docUrl,
   driveLayout,
@@ -126,9 +127,9 @@ class FakeDrive implements DriveClient {
     return this.make(name, FOLDER_MIME, parent);
   }
 
-  async createDoc(name: string, parent: string): Promise<DriveFile> {
+  async createDoc(name: string, parent: string, mimeType = DOC_MIME): Promise<DriveFile> {
     this.writes.push(`doc ${name}`);
-    return this.make(name, DOC_MIME, parent);
+    return this.make(name, mimeType, parent);
   }
 
   async uploadFile(name: string, parent: string, bytes: Uint8Array, type: string): Promise<DriveFile> {
@@ -283,6 +284,32 @@ describe("drivePush", () => {
     );
     expect(manifest.root.id).toBe(root.id);
     expect(new Set(Object.values(actions(result)))).toEqual(new Set(["create"]));
+  });
+
+  it("builds the objective alignment sheet from objectives.md", async () => {
+    const repo = makeRepo();
+    expect(driveLayout(new Publisher(repo, "", null), []).items.map((item) => item.key)).not.toContain(ALIGNMENT_KEY);
+    write(
+      repo,
+      "objectives.md",
+      "# Objectives\n\n## TLO 1: Basics\n\n> **The student will be able to** explain things.\n\n" +
+        "*Introduced in this course · Required · Bloom: Understand · Knowledge type: Concept*\n\n" +
+        "| # | The student will be able to… | Bloom | Knowledge type | How it will be assessed | Location in course |\n" +
+        "| --- | --- | --- | --- | --- | --- |\n" +
+        "| 1.1 | Do P0. | Apply | Procedure | P0 rubric row 1 | Week 2: [P0](assignments/p0.md) |\n",
+    );
+    const drive = new FakeDrive();
+    await drivePush(drive, { repo, name: "CS999" });
+    const sheet = drive.byName("Objective Alignment Sheet");
+    expect(sheet.mimeType).toBe(SHEET_MIME);
+    expect(sheet.parents).toEqual([drive.byName("CS999").id]);
+    const csv = drive.content.get(sheet.id) ?? "";
+    expect(csv).toContain('"TLO: 1","Explain things."');
+    expect(csv).toContain(docUrl(manifestOf(repo).items["assignments/p0.md"]?.id ?? ""));
+
+    drive.writes.length = 0;
+    await drivePush(drive, { repo });
+    expect(drive.writes).toEqual([]);
   });
 
   it("sends only what changed, to the same Doc", async () => {

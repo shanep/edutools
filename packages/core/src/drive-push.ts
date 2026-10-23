@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CourseError } from "./course";
 import { DateConfigError } from "./dates";
-import { type DriveFile, FOLDER_MIME, type GoogleDrive } from "./drive";
+import { type DriveFile, FOLDER_MIME, type GoogleDrive, SHEET_MIME } from "./drive";
 import {
   contentFingerprint,
   contentType,
@@ -31,6 +31,7 @@ import {
   driveResolver,
   folderUrl,
   renderDoc,
+  renderSheet,
 } from "./drive-render";
 import { PublishError, ValueError } from "./publish";
 import { Publisher } from "./publisher";
@@ -51,7 +52,7 @@ export type DriveAction = "create" | "recreate" | "update" | "move" | "unchanged
 
 export interface DriveChange {
   readonly key: string;
-  readonly kind: "doc" | "file" | "folder";
+  readonly kind: "doc" | "file" | "sheet" | "folder";
   readonly name: string;
   readonly action: DriveAction;
   readonly detail: string;
@@ -146,6 +147,10 @@ function content(
     const bytes = bytesOf(item.source);
     return { bytes, type: contentType(item.source), sent: contentFingerprint(bytes), html: null, unresolved: [] };
   }
+  if (item.kind === "sheet") {
+    const sheet = renderSheet(item, repo, resolver);
+    return { bytes: encode(sheet.csv), type: "text/csv", sent: contentFingerprint(sheet.csv), ...sheet };
+  }
   const doc = renderDoc(item, repo, resolver);
   return { bytes: encode(doc.html), type: "text/html", sent: contentFingerprint(doc.html), ...doc };
 }
@@ -238,7 +243,7 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
         file = await drive.uploadFile(item.name, parent, bytes, contentType(item.source));
         sent = contentFingerprint(bytes);
       } else {
-        file = await drive.createDoc(item.name, parent);
+        file = await drive.createDoc(item.name, parent, item.kind === "sheet" ? SHEET_MIME : undefined);
       }
       manifest.items.set(item.key, entryOf(file, parent, sent));
       manifest.save();
@@ -368,7 +373,7 @@ export type DriveState = "in-sync" | "repo" | "drive" | "conflict" | "new" | "mi
 
 export interface DriveStatusItem {
   readonly key: string;
-  readonly kind: "doc" | "file";
+  readonly kind: "doc" | "file" | "sheet";
   readonly name: string;
   readonly state: DriveState;
   /** The Drive URL, or "" for an item never pushed. */

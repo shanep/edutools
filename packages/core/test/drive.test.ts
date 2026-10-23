@@ -13,6 +13,7 @@ import {
   GoogleAuthError,
   GoogleDrive,
   parseFile,
+  SHEET_MIME,
   TOKEN_URL,
 } from "@edutools/core/drive";
 import { describe, expect, it } from "vitest";
@@ -153,6 +154,12 @@ describe("files", () => {
     const fake = fakeFetch([{ json: file("d") }]);
     await drive(fake.fetch).createDoc("00 Syllabus", "root");
     expect(JSON.parse(fake.calls[0]?.body ?? "")).toEqual({ name: "00 Syllabus", mimeType: DOC_MIME, parents: ["root"] });
+  });
+
+  it("creates an empty Sheet", async () => {
+    const fake = fakeFetch([{ json: file("s") }]);
+    await drive(fake.fetch).createDoc("Objective Alignment Sheet", "root", SHEET_MIME);
+    expect(JSON.parse(fake.calls[0]?.body ?? "")).toMatchObject({ mimeType: SHEET_MIME });
   });
 
   it("uploads in two steps: metadata for an upload URL, then the bytes", async () => {

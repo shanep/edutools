@@ -703,6 +703,16 @@ every page, assignment, discussion and quiz is a Doc, and course files are store
 they are. Instructor Notes sections and `never_publish` modules are kept, because the
 copy is for instructors. Sharing the folder is up to you, in Drive.
 
+When `<repo>/objectives.md` has a `## TLO n: ...` section per terminal objective,
+the course folder also gets an Objective Alignment Sheet, a Google Sheet in the
+eCampus template's columns with one row per objective. Each section needs the
+objective as a `> **The student will be able to** ...` quote, a facets line like
+`*Introduced in this course · Required · Bloom: Apply · Knowledge type: Process*`,
+a table of supporting objectives (`#`, `The student will be able to…`, `Bloom`,
+`Knowledge type`, `How it will be assessed`, `Location in course`, in any order) and
+an optional `**Notes.**` paragraph. A link in the location column points at the
+item's Doc.
+
 Later pushes update the same Docs at the same URLs and send only what changed. A Doc
 someone edited in Drive is reported as a conflict and left alone unless you pass
 `--force`. `<repo>/.drive/manifest.json` records the Drive ids, so commit it.
@@ -1305,6 +1315,7 @@ packages/core/src/   the library everything else is built on
   drive-push.ts      a course repo pushed to Google Drive as Docs, and its status
   drive-picker.ts    Google's folder picker, served from 127.0.0.1
   drive-render.ts    pure: the Drive folder layout, Doc HTML, Drive links, .drive manifest
+  alignment.ts       pure: objectives.md as an objective alignment sheet
   course.ts          whole-course orchestration: push, verify, audit, clean, outline, dates
   publisher.ts       the two-pass course-repo publisher (create objects, rewrite links)
   pull.ts            the course snapshot

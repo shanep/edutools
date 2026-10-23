@@ -4,7 +4,8 @@
  * The same repo that becomes a Canvas course becomes a folder colleagues can
  * read, comment on and copy: the syllabus at the top, one folder per
  * [[module]] in order, every page, assignment, discussion and quiz as a Google
- * Doc, and every course file stored as it is. Unlike Canvas, the copy keeps the
+ * Doc, every course file stored as it is, and the objective alignment sheet as
+ * a Google Sheet when objectives.md has one. Unlike Canvas, the copy keeps the
  * instructor-only sections and the never_publish modules, because it is for
  * instructors.
  *
@@ -15,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { DateTime } from "luxon";
+import { type AlignmentRow, alignmentCsv, parseObjectives, plainText } from "./alignment";
 import { DateConfigError, type ItemDates, moduleTitle } from "./dates";
 import { isFile, repoKey, toPosix } from "./paths";
 import { moduleEntries, renderMarkdown, stripTitle, ValueError } from "./publish";
@@ -30,8 +32,8 @@ export interface DriveFolder {
 /** One repo file as Drive holds it. */
 export interface DriveItem {
   readonly key: string;
-  /** A Google Doc made from markdown, or a file uploaded as it is. */
-  readonly kind: "doc" | "file";
+  /** A Google Doc made from markdown, a file uploaded as it is, or a Google Sheet made from a table. */
+  readonly kind: "doc" | "file" | "sheet";
   /** The name in Drive, with a position prefix inside a module folder. */
   readonly name: string;
   /** The title as the Doc shows it. */
@@ -49,6 +51,15 @@ export interface DriveLayout {
 
 export const FILES_FOLDER = "files";
 export const OTHER_FOLDER = "other";
+/** The objective alignment sheet's key: built from objectives.md, but not that page's Doc. */
+export const ALIGNMENT_KEY = "sheet:objectives.md";
+const ALIGNMENT_NAME = "Objective Alignment Sheet";
+
+/** The alignment sheet's rows from the repo's objectives.md, or none. */
+export function alignmentRows(repo: string): AlignmentRow[] {
+  const file = path.join(repo, "objectives.md");
+  return existsSync(file) ? parseObjectives(readFileSync(file, "utf8")) : [];
+}
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -66,7 +77,8 @@ function titleOf(plan: Plan): string {
 /**
  * Where every planned item goes.
  *
- * The syllabus sits at the root. Each [[module]] table, never_publish ones
+ * The syllabus sits at the root, and so does the objective alignment sheet
+ * when objectives.md is written as one. Each [[module]] table, never_publish ones
  * included, is a folder named with its position and its Canvas title, and holds
  * the items it lists, in order. An item listed by two modules lives in the
  * first. A course file no module lists goes in Files; anything else unlisted
@@ -94,6 +106,17 @@ export function driveLayout(publisher: Publisher, plans: readonly Plan[]): Drive
 
   const syllabus = plans.find((plan) => plan.kind === "syllabus");
   if (syllabus) add(syllabus, "", 0);
+  if (alignmentRows(publisher.repo).length > 0) {
+    items.push({
+      key: ALIGNMENT_KEY,
+      kind: "sheet",
+      name: ALIGNMENT_NAME,
+      title: ALIGNMENT_NAME,
+      folder: "",
+      source: path.join(publisher.repo, "objectives.md"),
+      dates: null,
+    });
+  }
 
   const seen = new Set<string>();
   publisher.moduleTables().forEach((module, index) => {
@@ -146,6 +169,10 @@ export function driveLayout(publisher: Publisher, plans: readonly Plan[]): Drive
 
 export function docUrl(id: string): string {
   return `https://docs.google.com/document/d/${id}/edit`;
+}
+
+export function sheetUrl(id: string): string {
+  return `https://docs.google.com/spreadsheets/d/${id}/edit`;
 }
 
 export function fileUrl(id: string): string {
@@ -222,19 +249,8 @@ export function rewriteDriveLinks(
 ): [string, string[]] {
   const unresolved: string[] = [];
   const out = html.replace(HREF_RE, (whole: string, attribute: string, target: string) => {
-    if (["http://", "https://", "mailto:", "#", "/", "data:"].some((prefix) => target.startsWith(prefix))) {
-      return whole;
-    }
-    const hash = target.indexOf("#");
-    const pathPart = hash === -1 ? target : target.slice(0, hash);
-    if (!pathPart) return whole;
-    const joined = path.normalize(path.join(path.resolve(path.dirname(source)), pathPart));
-    const relative = path.relative(path.resolve(repo), joined);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      unresolved.push(target);
-      return whole;
-    }
-    const url = resolve(toPosix(relative), attribute === "src" ? "src" : "href");
+    const url = driveTarget(target, source, repo, resolve, attribute === "src" ? "src" : "href");
+    if (url === undefined) return whole;
     if (url === null) {
       unresolved.push(target);
       return whole;
@@ -242,6 +258,29 @@ export function rewriteDriveLinks(
     return `${attribute}="${url}"`;
   });
   return [out, unresolved];
+}
+
+/**
+ * Where a link in `source` goes in Drive: a URL, null when it points into the
+ * repo at nothing Drive holds, or undefined when it is not a repo link at all.
+ */
+function driveTarget(
+  target: string,
+  source: string,
+  repo: string,
+  resolve: DriveResolver,
+  attribute: "href" | "src",
+): string | null | undefined {
+  if (["http://", "https://", "mailto:", "#", "/", "data:"].some((prefix) => target.startsWith(prefix))) {
+    return undefined;
+  }
+  const hash = target.indexOf("#");
+  const pathPart = hash === -1 ? target : target.slice(0, hash);
+  if (!pathPart) return undefined;
+  const joined = path.normalize(path.join(path.resolve(path.dirname(source)), pathPart));
+  const relative = path.relative(path.resolve(repo), joined);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return resolve(toPosix(relative), attribute);
 }
 
 function escapeHtml(value: string): string {
@@ -280,6 +319,43 @@ export function renderDoc(item: DriveItem, repo: string, resolve: DriveResolver)
   return { html, unresolved };
 }
 
+export interface RenderedSheet {
+  readonly csv: string;
+  /** The same rows as an HTML table, for --preview. */
+  readonly html: string;
+  readonly unresolved: readonly string[];
+}
+
+/**
+ * The CSV the alignment sheet is made from. A link to a course item points at
+ * its Drive copy, a web link stays, and any other link is kept as its text.
+ */
+export function renderSheet(item: DriveItem, repo: string, resolve: DriveResolver): RenderedSheet {
+  const rows = parseObjectives(readFileSync(item.source, "utf8"));
+  const unresolved: string[] = [];
+  const csv = alignmentCsv(rows, (target) => {
+    if (target.startsWith("http://") || target.startsWith("https://")) return target;
+    const url = driveTarget(target, item.source, repo, resolve, "href");
+    if (url === null) unresolved.push(target);
+    return url ?? null;
+  });
+  const cells = (row: AlignmentRow): string[] => [
+    row.number,
+    row.objective,
+    row.introduced,
+    row.required,
+    row.bloom,
+    row.knowledge,
+    row.assessed,
+    row.location,
+    row.notes,
+  ];
+  const body = rows
+    .map((row) => `<tr>${cells(row).map((cell) => `<td>${escapeHtml(plainText(cell))}</td>`).join("")}</tr>`)
+    .join("\n");
+  return { csv, html: `<table>\n${body}\n</table>`, unresolved };
+}
+
 /**
  * The resolver for a set of Drive ids: a link to a course item goes to its Doc
  * or file, and an image is embedded from the repo whether or not the course
@@ -299,7 +375,7 @@ export function driveResolver(
     const kind = kinds.get(key);
     const id = kind === undefined ? null : idOf(key);
     if (kind === undefined || id === null) return null;
-    return kind === "doc" ? docUrl(id) : fileUrl(id);
+    return kind === "doc" ? docUrl(id) : kind === "sheet" ? sheetUrl(id) : fileUrl(id);
   };
 }
 

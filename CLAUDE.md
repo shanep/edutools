@@ -18,6 +18,7 @@ packages/core/src/   the library; every other package is built on it
   drive-push.ts      orchestration: a course repo pushed to Google Drive as Docs, and its status
   drive-picker.ts    Google's folder picker, served from a one-shot page on 127.0.0.1
   drive-render.ts    pure: the Drive folder layout, Doc HTML, Drive links, .drive manifest
+  alignment.ts       pure: objectives.md as an objective alignment sheet (CSV)
   course.ts          whole-course orchestration: push, verify, audit, clean, outline, dates
   publisher.ts       the two-pass course-repo publisher (create objects, rewrite links)
   pull.ts            the course snapshot

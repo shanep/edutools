@@ -31,6 +31,16 @@ edutools drive folder <repo>                                       # pick the fo
 - **Instructor content is kept**, unlike Canvas: `## Instructor Notes` sections stay
   in, and `never_publish` modules are folders like any other. The copy is for
   instructors. Do not share the folder with students.
+- An **Objective Alignment Sheet** (a Google Sheet, at the top of the course
+  folder) when `objectives.md` at the repo root has `## TLO n: ...` sections, each
+  with a `> **The student will be able to** ...` quote, a facets line
+  (`*Introduced in this course · Required · Bloom: Apply · Knowledge type: Process*`),
+  a table of supporting objectives matched by header (`#`, `The student will be
+  able to…`, `Bloom`, `Knowledge type`, `How it will be assessed`, `Location in
+  course`) and an optional `**Notes.**` paragraph. Its columns follow the eCampus
+  alignment template; a location cell with one link to a course item links to its
+  Doc. The rest of the page is left out. It is regenerated like any Doc, so edit
+  `objectives.md`, not the Sheet.
 - Links between course items point at the Drive copies. Raster images are embedded.
   Docs cannot show SVG, so an SVG image becomes a link to its file, or is dropped
   when its alt text is empty. The `[icons]` images only decorate Canvas headings and
@@ -61,7 +71,7 @@ builds a second copy.
 
 `--json` prints `{"root", "dryRun", "changes", "unresolved"}`. `root` is
 `{"id", "url"}` (null on a dry run before the first push). Each change has `key`,
-`kind` (`doc`, `file` or `folder`), `name`, `action` (`create`, `recreate`,
+`kind` (`doc`, `file`, `sheet` or `folder`), `name`, `action` (`create`, `recreate`,
 `update`, `move`, `unchanged`, `conflict`, `trash`, `orphan`) and `detail`.
 
 ## Folder
