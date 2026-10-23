@@ -6,8 +6,8 @@
  * creating an empty Doc for anything new. Pass two renders each Doc with its
  * links pointed at those ids and sends only what changed since the last push.
  *
- * A Doc someone edited in Drive is not overwritten: its modifiedTime no longer
- * matches the one the last push recorded, so the push reports a conflict and
+ * A Doc someone edited in Drive is not overwritten: its modifiedTime is later
+ * than the one the last push recorded, so the push reports a conflict and
  * leaves it alone unless told to force it.
  *
  * Orchestration only: Drive comes in as a narrow client, progress goes out
@@ -105,6 +105,17 @@ function encode(html: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(html);
 }
 
+// Docs finishes converting an upload after the call returns and moves
+// modifiedTime once more, by about a second (0.4 to 1.0 s across CS331). A
+// change that close to edutools' own write is that, not a person.
+const SETTLE_MS = 30_000;
+
+/** Whether someone changed the file in Drive after edutools last wrote it. */
+function editedInDrive(modifiedTime: string, baseline: string): boolean {
+  const gap = Date.parse(modifiedTime) - Date.parse(baseline);
+  return Number.isNaN(gap) ? modifiedTime !== baseline : gap > SETTLE_MS;
+}
+
 function entryOf(file: DriveFile, parent: string, sent: string): DriveEntry {
   return { id: file.id, name: file.name, parent, sent, modified: file.modifiedTime };
 }
@@ -200,7 +211,7 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
 
   // -- pass one: every item exists, in its folder, under its name --------
 
-  const editedInDrive = new Set<string>();
+  const driveEdits = new Set<string>();
   const fresh = new Set<string>();
   for (const [index, item] of layout.items.entries()) {
     progress({ message: `Placing ${item.key}`, done: index, total: layout.items.length });
@@ -223,8 +234,8 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
       change(item.key, item.kind, item.name, entry ? "recreate" : "create");
       continue;
     }
-    const edited = existing.modifiedTime !== entry.modified;
-    if (edited) editedInDrive.add(item.key);
+    const edited = editedInDrive(existing.modifiedTime, entry.modified);
+    if (edited) driveEdits.add(item.key);
     const moved = await place(existing, item.name, parent);
     if (moved !== existing) {
       // A move after an edit in Drive keeps the old baseline, so the edit still shows.
@@ -250,7 +261,7 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
       }
       continue;
     }
-    if (editedInDrive.has(item.key) && !options.force) {
+    if (driveEdits.has(item.key) && !options.force) {
       change(item.key, item.kind, item.name, "conflict", "edited in Drive since the last push; --force overwrites it");
       continue;
     }
@@ -339,7 +350,7 @@ export async function driveStatus(
       continue;
     }
     const repoChanged = content(item, repo, resolver).sent !== entry.sent || remote.name !== item.name;
-    const driveChanged = remote.modifiedTime !== entry.modified;
+    const driveChanged = editedInDrive(remote.modifiedTime, entry.modified);
     const state: DriveState =
       repoChanged && driveChanged ? "conflict" : driveChanged ? "drive" : repoChanged ? "repo" : "in-sync";
     items.push({ key: item.key, kind: item.kind, name: item.name, state, url });

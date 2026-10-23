@@ -79,7 +79,7 @@ function makeRepo(): string {
   return repo;
 }
 
-/** Drive in memory: ids count up, and every write moves the clock. */
+/** Drive in memory: ids count up, and every write moves the clock a minute. */
 class FakeDrive implements DriveClient {
   readonly files = new Map<string, DriveFile>();
   readonly content = new Map<string, string>();
@@ -89,7 +89,7 @@ class FakeDrive implements DriveClient {
 
   private stamp(): string {
     this.clock += 1;
-    return new Date(Date.UTC(2026, 9, 1) + this.clock * 1000).toISOString();
+    return new Date(Date.UTC(2026, 9, 1) + this.clock * 60_000).toISOString();
   }
 
   private put(file: DriveFile): DriveFile {
@@ -164,6 +164,12 @@ class FakeDrive implements DriveClient {
   /** Someone opens the Doc in Drive and types. */
   edit(id: string): void {
     this.put({ ...this.must(id), modifiedTime: this.stamp() });
+  }
+
+  /** Docs finishes converting an upload a moment after the write returns. */
+  settle(id: string): void {
+    const file = this.must(id);
+    this.put({ ...file, modifiedTime: new Date(Date.parse(file.modifiedTime) + 900).toISOString() });
   }
 
   byName(name: string): DriveFile {
@@ -330,6 +336,18 @@ describe("drivePush", () => {
     expect(drive.content.get(id)).toContain("Read");
     const after = await driveStatus(drive, { repo });
     expect(after.items.every((item) => item.state === "in-sync")).toBe(true);
+  });
+
+  it("does not take Docs finishing its own conversion for an edit", async () => {
+    const repo = makeRepo();
+    const drive = new FakeDrive();
+    await drivePush(drive, { repo });
+    for (const id of drive.files.keys()) drive.settle(id);
+
+    const status = await driveStatus(drive, { repo });
+    expect(status.items.every((item) => item.state === "in-sync")).toBe(true);
+    write(repo, "pages/welcome.md", WELCOME.replace("See", "Read"));
+    expect(actions(await drivePush(drive, { repo }))["pages/welcome.md"]).toBe("update");
   });
 
   it("says which side changed", async () => {

@@ -47,6 +47,8 @@ builds a second copy.
   `modifiedTime` with the one it recorded, reports a `conflict`, leaves the Doc
   alone and exits 1. Copy the edit into the repo, or rerun with `--force` to
   overwrite it. Do not pass `--force` unless the user has seen what changed in Drive.
+  A change within 30 seconds of the push is Docs finishing its own import of the
+  page and does not count.
 - Replacing a Doc's text can detach comments anchored to text that changed. Say so
   before pushing over a Doc colleagues have commented on.
 - An item or folder the repo no longer has is listed as an `orphan`. `--prune`

@@ -320,7 +320,7 @@ export interface DriveEntry {
   parent: string;
   /** The fingerprint of the content last sent; "" for a folder or a Doc still empty. */
   sent: string;
-  /** Drive's modifiedTime after edutools last wrote it. A different one means someone else edited it. */
+  /** Drive's modifiedTime after edutools last wrote it. A later one means someone edited it in Drive. */
   modified: string;
 }
 
