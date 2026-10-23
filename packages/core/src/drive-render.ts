@@ -16,7 +16,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { DateTime } from "luxon";
-import { type AlignmentRow, alignmentCsv, parseObjectives, plainText } from "./alignment";
+import {
+  type AlignmentCell,
+  type AlignmentRow,
+  alignmentCells,
+  alignmentCsv,
+  asTemplateChoices,
+  parseObjectives,
+} from "./alignment";
 import { DateConfigError, type ItemDates, moduleTitle } from "./dates";
 import { isFile, repoKey, toPosix } from "./paths";
 import { moduleEntries, renderMarkdown, stripTitle, ValueError } from "./publish";
@@ -54,6 +61,19 @@ export const OTHER_FOLDER = "other";
 /** The objective alignment sheet's key: built from objectives.md, but not that page's Doc. */
 export const ALIGNMENT_KEY = "sheet:objectives.md";
 const ALIGNMENT_NAME = "Objective Alignment Sheet";
+
+/**
+ * eCampus's template workbook, which a course can keep beside objectives.md (a
+ * link to one shared copy is fine). With it, the sheet is built in the template,
+ * with its styling, dropdowns and notes, rather than as plain cells.
+ */
+export const ALIGNMENT_TEMPLATE = "objective-alignment-template.xlsx";
+
+/** The repo's alignment template, or null when it has none. */
+export function alignmentTemplate(repo: string): string | null {
+  const file = path.join(repo, ALIGNMENT_TEMPLATE);
+  return isFile(repo, ALIGNMENT_TEMPLATE) ? file : null;
+}
 
 /** The alignment sheet's rows from the repo's objectives.md, or none. */
 export function alignmentRows(repo: string): AlignmentRow[] {
@@ -320,6 +340,10 @@ export function renderDoc(item: DriveItem, repo: string, resolve: DriveResolver)
 }
 
 export interface RenderedSheet {
+  /** The template workbook the rows go into, or null to send them as CSV. */
+  readonly template: string | null;
+  readonly rows: readonly AlignmentRow[];
+  readonly cells: readonly (readonly AlignmentCell[])[];
   readonly csv: string;
   /** The same rows as an HTML table, for --preview. */
   readonly html: string;
@@ -327,33 +351,25 @@ export interface RenderedSheet {
 }
 
 /**
- * The CSV the alignment sheet is made from. A link to a course item points at
- * its Drive copy, a web link stays, and any other link is kept as its text.
+ * The alignment sheet's rows and cells. A link to a course item points at its
+ * Drive copy, a web link stays, and any other link is kept as its text. With a
+ * template, the facets are spelled as its dropdowns spell them.
  */
 export function renderSheet(item: DriveItem, repo: string, resolve: DriveResolver): RenderedSheet {
-  const rows = parseObjectives(readFileSync(item.source, "utf8"));
+  const template = alignmentTemplate(repo);
+  const parsed = parseObjectives(readFileSync(item.source, "utf8"));
+  const rows = template === null ? parsed : parsed.map(asTemplateChoices);
   const unresolved: string[] = [];
-  const csv = alignmentCsv(rows, (target) => {
+  const cells = alignmentCells(rows, (target) => {
     if (target.startsWith("http://") || target.startsWith("https://")) return target;
     const url = driveTarget(target, item.source, repo, resolve, "href");
     if (url === null) unresolved.push(target);
     return url ?? null;
   });
-  const cells = (row: AlignmentRow): string[] => [
-    row.number,
-    row.objective,
-    row.introduced,
-    row.required,
-    row.bloom,
-    row.knowledge,
-    row.assessed,
-    row.location,
-    row.notes,
-  ];
-  const body = rows
-    .map((row) => `<tr>${cells(row).map((cell) => `<td>${escapeHtml(plainText(cell))}</td>`).join("")}</tr>`)
+  const body = cells
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell.text)}</td>`).join("")}</tr>`)
     .join("\n");
-  return { csv, html: `<table>\n${body}\n</table>`, unresolved };
+  return { template, rows, cells, csv: alignmentCsv(cells), html: `<table>\n${body}\n</table>`, unresolved };
 }
 
 /**

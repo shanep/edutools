@@ -16,10 +16,12 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { type SheetRequest, TEMPLATE_TAB, templateRequests } from "./alignment";
 import { CourseError } from "./course";
 import { DateConfigError } from "./dates";
-import { type DriveFile, FOLDER_MIME, type GoogleDrive, SHEET_MIME } from "./drive";
+import { type DriveFile, FOLDER_MIME, type GoogleDrive, SHEET_MIME, XLSX_MIME } from "./drive";
 import {
+  ALIGNMENT_TEMPLATE,
   contentFingerprint,
   contentType,
   type DriveEntry,
@@ -39,7 +41,15 @@ import { Publisher } from "./publisher";
 /** The part of GoogleDrive a push drives, so a test can hand in plain fakes. */
 export type DriveClient = Pick<
   GoogleDrive,
-  "getFile" | "createFolder" | "createDoc" | "uploadFile" | "replaceContent" | "updateMetadata" | "trash"
+  | "getFile"
+  | "createFolder"
+  | "createDoc"
+  | "uploadFile"
+  | "replaceContent"
+  | "updateMetadata"
+  | "trash"
+  | "sheetTabs"
+  | "updateSheet"
 >;
 
 export interface DriveProgress {
@@ -137,22 +147,46 @@ async function place(
   });
 }
 
+interface Content {
+  readonly bytes: Uint8Array<ArrayBuffer>;
+  readonly type: string;
+  readonly sent: string;
+  readonly html: string | null;
+  readonly unresolved: readonly string[];
+  /** For a Sheet built in a template: the requests that fill its tab once the workbook is uploaded. */
+  readonly fill: ((tab: number) => SheetRequest[]) | null;
+}
+
 /** The content an item would send now, and its fingerprint. */
-function content(
-  item: DriveItem,
-  repo: string,
-  resolver: ReturnType<typeof driveResolver>,
-): { bytes: Uint8Array<ArrayBuffer>; type: string; sent: string; html: string | null; unresolved: readonly string[] } {
+function content(item: DriveItem, repo: string, resolver: ReturnType<typeof driveResolver>): Content {
   if (item.kind === "file") {
     const bytes = bytesOf(item.source);
-    return { bytes, type: contentType(item.source), sent: contentFingerprint(bytes), html: null, unresolved: [] };
+    return { bytes, type: contentType(item.source), sent: contentFingerprint(bytes), html: null, unresolved: [], fill: null };
   }
   if (item.kind === "sheet") {
     const sheet = renderSheet(item, repo, resolver);
-    return { bytes: encode(sheet.csv), type: "text/csv", sent: contentFingerprint(sheet.csv), ...sheet };
+    const { html, unresolved } = sheet;
+    if (sheet.template === null) {
+      return { bytes: encode(sheet.csv), type: "text/csv", sent: contentFingerprint(sheet.csv), html, unresolved, fill: null };
+    }
+    const bytes = bytesOf(sheet.template);
+    const fill = (tab: number) => templateRequests(sheet.rows, sheet.cells, tab);
+    // The tab id changes with every upload, so the requests are fingerprinted for tab 0.
+    const sent = contentFingerprint(`${contentFingerprint(bytes)}\n${JSON.stringify(fill(0))}`);
+    return { bytes, type: XLSX_MIME, sent, html, unresolved, fill };
   }
   const doc = renderDoc(item, repo, resolver);
-  return { bytes: encode(doc.html), type: "text/html", sent: contentFingerprint(doc.html), ...doc };
+  return { bytes: encode(doc.html), type: "text/html", sent: contentFingerprint(doc.html), ...doc, fill: null };
+}
+
+/** Upload an item's content, then fill a template's tab, and return the file as it ends up. */
+async function write(drive: DriveClient, id: string, next: Content): Promise<DriveFile> {
+  const file = await drive.replaceContent(id, next.bytes, next.type);
+  if (next.fill === null) return file;
+  const tab = (await drive.sheetTabs(id)).get(TEMPLATE_TAB);
+  if (tab === undefined) throw new PublishError(`${ALIGNMENT_TEMPLATE} has no "${TEMPLATE_TAB}" tab to fill.`);
+  await drive.updateSheet(id, next.fill(tab));
+  return (await drive.getFile(id)) ?? file;
 }
 
 export async function drivePush(drive: DriveClient | null, options: DrivePushOptions): Promise<DrivePushResult> {
@@ -282,7 +316,7 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
       change(item.key, item.kind, item.name, "conflict", "edited in Drive since the last push; --force overwrites it");
       continue;
     }
-    const file = await drive.replaceContent(entry.id, next.bytes, next.type);
+    const file = await write(drive, entry.id, next);
     manifest.items.set(item.key, { ...entry, sent: next.sent, modified: file.modifiedTime });
     manifest.save();
     if (!fresh.has(item.key)) change(item.key, item.kind, item.name, "update");

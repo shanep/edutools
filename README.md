@@ -713,6 +713,13 @@ a table of supporting objectives (`#`, `The student will be able to…`, `Bloom`
 an optional `**Notes.**` paragraph. A link in the location column points at the
 item's Doc.
 
+To get eCampus's own styling, dropdowns and notes, put a copy of their template
+workbook at `<repo>/objective-alignment-template.xlsx` (in Google Sheets, File,
+Download, Microsoft Excel). The push uploads it over the Sheet and writes the rows
+into its Objectives tab, one styled row per objective, and drops the letter to the
+instructor in J1. This needs the Google Sheets API enabled in the OAuth client's
+Cloud project.
+
 Later pushes update the same Docs at the same URLs and send only what changed. A Doc
 someone edited in Drive is reported as a conflict and left alone unless you pass
 `--force`. `<repo>/.drive/manifest.json` records the Drive ids, so commit it.
@@ -1310,7 +1317,7 @@ An npm workspace of three packages:
 ```
 packages/core/src/   the library everything else is built on
   canvas.ts          the only module that talks HTTP to Canvas
-  drive.ts           the only module that talks HTTP to Google
+  drive.ts           the only module that talks HTTP to Google (Drive and Sheets)
   google-auth.ts     the Google sign-in and its keychain entries
   drive-push.ts      a course repo pushed to Google Drive as Docs, and its status
   drive-picker.ts    Google's folder picker, served from 127.0.0.1

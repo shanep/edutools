@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { CourseError } from "@edutools/core/course";
-import { DOC_MIME, type DriveFile, FOLDER_MIME, SHEET_MIME } from "@edutools/core/drive";
+import { DOC_MIME, type DriveFile, FOLDER_MIME, SHEET_MIME, XLSX_MIME } from "@edutools/core/drive";
 import { type DriveClient, defaultFolderName, drivePush, driveStatus, setDriveFolder } from "@edutools/core/drive-push";
 import {
   ALIGNMENT_KEY,
@@ -59,6 +59,13 @@ const WELCOME =
   "![A picture](../images/pic.png)\n\n![A diagram](../images/diagram.svg)\n\n![](../images/diagram.svg)\n\n" +
   "## Instructor Notes\n\n*Instructor note, not shown to students.* The secret.\n";
 
+const OBJECTIVES =
+  "# Objectives\n\n## TLO 1: Basics\n\n> **The student will be able to** explain things.\n\n" +
+  "*Introduced in this course · Required · Bloom: Understand · Knowledge type: Concept*\n\n" +
+  "| # | The student will be able to… | Bloom | Knowledge type | How it will be assessed | Location in course |\n" +
+  "| --- | --- | --- | --- | --- | --- |\n" +
+  "| 1.1 | Do P0. | Apply | Procedure | P0 rubric row 1 | Week 2: [P0](assignments/p0.md) |\n";
+
 function write(repo: string, name: string, text: string | Uint8Array): void {
   const file = path.join(repo, name);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -84,6 +91,8 @@ function makeRepo(): string {
 class FakeDrive implements DriveClient {
   readonly files = new Map<string, DriveFile>();
   readonly content = new Map<string, string>();
+  readonly types = new Map<string, string>();
+  readonly sheets = new Map<string, unknown[][]>();
   readonly writes: string[] = [];
   private next = 0;
   private clock = 0;
@@ -139,9 +148,10 @@ class FakeDrive implements DriveClient {
     return file;
   }
 
-  async replaceContent(id: string, bytes: Uint8Array, _type: string): Promise<DriveFile> {
+  async replaceContent(id: string, bytes: Uint8Array, type: string): Promise<DriveFile> {
     this.writes.push(`replace ${this.must(id).name}`);
     this.content.set(id, new TextDecoder().decode(bytes));
+    this.types.set(id, type);
     return this.put({ ...this.must(id), modifiedTime: this.stamp() });
   }
 
@@ -155,6 +165,19 @@ class FakeDrive implements DriveClient {
       ? [...file.parents.filter((p) => !(change.removeParents ?? []).includes(p)), change.addParent]
       : file.parents;
     return this.put({ ...file, name: change.name ?? file.name, parents, modifiedTime: this.stamp() });
+  }
+
+  async sheetTabs(_id: string): Promise<Map<string, number>> {
+    return new Map([
+      ["Objectives", 5],
+      ["Data", 6],
+    ]);
+  }
+
+  async updateSheet(id: string, requests: readonly unknown[]): Promise<void> {
+    this.writes.push(`sheet ${this.must(id).name}`);
+    this.sheets.set(id, [...(this.sheets.get(id) ?? []), [...requests]]);
+    this.put({ ...this.must(id), modifiedTime: this.stamp() });
   }
 
   async trash(id: string): Promise<void> {
@@ -289,15 +312,7 @@ describe("drivePush", () => {
   it("builds the objective alignment sheet from objectives.md", async () => {
     const repo = makeRepo();
     expect(driveLayout(new Publisher(repo, "", null), []).items.map((item) => item.key)).not.toContain(ALIGNMENT_KEY);
-    write(
-      repo,
-      "objectives.md",
-      "# Objectives\n\n## TLO 1: Basics\n\n> **The student will be able to** explain things.\n\n" +
-        "*Introduced in this course · Required · Bloom: Understand · Knowledge type: Concept*\n\n" +
-        "| # | The student will be able to… | Bloom | Knowledge type | How it will be assessed | Location in course |\n" +
-        "| --- | --- | --- | --- | --- | --- |\n" +
-        "| 1.1 | Do P0. | Apply | Procedure | P0 rubric row 1 | Week 2: [P0](assignments/p0.md) |\n",
-    );
+    write(repo, "objectives.md", OBJECTIVES);
     const drive = new FakeDrive();
     await drivePush(drive, { repo, name: "CS999" });
     const sheet = drive.byName("Objective Alignment Sheet");
@@ -310,6 +325,28 @@ describe("drivePush", () => {
     drive.writes.length = 0;
     await drivePush(drive, { repo });
     expect(drive.writes).toEqual([]);
+  });
+
+  it("writes the objectives into the eCampus template when the repo has one", async () => {
+    const repo = makeRepo();
+    write(repo, "objectives.md", OBJECTIVES);
+    write(repo, "objective-alignment-template.xlsx", "PK template");
+    const drive = new FakeDrive();
+    await drivePush(drive, { repo, name: "CS999" });
+    const sheet = drive.byName("Objective Alignment Sheet");
+    expect(drive.content.get(sheet.id)).toBe("PK template");
+    expect(drive.types.get(sheet.id)).toBe(XLSX_MIME);
+    const [requests] = drive.sheets.get(sheet.id) ?? [];
+    expect(JSON.stringify(requests)).toContain('"sheetId":5');
+    expect(JSON.stringify(requests)).toContain('"stringValue":"Introduced In This Course"');
+
+    drive.writes.length = 0;
+    await drivePush(drive, { repo });
+    expect(drive.writes).toEqual([]);
+
+    write(repo, "objective-alignment-template.xlsx", "PK template, revised");
+    await drivePush(drive, { repo });
+    expect(drive.writes).toEqual(["replace Objective Alignment Sheet", "sheet Objective Alignment Sheet"]);
   });
 
   it("sends only what changed, to the same Doc", async () => {

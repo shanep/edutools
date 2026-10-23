@@ -13,12 +13,12 @@ and Linux, and CI checks all three.
 ```
 packages/core/src/   the library; every other package is built on it
   canvas.ts          CanvasLMS: the only module that talks HTTP to Canvas
-  drive.ts           GoogleDrive: the only module that talks HTTP to Google
+  drive.ts           GoogleDrive: the only module that talks HTTP to Google (Drive and Sheets)
   google-auth.ts     the Google sign-in (loopback + PKCE) and its keychain entries
   drive-push.ts      orchestration: a course repo pushed to Google Drive as Docs, and its status
   drive-picker.ts    Google's folder picker, served from a one-shot page on 127.0.0.1
   drive-render.ts    pure: the Drive folder layout, Doc HTML, Drive links, .drive manifest
-  alignment.ts       pure: objectives.md as an objective alignment sheet (CSV)
+  alignment.ts       pure: objectives.md as an objective alignment sheet (CSV, or Sheets requests for the eCampus template)
   course.ts          whole-course orchestration: push, verify, audit, clean, outline, dates
   publisher.ts       the two-pass course-repo publisher (create objects, rewrite links)
   pull.ts            the course snapshot

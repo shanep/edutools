@@ -1,6 +1,7 @@
 /**
- * The only module that talks HTTP to Google: the Drive API, and the OAuth token
- * endpoint it signs in through. It is to Google what canvas.ts is to Canvas;
+ * The only module that talks HTTP to Google: the Drive API, the Sheets API for
+ * the cells of a Sheet edutools made, and the OAuth token endpoint it signs in
+ * through. It is to Google what canvas.ts is to Canvas;
  * everything else in the core stays pure, and a new Drive endpoint is a method
  * here.
  *
@@ -20,6 +21,8 @@ export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 export const DOC_MIME = "application/vnd.google-apps.document";
 export const FOLDER_MIME = "application/vnd.google-apps.folder";
 export const SHEET_MIME = "application/vnd.google-apps.spreadsheet";
+export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 
 /** The OAuth client edutools signs in as: a "Desktop app" client from Google Cloud. */
 export interface GoogleClient {
@@ -322,8 +325,8 @@ export class GoogleDrive {
 
   /**
    * Replace a file's content, keeping its id and URL. HTML sent to a Google
-   * Doc is converted, so the Doc's body becomes the page, and CSV sent to a
-   * Sheet becomes its cells.
+   * Doc is converted, so the Doc's body becomes the page, and CSV or an Excel
+   * workbook sent to a Sheet becomes its tabs and cells.
    */
   async replaceContent(id: string, content: Uint8Array<ArrayBuffer>, contentType: string): Promise<DriveFile> {
     return this.upload("PATCH", `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(id)}`, {}, content, contentType);
@@ -340,6 +343,26 @@ export class GoogleDrive {
     return this.file("PATCH", `${DRIVE_API}/files/${encodeURIComponent(id)}?${params}`, {
       json: change.name === undefined ? {} : { name: change.name },
     });
+  }
+
+  /** A Sheet's tabs, each title with its sheet id. */
+  async sheetTabs(id: string): Promise<Map<string, number>> {
+    const response = await this.request("GET", `${SHEETS_API}/${encodeURIComponent(id)}?fields=sheets.properties(sheetId,title)`);
+    // A spreadsheet resource is a JSON object; each tab is checked below.
+    const payload = (await response.json()) as Payload;
+    const tabs = new Map<string, number>();
+    for (const sheet of Array.isArray(payload.sheets) ? payload.sheets : []) {
+      const properties = typeof sheet === "object" && sheet !== null ? (sheet as Payload).properties : null;
+      if (typeof properties !== "object" || properties === null) continue;
+      const { sheetId, title } = properties as Payload;
+      if (typeof sheetId === "number") tabs.set(text(title), sheetId);
+    }
+    return tabs;
+  }
+
+  /** Apply Sheets API batchUpdate requests to a Sheet, in order, all or none. */
+  async updateSheet(id: string, requests: readonly unknown[]): Promise<void> {
+    await this.request("POST", `${SHEETS_API}/${encodeURIComponent(id)}:batchUpdate`, { json: { requests } });
   }
 
   /** Move a file to the trash, where it can still be restored for 30 days. */

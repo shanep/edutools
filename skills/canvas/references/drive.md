@@ -40,7 +40,12 @@ edutools drive folder <repo>                                       # pick the fo
   course`) and an optional `**Notes.**` paragraph. Its columns follow the eCampus
   alignment template; a location cell with one link to a course item links to its
   Doc. The rest of the page is left out. It is regenerated like any Doc, so edit
-  `objectives.md`, not the Sheet.
+  `objectives.md`, not the Sheet. When the repo has
+  `objective-alignment-template.xlsx` (eCampus's template downloaded as Excel), the
+  Sheet is that workbook with the rows written into its Objectives tab, in its
+  styling and dropdowns, and without its letter to the instructor in J1. Facets are
+  matched to the dropdown choices ignoring case. The template needs the Sheets API
+  (setup step 2).
 - Links between course items point at the Drive copies. Raster images are embedded.
   Docs cannot show SVG, so an SVG image becomes a link to its file, or is dropped
   when its alt text is empty. The `[icons]` images only decorate Canvas headings and
@@ -112,7 +117,8 @@ one. The user does it in Google Cloud Console (offer to drive it with Claude in
 Chrome while they watch):
 
 1. Create a project, or pick one.
-2. Enable the **Google Drive API** (APIs & Services, Library).
+2. Enable the **Google Drive API** (APIs & Services, Library), and the **Google
+   Sheets API** if a course uses the alignment template.
 3. Set up the OAuth consent screen. Pick **Internal** on a university Workspace
    account, so the sign-in does not expire after 7 days.
 4. Create an OAuth client ID of type **Desktop app** and download its JSON.

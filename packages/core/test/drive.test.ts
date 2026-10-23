@@ -201,6 +201,24 @@ describe("files", () => {
     expect(JSON.parse(fake.calls[0]?.body ?? "")).toEqual({ trashed: true });
   });
 
+  it("reads a Sheet's tabs by title", async () => {
+    const fake = fakeFetch([{ json: { sheets: [{ properties: { sheetId: 7, title: "Objectives" } }, { properties: { sheetId: 8, title: "Data" } }] } }]);
+    const tabs = await drive(fake.fetch).sheetTabs("s");
+    expect(fake.calls[0]?.url).toMatch(/^https:\/\/sheets\.googleapis\.com\/v4\/spreadsheets\/s\?fields=/);
+    expect([...tabs]).toEqual([
+      ["Objectives", 7],
+      ["Data", 8],
+    ]);
+  });
+
+  it("sends Sheet requests in one batch", async () => {
+    const fake = fakeFetch([{ json: {} }]);
+    await drive(fake.fetch).updateSheet("s", [{ autoResizeDimensions: {} }]);
+    expect(fake.calls[0]?.method).toBe("POST");
+    expect(fake.calls[0]?.url).toBe("https://sheets.googleapis.com/v4/spreadsheets/s:batchUpdate");
+    expect(JSON.parse(fake.calls[0]?.body ?? "")).toEqual({ requests: [{ autoResizeDimensions: {} }] });
+  });
+
   it("names the account", async () => {
     const fake = fakeFetch([{ json: { user: { emailAddress: "me@example.edu", displayName: "Me" } } }]);
     expect(await drive(fake.fetch).about()).toEqual({ email: "me@example.edu", name: "Me" });

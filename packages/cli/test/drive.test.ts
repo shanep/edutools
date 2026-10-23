@@ -68,6 +68,10 @@ function fakeDrive(): DriveCommandClient & { files: Map<string, DriveFile> } {
     createDoc: async (name, parent) => make(name, "doc", parent),
     uploadFile: async (name, parent, _bytes, type) => make(name, type, parent),
     replaceContent: async (id) => touch(id),
+    sheetTabs: async () => new Map([["Objectives", 0]]),
+    updateSheet: async (id) => {
+      touch(id);
+    },
     updateMetadata: async (id, change) =>
       touch(id, {
         ...(change.name === undefined ? {} : { name: change.name }),
