@@ -13,16 +13,22 @@
  * so `edutools courses --json | jq` always receives parseable JSON.
  */
 
+import { spawn } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import { Writable } from "node:stream";
 import { CanvasLMS } from "@edutools/core/canvas";
 import {
   type CredentialOptions,
   CredentialsError,
+  keychainStore,
   type ResolvedCredentials,
   resolveCredentials,
+  type SecretStore,
 } from "@edutools/core/credentials";
 import type { CourseCanvas } from "@edutools/core/course";
+import { type GoogleAuth, type GoogleClient, GoogleAuthError, GoogleDrive } from "@edutools/core/drive";
+import type { DriveClient } from "@edutools/core/drive-push";
+import { googleSignIn, resolveGoogleAuth } from "@edutools/core/google-auth";
 import type { ExportCanvas } from "@edutools/core/export";
 import type { PullCanvas } from "@edutools/core/pull";
 import type { QuizQuestionsCanvas } from "@edutools/core/quiz-questions";
@@ -59,6 +65,9 @@ export type CanvasClient = PullCanvas &
     | "listPeerReviews"
   >;
 
+/** The Google Drive methods the drive commands call. */
+export type DriveCommandClient = DriveClient & Pick<GoogleDrive, "about">;
+
 /** Somewhere text is written: process.stdout, or a buffer in a test. */
 export interface Output {
   write(chunk: string): unknown;
@@ -82,6 +91,12 @@ export interface CliDeps {
   readonly credentials: CredentialOptions;
   readonly makeClient: (credentials: ResolvedCredentials) => CanvasClient;
   readonly version: string;
+  /** The Google Drive client, built from a signed-in client; tests pass a fake. */
+  readonly makeDrive: (auth: GoogleAuth) => DriveCommandClient;
+  /** The browser sign-in, resolving to a refresh token; `open` gets the consent page URL. */
+  readonly googleSignIn: (client: GoogleClient, open: (url: string) => void) => Promise<string>;
+  /** Open a URL in the default browser, quietly doing nothing when it cannot. */
+  readonly openUrl: (url: string) => void;
 }
 
 /** Leave the command with this exit code; whatever needed saying is already said. */
@@ -98,6 +113,33 @@ export class CliExit extends Error {
 /** The real client, built from resolved credentials. */
 export function canvasClient(credentials: ResolvedCredentials): CanvasClient {
   return new CanvasLMS({ token: credentials.token, endpoint: credentials.endpoint });
+}
+
+/** The real Drive client. */
+export function driveClient(auth: GoogleAuth): DriveCommandClient {
+  return new GoogleDrive({ auth });
+}
+
+/** The real sign-in: a loopback server and the consent page. */
+export function signIn(client: GoogleClient, open: (url: string) => void): Promise<string> {
+  return googleSignIn(client, open);
+}
+
+/** `open` on macOS, `xdg-open` on Linux, `start` on Windows. */
+export function openUrl(url: string): void {
+  const [command, args] =
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["cmd", ["/c", "start", '""', url.replaceAll("&", "^&")]]
+        : ["xdg-open", [url]];
+  try {
+    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // no browser to open; the URL is printed too
+  }
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -158,6 +200,7 @@ export class Cli {
   site: string | undefined;
   private reader: LineReader | undefined;
   private client: CanvasClient | undefined;
+  private driveClient: DriveCommandClient | undefined;
   private resolved: ResolvedCredentials | undefined;
 
   constructor(deps: CliDeps) {
@@ -253,6 +296,23 @@ export class Cli {
   async canvas(): Promise<CanvasClient> {
     if (!this.client) this.client = this.deps.makeClient(await this.credentials());
     return this.client;
+  }
+
+  /** Where tokens are kept: the OS keychain, or the test's in-memory store. */
+  secrets(): SecretStore {
+    return this.deps.credentials.secrets ?? keychainStore();
+  }
+
+  /** The Google Drive client, signed in from the keychain or the environment. */
+  async drive(): Promise<DriveCommandClient> {
+    if (this.driveClient) return this.driveClient;
+    try {
+      this.driveClient = this.deps.makeDrive(await resolveGoogleAuth(this.secrets(), this.deps.env));
+    } catch (error) {
+      if (error instanceof GoogleAuthError) throw this.fail(error.message);
+      throw error;
+    }
+    return this.driveClient;
   }
 
   /**

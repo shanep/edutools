@@ -11,7 +11,8 @@ import { Readable } from "node:stream";
 import { CanvasLMS } from "@edutools/core/canvas";
 import { type CredentialOptions, memoryStore, type ResolvedCredentials } from "@edutools/core/credentials";
 import { type Mock, vi } from "vitest";
-import type { CanvasClient } from "../src/cli";
+import type { GoogleAuth, GoogleClient } from "@edutools/core/drive";
+import type { CanvasClient, DriveCommandClient } from "../src/cli";
 import { run } from "../src/main";
 
 export type FakeClient = { [K in keyof CanvasClient]: Mock<CanvasClient[K]> };
@@ -124,6 +125,10 @@ export interface InvokeOptions {
   readonly input?: string;
   readonly env?: Record<string, string | undefined>;
   readonly credentials?: CredentialOptions;
+  readonly makeDrive?: (auth: GoogleAuth) => DriveCommandClient;
+  readonly googleSignIn?: (client: GoogleClient, open: (url: string) => void) => Promise<string>;
+  /** Called instead of opening a browser; the default does nothing. */
+  readonly openUrl?: (url: string) => void;
 }
 
 /**
@@ -162,6 +167,17 @@ export async function invoke(argv: readonly string[], options: InvokeOptions = {
         if (!options.client) throw new Error("this test gave no Canvas client");
         return options.client;
       }),
+    makeDrive:
+      options.makeDrive ??
+      (() => {
+        throw new Error("this test gave no Google Drive client");
+      }),
+    googleSignIn:
+      options.googleSignIn ??
+      (() => {
+        throw new Error("this test gave no Google sign-in");
+      }),
+    openUrl: options.openUrl ?? (() => {}),
     version: "1.0.1",
   });
   return { code, stdout, stderr, output };

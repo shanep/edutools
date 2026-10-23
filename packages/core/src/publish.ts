@@ -751,10 +751,19 @@ export function renderGfm(markdown: string): string {
   return renderer.render(markdown).replace(/\n<\/li>/g, "</li>");
 }
 
-/** Render one course file to [title, html]. */
-export function renderMarkdown(file: string, repo: string | null = null): [string, string] {
+/**
+ * Render one course file to [title, html].
+ *
+ * Instructor-only sections are dropped unless `keepInstructor` is set, which
+ * only the copy for colleagues (the Google Drive push) asks for.
+ */
+export function renderMarkdown(
+  file: string,
+  repo: string | null = null,
+  options: { keepInstructor?: boolean } = {},
+): [string, string] {
   let source = stripVitepress(readFileSync(file, "utf8"), file, repo);
-  source = stripInstructorSections(source);
+  if (!options.keepInstructor) source = stripInstructorSections(source);
   const [title, body] = stripTitle(source);
   return [title || path.parse(file).name, renderGfm(body)];
 }

@@ -106,6 +106,17 @@ describe("rendering", () => {
     expect(cleaned).toContain("Body.");
   });
 
+  it("keeps instructor sections when asked, for the Google Drive copy", () => {
+    const root = tmp();
+    const file = write(
+      root,
+      "q.md",
+      "# Quiz\n\nBody.\n\n## Instructor Notes\n\n*Instructor note, not shown to students.* The key.\n",
+    );
+    expect(renderMarkdown(file, root)[1]).not.toContain("The key.");
+    expect(renderMarkdown(file, root, { keepInstructor: true })[1]).toContain("The key.");
+  });
+
   it("detects forbidden tags", () => {
     expect(assertNoForbiddenTags("<p>ok</p>")).toEqual([]);
     expect(assertNoForbiddenTags("<style>p{color:red}</style>")).toContain("style");

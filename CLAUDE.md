@@ -13,6 +13,10 @@ and Linux, and CI checks all three.
 ```
 packages/core/src/   the library; every other package is built on it
   canvas.ts          CanvasLMS: the only module that talks HTTP to Canvas
+  drive.ts           GoogleDrive: the only module that talks HTTP to Google
+  google-auth.ts     the Google sign-in (loopback + PKCE) and its keychain entries
+  drive-push.ts      orchestration: a course repo pushed to Google Drive as Docs, and its status
+  drive-render.ts    pure: the Drive folder layout, Doc HTML, Drive links, .drive manifest
   course.ts          whole-course orchestration: push, verify, audit, clean, outline, dates
   publisher.ts       the two-pass course-repo publisher (create objects, rewrite links)
   pull.ts            the course snapshot
@@ -35,8 +39,9 @@ packages/*/test/     vitest tests, one <module>.test.ts per module
 
 The split is the point, and it has three layers:
 
-- **`canvas.ts` owns HTTP.** Nothing else calls `fetch`.
-- **`course.ts`, `publisher.ts` and `pull.ts` orchestrate** with an injected client
+- **`canvas.ts` owns HTTP to Canvas and `drive.ts` owns HTTP to Google.** Nothing
+  else calls `fetch`.
+- **`course.ts`, `publisher.ts`, `pull.ts` and `drive-push.ts` orchestrate** with an injected client
   (a narrow client type such as `CourseCanvas` or `PullCanvas`, not `CanvasLMS`), and
   never print or prompt. Progress goes to a callback, results come back typed, and a
   step that needs a human's yes is split in two (`planClean`, then `executeClean` or

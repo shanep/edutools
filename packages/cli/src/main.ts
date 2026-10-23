@@ -12,7 +12,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "@edutools/core/version";
 import { Command, CommanderError } from "commander";
-import { Cli, type CliDeps, CliExit, canvasClient, type Register } from "./cli";
+import { Cli, type CliDeps, CliExit, canvasClient, driveClient, openUrl, type Register, signIn } from "./cli";
 import { register as assignments } from "./commands/assignments";
 import { register as audit } from "./commands/audit";
 import { register as check } from "./commands/check";
@@ -20,6 +20,7 @@ import { register as courses } from "./commands/courses";
 import { register as create } from "./commands/create";
 import { register as dates } from "./commands/dates";
 import { register as discussion } from "./commands/discussion";
+import { register as drive } from "./commands/drive";
 import { register as deleteCommand } from "./commands/delete";
 import { register as download } from "./commands/download";
 import { register as editComment } from "./commands/edit-comment";
@@ -69,6 +70,7 @@ const COMMANDS: readonly Register[] = [
   audit,
   outline,
   dates,
+  drive,
   // one object at a time
   create,
   update,
@@ -132,6 +134,9 @@ function defaults(): CliDeps {
     credentials: {},
     makeClient: canvasClient,
     version: VERSION,
+    makeDrive: driveClient,
+    googleSignIn: signIn,
+    openUrl,
   };
 }
 

@@ -177,6 +177,12 @@ edutools outline <repo> [--out <file>]             the module outline a push bui
 edutools dates <repo> [--show] [--shift <Nd>] [--json]
                                                    due dates computed from canvas.toml
 
+edutools drive login [--client <file>]             sign in to Google Drive, once per machine
+edutools drive logout [--client]                   forget the Google sign-in (and the OAuth client)
+edutools drive push <repo> [--dry-run] [--force] [--prune] [--name <name>] [--preview <dir>] [--json]
+                                                   copy a course repo to Google Drive as Google Docs
+edutools drive status <repo> [--all] [--json]      which side changed since the last Drive push
+
 edutools create <kind> -c <id> [options]           create one page/assignment/discussion/quiz/module
 edutools update <kind> <object_id> -c <id> [options]
                                                    change one object
@@ -686,6 +692,26 @@ is listed and exits 1.
 and `lock_at` as the ISO 8601 strings `push` sends Canvas
 (`2026-10-14T23:59:00-06:00`; `unlock_at` is null when there is none). It exits 1
 when `problems` is not empty.
+
+### Google Drive copies
+
+`edutools drive push <repo>` copies a course repo to Google Drive as Google Docs, so
+colleagues can read, comment on and copy the course without a Canvas seat. The
+syllabus sits at the top of a course folder, each `[[module]]` is a numbered folder,
+every page, assignment, discussion and quiz is a Doc, and course files are stored as
+they are. Instructor Notes sections and `never_publish` modules are kept, because the
+copy is for instructors. Sharing the folder is up to you, in Drive.
+
+Later pushes update the same Docs at the same URLs and send only what changed. A Doc
+someone edited in Drive is reported as a conflict and left alone unless you pass
+`--force`. `<repo>/.drive/manifest.json` records the Drive ids, so commit it.
+`edutools drive status <repo>` shows which side changed.
+
+The sign-in needs an OAuth client you make once in Google Cloud Console: enable the
+Google Drive API, set the consent screen to Internal (on a university Workspace
+account), create a client of type Desktop app, download its JSON, and run
+`edutools drive login --client <file>`. edutools asks only for the `drive.file`
+scope, so it can reach the files it created and nothing else in your Drive.
 
 ### Course repository layout
 
@@ -1268,6 +1294,10 @@ An npm workspace of three packages:
 ```
 packages/core/src/   the library everything else is built on
   canvas.ts          the only module that talks HTTP to Canvas
+  drive.ts           the only module that talks HTTP to Google
+  google-auth.ts     the Google sign-in and its keychain entries
+  drive-push.ts      a course repo pushed to Google Drive as Docs, and its status
+  drive-render.ts    pure: the Drive folder layout, Doc HTML, Drive links, .drive manifest
   course.ts          whole-course orchestration: push, verify, audit, clean, outline, dates
   publisher.ts       the two-pass course-repo publisher (create objects, rewrite links)
   pull.ts            the course snapshot

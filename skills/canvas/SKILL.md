@@ -1,6 +1,6 @@
 ---
 name: canvas
-description: Work with Canvas LMS through the `edutools` CLI - list courses, students, assignments, modules and submissions; snapshot a whole course to disk; publish a course repository of markdown into Canvas, verify or audit what landed, and see which side (the repo or Canvas) changed since the last push; preview the module outline and due dates; create, update, delete, publish and unpublish pages, assignments, discussions, quizzes and modules; and grade submissions with written feedback. Use whenever the request touches Canvas, an LMS course, course design or course content, a backup or snapshot of a course, a gradebook, a course page or module, an assignment or quiz, student submissions, grading, or leaving feedback on student work.
+description: Work with Canvas LMS through the `edutools` CLI - list courses, students, assignments, modules and submissions; snapshot a whole course to disk; publish a course repository of markdown into Canvas, verify or audit what landed, and see which side (the repo or Canvas) changed since the last push; preview the module outline and due dates; create, update, delete, publish and unpublish pages, assignments, discussions, quizzes and modules; grade submissions with written feedback; and copy a course repository to Google Drive as Google Docs for colleagues. Use whenever the request touches Canvas, an LMS course, course design or course content, a backup or snapshot of a course, a gradebook, a course page or module, an assignment or quiz, student submissions, grading, leaving feedback on student work, or a Google Drive copy of a course.
 ---
 
 # Canvas LMS
@@ -22,7 +22,7 @@ knowledge of its own: every action below is an `edutools` command, and when a
 task cannot be expressed with one, the fix is a new command in edutools (see Changing edutools
 itself below), not a workaround here.
 
-It covers five jobs, each with its own section:
+It covers six jobs, each with its own section:
 
 1. **Reading a course**: courses, students, assignments, modules, groups,
    submissions, and whole-course snapshots and exports. Reads are always safe.
@@ -35,7 +35,10 @@ It covers five jobs, each with its own section:
    `publish`, `unpublish`.
 4. **Grading**: reading submissions and discussion posts, writing scores and
    feedback, fixing feedback already sent, and rubrics for one assignment.
-5. **Changing edutools itself**, when none of the above fits.
+5. **Copying a course to Google Drive** as Google Docs for colleagues, with
+   `drive push` and `drive status`. It reads the same repository and never
+   touches Canvas.
+6. **Changing edutools itself**, when none of the above fits.
 
 How a session goes: check the edutools version and the credentials once (next
 section), read with `--json` whenever a value matters, and treat every write as
@@ -154,6 +157,7 @@ the job before running its commands; the details and the gotchas are there.
 | `create`, `update`, `delete`, `publish`, `unpublish` on one object, assignment groups | `references/objects.md` |
 | Course repositories: `push`, module tables, `verify`, `audit`, `status` | `references/repositories.md` |
 | Grading, feedback, discussions, rubrics, quiz questions | `references/grading.md` |
+| A course repository copied to Google Drive: `drive login`, `drive push`, `drive status` | `references/drive.md` |
 
 ## Changing edutools itself
 
