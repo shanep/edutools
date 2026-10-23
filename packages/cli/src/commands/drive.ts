@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { CourseError, writePreview } from "@edutools/core/course";
 import { DateConfigError } from "@edutools/core/dates";
 import { DriveApiError, GoogleAuthError } from "@edutools/core/drive";
+import { projectNumber } from "@edutools/core/drive-picker";
 import {
   DRIVE_NEEDS_ATTENTION,
   type DriveAction,
@@ -10,6 +11,7 @@ import {
   type DriveStatusResult,
   drivePush,
   driveStatus,
+  setDriveFolder,
 } from "@edutools/core/drive-push";
 import {
   forgetGoogle,
@@ -201,9 +203,9 @@ export const register: Register = (program, cli) => {
     .command("push")
     .description(
       "Create or update the course's Google Drive folder.\n\n" +
-        "The first push makes the folder at the top of My Drive; move it anywhere\n" +
-        "afterwards, and later pushes still find it. Every later push updates the\n" +
-        "same Docs in place, at the same URLs, and sends only what changed.\n" +
+        "The first push makes the folder in the folder 'drive folder' picked, or at\n" +
+        "the top of My Drive. Every later push updates the same Docs in place, at the\n" +
+        "same URLs, and sends only what changed.\n" +
         "<repo>/.drive/manifest.json records the ids: commit it.\n\n" +
         "A Doc edited in Drive since the last push is a conflict and is left alone;\n" +
         "--force overwrites it. Replacing a Doc's text can detach comments anchored to\n" +
@@ -246,6 +248,43 @@ export const register: Register = (program, cli) => {
         printPush(cli, result, options.all ?? false);
       }
       if (result.changes.some((change) => change.action === "conflict")) throw new CliExit(1);
+    });
+
+  drive
+    .command("folder")
+    .description(
+      "Pick the Google Drive folder the course folder goes in, and save it.\n\n" +
+        "Opens Google's folder picker in the browser. Picking a folder gives edutools\n" +
+        "access to that folder alone. The choice is saved in <repo>/.drive/manifest.json\n" +
+        "(commit it), the course folder moves there if it already exists, keeping every\n" +
+        "Doc's URL, and every later push puts it back there if it was moved.",
+    )
+    .argument("<repo>", "Course repository containing canvas.toml")
+    .option("--json", "Emit {parent: {id, name, url}, root, moved} as JSON")
+    .action(async (repoArg: string, options: { json?: boolean }) => {
+      const { c } = cli;
+      const drive = await cli.drive();
+      try {
+        const client = await loadGoogleClient(cli.secrets(), cli.env);
+        const appId = projectNumber(client?.clientId ?? "");
+        cli.note("Opening the Google Drive folder picker in your browser. If it does not open, go to:");
+        const picked = await cli.deps.pickDriveFolder(await drive.token(), appId, (url) => {
+          cli.note(url);
+          cli.deps.openUrl(url);
+        });
+        if (picked === null) throw cli.fail("No folder picked; nothing changed.");
+        const result = await setDriveFolder(drive, { repo: expandHome(repoArg), folderId: picked.id });
+        if (options.json) {
+          cli.json(result);
+          return;
+        }
+        cli.print(`${c.green("✓")} the course folder goes in ${result.parent.name}: ${result.parent.url}`);
+        if (result.moved) cli.print(`${c.green("✓")} moved the course folder there: ${result.root?.url}`);
+        else if (result.root === null) cli.print("the first push makes the course folder there");
+      } catch (error) {
+        if (error instanceof CliExit) throw error;
+        known(cli, error);
+      }
     });
 
   drive

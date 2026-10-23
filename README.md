@@ -182,6 +182,7 @@ edutools drive logout [--client]                   forget the Google sign-in (an
 edutools drive push <repo> [--dry-run] [--force] [--prune] [--name <name>] [--preview <dir>] [--json]
                                                    copy a course repo to Google Drive as Google Docs
 edutools drive status <repo> [--all] [--json]      which side changed since the last Drive push
+edutools drive folder <repo> [--json]              pick the Drive folder the course folder goes in
 
 edutools create <kind> -c <id> [options]           create one page/assignment/discussion/quiz/module
 edutools update <kind> <object_id> -c <id> [options]
@@ -706,6 +707,11 @@ Later pushes update the same Docs at the same URLs and send only what changed. A
 someone edited in Drive is reported as a conflict and left alone unless you pass
 `--force`. `<repo>/.drive/manifest.json` records the Drive ids, so commit it.
 `edutools drive status <repo>` shows which side changed.
+
+The course folder starts at the top of My Drive. To keep it somewhere else, such as
+a folder someone shared with you, run `edutools drive folder <repo>` and pick the
+folder in Google's picker. The choice goes in the manifest, the course folder moves
+there with every Doc keeping its URL, and later pushes put it back if it wanders.
 
 The sign-in needs an OAuth client you make once in Google Cloud Console: enable the
 Google Drive API, set the consent screen to Internal (on a university Workspace
@@ -1297,6 +1303,7 @@ packages/core/src/   the library everything else is built on
   drive.ts           the only module that talks HTTP to Google
   google-auth.ts     the Google sign-in and its keychain entries
   drive-push.ts      a course repo pushed to Google Drive as Docs, and its status
+  drive-picker.ts    Google's folder picker, served from 127.0.0.1
   drive-render.ts    pure: the Drive folder layout, Doc HTML, Drive links, .drive manifest
   course.ts          whole-course orchestration: push, verify, audit, clean, outline, dates
   publisher.ts       the two-pass course-repo publisher (create objects, rewrite links)

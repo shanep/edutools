@@ -183,8 +183,11 @@ export class GoogleDrive {
     this.now = options.now ?? (() => Date.now());
   }
 
-  /** A live access token, refreshed from the refresh token when it runs out. */
-  private async token(): Promise<string> {
+  /**
+   * A live access token, refreshed from the refresh token when it runs out.
+   * Public for Google's folder picker, which runs in the browser.
+   */
+  async token(): Promise<string> {
     if (this.accessToken && this.now() < this.expiresAt) return this.accessToken;
     const payload = await tokenRequest(this.fetchImpl, {
       client_id: this.auth.clientId,

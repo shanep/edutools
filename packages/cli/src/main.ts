@@ -12,7 +12,17 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "@edutools/core/version";
 import { Command, CommanderError } from "commander";
-import { Cli, type CliDeps, CliExit, canvasClient, driveClient, openUrl, type Register, signIn } from "./cli";
+import {
+  Cli,
+  type CliDeps,
+  CliExit,
+  canvasClient,
+  driveClient,
+  openUrl,
+  pickDrive,
+  type Register,
+  signIn,
+} from "./cli";
 import { register as assignments } from "./commands/assignments";
 import { register as audit } from "./commands/audit";
 import { register as check } from "./commands/check";
@@ -137,6 +147,7 @@ function defaults(): CliDeps {
     makeDrive: driveClient,
     googleSignIn: signIn,
     openUrl,
+    pickDriveFolder: pickDrive,
   };
 }
 

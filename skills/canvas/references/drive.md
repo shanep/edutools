@@ -12,13 +12,15 @@ edutools drive login --client ~/Downloads/client_secret_....json   # once per ma
 edutools drive push <repo> --dry-run --preview /tmp/drive          # render everything, write nothing
 edutools drive push <repo>                                         # create or update the Drive folder
 edutools drive status <repo>                                       # which side changed since the last push
+edutools drive folder <repo>                                       # pick the folder the course folder goes in
 ```
 
 ## What the copy holds
 
-- A course folder at the top of My Drive, named after the repo directory in
-  capitals (`docs/cs331` becomes `CS331`; `--name` overrides it on the first push).
-  The user can move it anywhere afterwards, and later pushes still find it by id.
+- A course folder named after the repo directory in capitals (`docs/cs331` becomes
+  `CS331`; `--name` overrides it on the first push). It goes in the folder picked
+  with `drive folder`, or at the top of My Drive when none was picked. Without a
+  picked folder the user can move it anywhere, and later pushes still find it by id.
 - `00 Syllabus` at the top, then one folder per `[[module]]` in order
   (`01 Course Resources`, `02 ...`), each holding its items in module order with a
   number prefix. An item two modules list goes in the first.
@@ -62,6 +64,23 @@ builds a second copy.
 `kind` (`doc`, `file` or `folder`), `name`, `action` (`create`, `recreate`,
 `update`, `move`, `unchanged`, `conflict`, `trash`, `orphan`) and `detail`.
 
+## Folder
+
+`drive folder <repo>` opens Google's folder picker in the browser (and prints its
+127.0.0.1 URL), the user picks a folder, and edutools saves it as `parent` in the
+manifest. If the course folder exists it moves there at once, and every Doc keeps
+its id and URL. Each later push moves the course folder back if someone moved it
+out. Commit the manifest afterwards.
+
+The picker is the only way to point edutools at a folder it did not make, such as
+one eCampus shared: the `drive.file` scope hides everything else, so a folder id
+or URL alone is not enough. Picking a folder grants edutools access to it, so pick
+only a folder the user named in the conversation, and otherwise let them choose.
+Cancelling changes nothing and exits 1.
+
+`--json` prints `{"parent": {"id", "name", "url"}, "root", "moved"}`. `root` is
+null before the first push.
+
 ## Status
 
 `drive status` reads Drive and never writes it. Each item is `in-sync`, `repo` (the
@@ -73,7 +92,8 @@ has `key`, `kind`, `name`, `state` and `url`.
 ## Signing in
 
 edutools signs in with the `drive.file` scope, which reaches only the files and
-folders edutools created and nothing else in the account. The client and the
+folders edutools created, plus a folder picked with `drive folder`, and nothing
+else in the account. The client and the
 refresh token live in the OS keychain beside the Canvas tokens.
 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN` override them.
 

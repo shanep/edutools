@@ -12,6 +12,7 @@ import { CanvasLMS } from "@edutools/core/canvas";
 import { type CredentialOptions, memoryStore, type ResolvedCredentials } from "@edutools/core/credentials";
 import { type Mock, vi } from "vitest";
 import type { GoogleAuth, GoogleClient } from "@edutools/core/drive";
+import type { PickedFolder } from "@edutools/core/drive-picker";
 import type { CanvasClient, DriveCommandClient } from "../src/cli";
 import { run } from "../src/main";
 
@@ -129,6 +130,7 @@ export interface InvokeOptions {
   readonly googleSignIn?: (client: GoogleClient, open: (url: string) => void) => Promise<string>;
   /** Called instead of opening a browser; the default does nothing. */
   readonly openUrl?: (url: string) => void;
+  readonly pickDriveFolder?: (token: string, appId: string, open: (url: string) => void) => Promise<PickedFolder | null>;
 }
 
 /**
@@ -178,6 +180,11 @@ export async function invoke(argv: readonly string[], options: InvokeOptions = {
         throw new Error("this test gave no Google sign-in");
       }),
     openUrl: options.openUrl ?? (() => {}),
+    pickDriveFolder:
+      options.pickDriveFolder ??
+      (() => {
+        throw new Error("this test gave no folder picker");
+      }),
     version: "1.0.1",
   });
   return { code, stdout, stderr, output };

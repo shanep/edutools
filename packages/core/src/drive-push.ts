@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CourseError } from "./course";
 import { DateConfigError } from "./dates";
-import type { DriveFile, GoogleDrive } from "./drive";
+import { type DriveFile, FOLDER_MIME, type GoogleDrive } from "./drive";
 import {
   contentFingerprint,
   contentType,
@@ -26,6 +26,7 @@ import {
   type DriveItem,
   type DriveLayout,
   DriveManifest,
+  type DriveParent,
   driveLayout,
   driveResolver,
   folderUrl,
@@ -120,6 +121,21 @@ function entryOf(file: DriveFile, parent: string, sent: string): DriveEntry {
   return { id: file.id, name: file.name, parent, sent, modified: file.modifiedTime };
 }
 
+/** Make sure a file sits under `parent` with `name`, moving or renaming it if not. */
+async function place(
+  drive: Pick<DriveClient, "updateMetadata">,
+  file: DriveFile,
+  name: string,
+  parent: string,
+): Promise<DriveFile> {
+  const misplaced = !file.parents.includes(parent);
+  if (!misplaced && file.name === name) return file;
+  return drive.updateMetadata(file.id, {
+    ...(file.name === name ? {} : { name }),
+    ...(misplaced ? { addParent: parent, removeParents: file.parents } : {}),
+  });
+}
+
 /** The content an item would send now, and its fingerprint. */
 function content(
   item: DriveItem,
@@ -171,26 +187,22 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
 
   progress({ message: "Finding the course folder" });
   const rootName = options.name ?? manifest.root?.name ?? defaultFolderName(repo);
+  // Without a picked parent the course folder can live anywhere; with one it goes back there.
+  const parentId = manifest.parent?.id ?? null;
   let root = manifest.root ? await drive.getFile(manifest.root.id) : null;
   if (root === null || root.trashed) {
-    root = await drive.createFolder(rootName, null);
+    root = await drive.createFolder(rootName, parentId);
     change("", "folder", rootName, manifest.root ? "recreate" : "create");
+  } else if (parentId !== null) {
+    const before = root;
+    root = await place(drive, root, rootName, parentId);
+    if (!before.parents.includes(parentId)) change("", "folder", rootName, "move", `into ${manifest.parent?.name}`);
   } else if (root.name !== rootName) {
     root = await drive.updateMetadata(root.id, { name: rootName });
   }
-  manifest.root = entryOf(root, "", "");
+  manifest.root = entryOf(root, parentId ?? "", "");
   manifest.save();
   const rootId = root.id;
-
-  /** Make sure a file sits under `parent` with `name`, moving or renaming it if not. */
-  const place = async (file: DriveFile, name: string, parent: string): Promise<DriveFile> => {
-    const misplaced = !file.parents.includes(parent);
-    if (!misplaced && file.name === name) return file;
-    return drive.updateMetadata(file.id, {
-      ...(file.name === name ? {} : { name }),
-      ...(misplaced ? { addParent: parent, removeParents: file.parents } : {}),
-    });
-  };
 
   const folderIds = new Map<string, string>();
   for (const folder of layout.folders) {
@@ -201,7 +213,7 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
       change(folder.key, "folder", folder.name, entry ? "recreate" : "create");
     } else {
       const before = file;
-      file = await place(file, folder.name, rootId);
+      file = await place(drive, file, folder.name, rootId);
       if (file !== before) change(folder.key, "folder", folder.name, "move", `was ${before.name}`);
     }
     manifest.folders.set(folder.key, entryOf(file, rootId, ""));
@@ -236,7 +248,7 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
     }
     const edited = editedInDrive(existing.modifiedTime, entry.modified);
     if (edited) driveEdits.add(item.key);
-    const moved = await place(existing, item.name, parent);
+    const moved = await place(drive, existing, item.name, parent);
     if (moved !== existing) {
       // A move after an edit in Drive keeps the old baseline, so the edit still shows.
       manifest.items.set(item.key, { ...entry, name: moved.name, parent, modified: edited ? entry.modified : moved.modifiedTime });
@@ -296,6 +308,56 @@ export async function drivePush(drive: DriveClient | null, options: DrivePushOpt
   manifest.save();
 
   return { dryRun: false, root: { id: rootId, url: folderUrl(rootId) }, changes, unresolved, rendered };
+}
+
+// ============================================================================
+// The folder the course goes in
+// ============================================================================
+
+export interface DriveFolderResult {
+  readonly parent: DriveParent & { readonly url: string };
+  /** The course folder, or null before the first push. */
+  readonly root: { readonly id: string; readonly url: string } | null;
+  /** Whether the course folder was moved into the parent just now. */
+  readonly moved: boolean;
+}
+
+/**
+ * Save `folderId` as the folder the course folder goes in, and move the course
+ * folder there if it already exists. Moving keeps every Doc's id and URL. The
+ * folder has to be one edutools can reach: one it made, or one picked in
+ * Google's folder picker.
+ */
+export async function setDriveFolder(
+  drive: Pick<DriveClient, "getFile" | "updateMetadata">,
+  options: { repo: string; folderId: string },
+): Promise<DriveFolderResult> {
+  const { publisher } = open(options.repo);
+  const manifest = DriveManifest.forRepo(publisher.repo);
+  const folder = await drive.getFile(options.folderId);
+  if (folder === null || folder.trashed) {
+    throw new CourseError(`edutools cannot reach the Google Drive folder ${options.folderId}. Pick it again.`);
+  }
+  if (folder.mimeType !== FOLDER_MIME) throw new CourseError(`${folder.name} is not a folder.`);
+  if (manifest.root && folder.id === manifest.root.id) {
+    throw new CourseError(`${folder.name} is the course folder itself. Pick the folder it goes in.`);
+  }
+  manifest.parent = { id: folder.id, name: folder.name };
+  let moved = false;
+  const root = manifest.root ? await drive.getFile(manifest.root.id) : null;
+  if (manifest.root && root !== null && !root.trashed) {
+    if (!root.parents.includes(folder.id)) {
+      const after = await drive.updateMetadata(root.id, { addParent: folder.id, removeParents: root.parents });
+      manifest.root = entryOf(after, folder.id, "");
+      moved = true;
+    }
+  }
+  manifest.save();
+  return {
+    parent: { ...manifest.parent, url: folderUrl(folder.id) },
+    root: root !== null && !root.trashed ? { id: root.id, url: folderUrl(root.id) } : null,
+    moved,
+  };
 }
 
 // ============================================================================

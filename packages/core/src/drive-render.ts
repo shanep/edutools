@@ -324,7 +324,14 @@ export interface DriveEntry {
   modified: string;
 }
 
+/** The folder the course folder goes in, picked with `drive folder`. */
+export interface DriveParent {
+  id: string;
+  name: string;
+}
+
 interface ManifestJson {
+  parent?: DriveParent;
   root?: DriveEntry;
   folders?: Record<string, DriveEntry>;
   items?: Record<string, DriveEntry>;
@@ -335,13 +342,16 @@ function sortedRecord(map: ReadonlyMap<string, DriveEntry>): Record<string, Driv
 }
 
 /**
- * `.drive/manifest.json` in the course repo: the Drive id of the course
- * folder, of every module folder and of every item, with what was last sent.
+ * `.drive/manifest.json` in the course repo: the folder the course goes in,
+ * the Drive id of the course folder, of every module folder and of every item,
+ * with what was last sent.
  * Committed, like `.canvas/`, so a push from another machine updates the same
  * Docs instead of making a second copy.
  */
 export class DriveManifest {
   readonly path: string;
+  /** Where the course folder goes; null puts it at the top of My Drive. */
+  parent: DriveParent | null = null;
   root: DriveEntry | null = null;
   readonly folders = new Map<string, DriveEntry>();
   readonly items = new Map<string, DriveEntry>();
@@ -351,6 +361,7 @@ export class DriveManifest {
     if (!existsSync(file)) return;
     // Written by save() below as exactly this shape.
     const data = JSON.parse(readFileSync(file, "utf8")) as ManifestJson;
+    this.parent = data.parent ?? null;
     this.root = data.root ?? null;
     for (const [key, entry] of Object.entries(data.folders ?? {})) this.folders.set(key, entry);
     for (const [key, entry] of Object.entries(data.items ?? {})) this.items.set(key, entry);
@@ -363,6 +374,7 @@ export class DriveManifest {
   save(): void {
     mkdirSync(path.dirname(this.path), { recursive: true });
     const payload: ManifestJson = {
+      ...(this.parent ? { parent: this.parent } : {}),
       ...(this.root ? { root: this.root } : {}),
       folders: sortedRecord(this.folders),
       items: sortedRecord(this.items),

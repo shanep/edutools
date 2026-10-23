@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { CourseError } from "@edutools/core/course";
 import { DOC_MIME, type DriveFile, FOLDER_MIME } from "@edutools/core/drive";
-import { type DriveClient, defaultFolderName, drivePush, driveStatus } from "@edutools/core/drive-push";
+import { type DriveClient, defaultFolderName, drivePush, driveStatus, setDriveFolder } from "@edutools/core/drive-push";
 import {
   contentType,
   docUrl,
@@ -413,5 +413,49 @@ describe("drivePush", () => {
     const repo = makeRepo();
     rmSync(path.join(repo, "canvas.toml"));
     await expect(drivePush(null, { repo, dryRun: true })).rejects.toThrow(CourseError);
+  });
+});
+
+describe("setDriveFolder", () => {
+  it("makes the first push put the course folder in the picked folder", async () => {
+    const repo = makeRepo();
+    const drive = new FakeDrive();
+    const shared = await drive.createFolder("eCampus", "someone-else");
+    const result = await setDriveFolder(drive, { repo, folderId: shared.id });
+    expect(result).toMatchObject({ parent: { id: shared.id, name: "eCampus" }, root: null, moved: false });
+    const pushed = await drivePush(drive, { repo });
+    expect(drive.files.get(pushed.root?.id ?? "")?.parents).toEqual([shared.id]);
+  });
+
+  it("moves the course folder there, keeping every id, and keeps it there", async () => {
+    const repo = makeRepo();
+    const drive = new FakeDrive();
+    const first = await drivePush(drive, { repo });
+    const root = first.root?.id ?? "";
+    const items = manifestOf(repo).items;
+    const shared = await drive.createFolder("eCampus", "someone-else");
+    drive.writes.length = 0;
+    const result = await setDriveFolder(drive, { repo, folderId: shared.id });
+    expect(result.moved).toBe(true);
+    expect(result.root?.id).toBe(root);
+    expect(drive.files.get(root)?.parents).toEqual([shared.id]);
+    expect(drive.writes).toEqual([`meta ${defaultFolderName(repo)}`]);
+
+    expect((await drivePush(drive, { repo })).changes.some((c) => c.action === "move")).toBe(false);
+    drive.files.set(root, { ...(drive.files.get(root) as DriveFile), parents: ["my-drive"] });
+    const again = await drivePush(drive, { repo });
+    expect(again.changes.find((c) => c.key === "")?.action).toBe("move");
+    expect(drive.files.get(root)?.parents).toEqual([shared.id]);
+    for (const [key, entry] of Object.entries(items)) expect(manifestOf(repo).items[key]?.id).toBe(entry.id);
+  });
+
+  it("refuses a folder it cannot reach, a file, and the course folder itself", async () => {
+    const repo = makeRepo();
+    const drive = new FakeDrive();
+    const pushed = await drivePush(drive, { repo });
+    const doc = await drive.createDoc("A Doc", "my-drive");
+    await expect(setDriveFolder(drive, { repo, folderId: "nope" })).rejects.toThrow(/cannot reach/);
+    await expect(setDriveFolder(drive, { repo, folderId: doc.id })).rejects.toThrow(/not a folder/);
+    await expect(setDriveFolder(drive, { repo, folderId: pushed.root?.id ?? "" })).rejects.toThrow(/course folder itself/);
   });
 });

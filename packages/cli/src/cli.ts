@@ -27,6 +27,7 @@ import {
 } from "@edutools/core/credentials";
 import type { CourseCanvas } from "@edutools/core/course";
 import { type GoogleAuth, type GoogleClient, GoogleAuthError, GoogleDrive } from "@edutools/core/drive";
+import { type PickedFolder, pickFolder } from "@edutools/core/drive-picker";
 import type { DriveClient } from "@edutools/core/drive-push";
 import { googleSignIn, resolveGoogleAuth } from "@edutools/core/google-auth";
 import type { ExportCanvas } from "@edutools/core/export";
@@ -66,7 +67,7 @@ export type CanvasClient = PullCanvas &
   >;
 
 /** The Google Drive methods the drive commands call. */
-export type DriveCommandClient = DriveClient & Pick<GoogleDrive, "about">;
+export type DriveCommandClient = DriveClient & Pick<GoogleDrive, "about" | "token">;
 
 /** Somewhere text is written: process.stdout, or a buffer in a test. */
 export interface Output {
@@ -97,6 +98,8 @@ export interface CliDeps {
   readonly googleSignIn: (client: GoogleClient, open: (url: string) => void) => Promise<string>;
   /** Open a URL in the default browser, quietly doing nothing when it cannot. */
   readonly openUrl: (url: string) => void;
+  /** Google's folder picker in the browser, resolving to the folder or null on cancel; `open` gets its URL. */
+  readonly pickDriveFolder: (token: string, appId: string, open: (url: string) => void) => Promise<PickedFolder | null>;
 }
 
 /** Leave the command with this exit code; whatever needed saying is already said. */
@@ -123,6 +126,11 @@ export function driveClient(auth: GoogleAuth): DriveCommandClient {
 /** The real sign-in: a loopback server and the consent page. */
 export function signIn(client: GoogleClient, open: (url: string) => void): Promise<string> {
   return googleSignIn(client, open);
+}
+
+/** The real folder picker: a page on 127.0.0.1 that runs Google's picker. */
+export function pickDrive(token: string, appId: string, open: (url: string) => void): Promise<PickedFolder | null> {
+  return pickFolder(token, appId, open);
 }
 
 /** `open` on macOS, `xdg-open` on Linux, `start` on Windows. */

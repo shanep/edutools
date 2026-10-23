@@ -36,7 +36,7 @@ It covers six jobs, each with its own section:
 4. **Grading**: reading submissions and discussion posts, writing scores and
    feedback, fixing feedback already sent, and rubrics for one assignment.
 5. **Copying a course to Google Drive** as Google Docs for colleagues, with
-   `drive push` and `drive status`. It reads the same repository and never
+   `drive push`, `drive status` and `drive folder`. It reads the same repository and never
    touches Canvas.
 6. **Changing edutools itself**, when none of the above fits.
 
@@ -157,7 +157,7 @@ the job before running its commands; the details and the gotchas are there.
 | `create`, `update`, `delete`, `publish`, `unpublish` on one object, assignment groups | `references/objects.md` |
 | Course repositories: `push`, module tables, `verify`, `audit`, `status` | `references/repositories.md` |
 | Grading, feedback, discussions, rubrics, quiz questions | `references/grading.md` |
-| A course repository copied to Google Drive: `drive login`, `drive push`, `drive status` | `references/drive.md` |
+| A course repository copied to Google Drive: `drive login`, `drive push`, `drive status`, `drive folder` | `references/drive.md` |
 
 ## Changing edutools itself
 

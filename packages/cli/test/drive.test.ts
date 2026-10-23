@@ -6,7 +6,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { memoryStore, type SecretStore } from "@edutools/core/credentials";
-import type { DriveFile, GoogleAuth, GoogleClient } from "@edutools/core/drive";
+import { type DriveFile, FOLDER_MIME, type GoogleAuth, type GoogleClient } from "@edutools/core/drive";
 import { GOOGLE_CLIENT_ACCOUNT, GOOGLE_REFRESH_ACCOUNT } from "@edutools/core/google-auth";
 import { describe, expect, it } from "vitest";
 import type { DriveCommandClient } from "../src/cli";
@@ -62,12 +62,17 @@ function fakeDrive(): DriveCommandClient & { files: Map<string, DriveFile> } {
   return {
     files,
     about: async () => ({ email: "me@example.edu", name: "Me" }),
+    token: async () => "access",
     getFile: async (id) => files.get(id) ?? null,
-    createFolder: async (name, parent) => make(name, "folder", parent),
+    createFolder: async (name, parent) => make(name, FOLDER_MIME, parent),
     createDoc: async (name, parent) => make(name, "doc", parent),
     uploadFile: async (name, parent, _bytes, type) => make(name, type, parent),
     replaceContent: async (id) => touch(id),
-    updateMetadata: async (id, change) => touch(id, change.name === undefined ? {} : { name: change.name }),
+    updateMetadata: async (id, change) =>
+      touch(id, {
+        ...(change.name === undefined ? {} : { name: change.name }),
+        ...(change.addParent ? { parents: [change.addParent] } : {}),
+      }),
     trash: async (id) => {
       touch(id, { trashed: true });
     },
@@ -81,7 +86,7 @@ function credentials(secrets: SecretStore = memoryStore()) {
 
 async function signedIn(): Promise<SecretStore> {
   const secrets = memoryStore();
-  await secrets.set(GOOGLE_CLIENT_ACCOUNT, JSON.stringify({ clientId: "cid", clientSecret: "cs" }));
+  await secrets.set(GOOGLE_CLIENT_ACCOUNT, JSON.stringify({ clientId: "1234-abc.apps.example", clientSecret: "cs" }));
   await secrets.set(GOOGLE_REFRESH_ACCOUNT, "rtok");
   return secrets;
 }
@@ -185,5 +190,43 @@ describe("drive push", () => {
     expect(conflict.code).toBe(1);
     expect(conflict.stdout).toContain("conflict");
     expect((await invoke(["drive", "push", repo, "--force"], options)).code).toBe(0);
+  });
+});
+
+describe("drive folder", () => {
+  it("saves the picked folder and moves the course folder into it", async () => {
+    const repo = makeRepo();
+    const drive = fakeDrive();
+    const shared = await drive.createFolder("Shared", "someone-else");
+    const opened: string[] = [];
+    const options = {
+      credentials: credentials(await signedIn()),
+      makeDrive: () => drive,
+      openUrl: (url: string) => opened.push(url),
+      pickDriveFolder: async (token: string, appId: string, open: (url: string) => void) => {
+        expect([token, appId]).toEqual(["access", "1234"]);
+        open("http://127.0.0.1:1/picker");
+        return { id: shared.id, name: "Shared" };
+      },
+    };
+    await invoke(["drive", "push", repo, "--name", "CS999"], options);
+    const result = await invoke(["drive", "folder", repo, "--json"], options);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("http://127.0.0.1:1/picker");
+    expect(opened).toEqual(["http://127.0.0.1:1/picker"]);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.parent).toMatchObject({ id: shared.id, name: "Shared" });
+    expect(payload.moved).toBe(true);
+    expect(drive.files.get(payload.root.id)?.parents).toEqual([shared.id]);
+  });
+
+  it("changes nothing when the picker is cancelled", async () => {
+    const result = await invoke(["drive", "folder", makeRepo()], {
+      credentials: credentials(await signedIn()),
+      makeDrive: () => fakeDrive(),
+      pickDriveFolder: async () => null,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("No folder picked");
   });
 });
