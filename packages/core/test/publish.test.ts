@@ -131,10 +131,11 @@ describe("the renderer emits pandoc's HTML", () => {
     );
   });
 
-  it("writes tables with bare rows and pandoc's alignment styles", () => {
+  it("writes tables with bare rows, pandoc's alignment styles and column scopes", () => {
     expect(renderGfm("| a | b | c |\n|:--|---|--:|\n| 1 | 2 | 3 |\n")).toBe(
       "<table>\n<thead>\n<tr>\n" +
-        '<th style="text-align: left;">a</th>\n<th>b</th>\n<th style="text-align: right;">c</th>\n' +
+        '<th style="text-align: left;" scope="col">a</th>\n<th scope="col">b</th>\n' +
+        '<th style="text-align: right;" scope="col">c</th>\n' +
         "</tr>\n</thead>\n<tbody>\n<tr>\n" +
         '<td style="text-align: left;">1</td>\n<td>2</td>\n<td style="text-align: right;">3</td>\n' +
         "</tr>\n</tbody>\n</table>\n",

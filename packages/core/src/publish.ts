@@ -646,12 +646,17 @@ function attrs(pairs: ReadonlyArray<readonly [string, string | null | undefined]
 
 const CELL_ALIGN = /^text-align:(left|center|right)$/;
 
-/** `text-align:left` from markdown-it becomes pandoc's `text-align: left;`. */
+/**
+ * `text-align:left` from markdown-it becomes pandoc's `text-align: left;`. A
+ * markdown table's headers are always its first row, so each `<th>` gets
+ * `scope="col"`, which Canvas's accessibility checker asks for.
+ */
 const cellOpen: RendererRule = (tokens, idx, _options, _env, self) => {
   const token = tokens[idx] as Token;
   const style = attr(token, "style");
   const align = style === null ? null : CELL_ALIGN.exec(style);
   if (align) token.attrSet("style", `text-align: ${align[1]};`);
+  if (token.tag === "th") token.attrSet("scope", "col");
   return `<${token.tag}${self.renderAttrs(token)}>`;
 };
 
