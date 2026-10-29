@@ -700,6 +700,26 @@ describe("status", () => {
     result = await courseStatus(canvas, { repo, courseId: COURSE });
     expect(result.items.find((item) => item.key === key)).toMatchObject({ state: "conflict", canvas: ["items"] });
   });
+
+  it("what only Canvas has is untracked, except what canvas.toml keeps on purpose", async () => {
+    await push(canvas, { repo, courseId: COURSE, verify: false });
+    canvas.listQuizzes.mockResolvedValue([
+      { id: 900, title: "Exam 1", published: true },
+      { id: 77, title: "Midterm", published: false },
+    ]);
+    canvas.listPages.mockResolvedValue([{ url: "notes", title: "Notes", published: false }]);
+
+    const result = await courseStatus(canvas, { repo, courseId: COURSE });
+    expect(result.untracked.map((d) => [d.kind, d.ident, d.title])).toEqual([
+      ["page", "notes", "Notes"],
+      ["quiz", "77", "Midterm"],
+    ]);
+
+    canvas.listPages.mockClear();
+    const narrowed = await courseStatus(canvas, { repo, courseId: COURSE, paths: ["pages/*.md"] });
+    expect(narrowed.untracked).toEqual([]);
+    expect(canvas.listPages).not.toHaveBeenCalled();
+  });
 });
 
 describe("diff", () => {

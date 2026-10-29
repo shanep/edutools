@@ -7,87 +7,165 @@ import {
   type StatusState,
   UnmatchedPathError,
 } from "@edutools/core/course";
-import { pyRepr } from "@edutools/core/objects";
 import { type Cli, CliExit, type Register } from "../cli";
-import { expandHome, printTable, progressLine } from "../format";
+import { expandHome, progressLine } from "../format";
 import { collect } from "../options";
 
-/** The order states are listed in: what needs a decision first. */
-const ORDER: readonly StatusState[] = [
-  "conflict",
-  "canvas",
-  "canvas-deleted",
-  "unknown",
-  "repo",
-  "new",
-  "repo-deleted",
-  "in-sync",
+type Colors = Cli["c"];
+
+/**
+ * The sections status prints, in the order git status would: what needs a
+ * decision first, then what Canvas has to give the repo, then what the repo has
+ * to give Canvas.
+ */
+interface Section {
+  readonly heading: string;
+  readonly states: readonly StatusState[];
+  readonly color: (c: Colors, text: string) => string;
+  /** The hints under the heading, given the items it holds. */
+  readonly hints: (items: readonly StatusItem[], repo: string, course: string) => string[];
+}
+
+const SECTIONS: readonly Section[] = [
+  {
+    heading: "Changed on both sides:",
+    states: ["conflict"],
+    color: (c, text) => c.red(text),
+    hints: (_, repo, course) => [
+      `use "edutools diff ${repo} --course ${course} --path <file>" to compare them`,
+      "decide which side wins before pushing",
+    ],
+  },
+  {
+    heading: "Changes in Canvas to pull into the repo:",
+    states: ["canvas", "canvas-deleted"],
+    color: (c, text) => c.yellow(text),
+    hints: (items, repo, course) => [
+      `use "edutools diff ${repo} --course ${course} --path <file>" to see what changed`,
+      `copy it into the repo, then run "edutools status ${repo} --course ${course} --adopt"; a push overwrites it`,
+      ...(items.some((item) => item.state === "canvas-deleted")
+        ? ["a deleted one comes back on the next push unless its repo file goes too"]
+        : []),
+    ],
+  },
+  {
+    heading: "Changes in the repo to push to Canvas:",
+    states: ["repo", "new"],
+    color: (c, text) => c.green(text),
+    hints: (items, repo, course) => [
+      `use "edutools push ${repo} --course ${course}" to update Canvas`,
+      ...(items.some((item) => item.published === true) ? ["published ones also need --update-published"] : []),
+    ],
+  },
+  {
+    heading: "Differs, with no baseline to say which side moved:",
+    states: ["unknown"],
+    color: (c, text) => c.yellow(text),
+    hints: (_, repo, course) => [
+      `check which side is right, then push it or run "edutools status ${repo} --course ${course} --adopt"`,
+    ],
+  },
+  {
+    heading: "Gone from the repo, left alone in Canvas:",
+    states: ["repo-deleted"],
+    color: (_, text) => text,
+    hints: () => [],
+  },
+  {
+    heading: "In sync:",
+    states: ["in-sync"],
+    color: (c, text) => c.dim(text),
+    hints: () => [],
+  },
 ];
 
-/** What each state asks of the reader, printed under the table. */
-const ADVICE: Readonly<Partial<Record<StatusState, string>>> = {
-  conflict: "changed on both sides: decide which wins before pushing",
-  canvas: "changed in Canvas: copy the change into the repo and run status --adopt, or a push overwrites it",
-  "canvas-deleted": "deleted in Canvas: the next push recreates it unless the repo file goes too",
-  unknown: "no baseline and the sides differ: check which is right, then push it or run status --adopt",
-  repo: "changed in the repo: push to update Canvas (published ones need --update-published)",
-  new: "never pushed: the next push creates it",
-  "repo-deleted": "no longer in the repo: its Canvas object is left alone",
+const LABELS: Readonly<Record<StatusState, string>> = {
+  conflict: "both modified:",
+  canvas: "modified:",
+  "canvas-deleted": "deleted:",
+  repo: "modified:",
+  new: "new:",
+  unknown: "differs:",
+  "repo-deleted": "deleted:",
+  "in-sync": "in sync:",
 };
 
-function changes(item: StatusItem): string {
-  const parts: string[] = [];
-  if (item.repo.length > 0) parts.push(`repo: ${item.repo.join(", ")}`);
-  if (item.canvas.length > 0) parts.push(`canvas: ${item.canvas.join(", ")}`);
-  if (item.unknown.length > 0) parts.push(`differs: ${item.unknown.join(", ")}`);
-  if (item.detail) parts.push(item.detail);
-  return parts.join("; ");
+const LABEL_WIDTH = 16;
+
+/** The parts that moved, after the key: one side's for most states, both for a conflict. */
+function parts(item: StatusItem): string {
+  const moved = [...item.repo, ...item.canvas, ...item.unknown];
+  const named =
+    item.state === "conflict"
+      ? [`repo: ${item.repo.join(", ")}`, `canvas: ${item.canvas.join(", ")}`]
+      : moved.length > 0
+        ? [moved.join(", ")]
+        : [];
+  if (item.detail) named.push(item.detail);
+  return named.length > 0 ? ` (${named.join("; ")})` : "";
 }
 
-function counts(items: readonly StatusItem[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const state of ORDER) {
-    const n = items.filter((item) => item.state === state).length;
-    if (n > 0) out[state] = n;
-  }
-  return out;
+function printSection(cli: Cli, heading: string, hints: readonly string[], lines: readonly string[]): void {
+  cli.print(`\n${heading}`);
+  for (const hint of hints) cli.print(`  (${hint})`);
+  for (const line of lines) cli.print(`\t${line}`);
 }
 
-function printStatus(cli: Cli, course: string, result: StatusResult, all: boolean): void {
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function printStatus(cli: Cli, repo: string, course: string, result: StatusResult, all: boolean): void {
   const { c } = cli;
+  cli.print(`On course ${course}, repo ${repo}`);
   if (result.adopted > 0) cli.print(c.dim(`adopted Canvas as the baseline for ${result.adopted} object(s)`));
   if (result.upgraded > 0) cli.print(c.dim(`upgraded the baseline of ${result.upgraded} object(s) to this edutools`));
   if (result.drafts.length > 0) cli.print(c.dim(`draft, not compared: ${result.drafts.join(", ")}`));
-  const shown = result.items
-    .filter((item) => all || item.state !== "in-sync")
-    .sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state));
-  if (shown.length === 0) {
-    cli.print(c.green(`\n✓ the repo and course ${course} are in sync: ${result.items.length} objects`));
-    return;
+
+  const count = (states: readonly StatusState[]): number =>
+    result.items.filter((item) => states.includes(item.state)).length;
+  const toPull = count(["canvas", "canvas-deleted"]);
+  const toPush = count(["repo", "new"]);
+  const both = count(["conflict"]);
+  const summary = [
+    toPull > 0 ? `${plural(toPull, "change", "changes")} to pull from Canvas` : "",
+    toPush > 0 ? `${plural(toPush, "change", "changes")} to push from the repo` : "",
+    both > 0 ? `${plural(both, "object", "objects")} changed on both sides` : "",
+  ].filter(Boolean);
+  if (summary.length > 0) cli.print(`${summary.join(", ")}.`);
+
+  for (const section of SECTIONS) {
+    if (section.states.includes("in-sync") && !all) continue;
+    const items = result.items.filter((item) => section.states.includes(item.state));
+    if (items.length === 0) continue;
+    const lines = items.map((item) => {
+      const published = section.states.includes("repo") && item.published === true ? c.dim(" [published]") : "";
+      return section.color(c, `${LABELS[item.state].padEnd(LABEL_WIDTH)}${item.key}`) + parts(item) + published;
+    });
+    printSection(cli, section.heading, section.hints(items, repo, course), lines);
   }
-  const style = (state: StatusState, text: string): string =>
-    state === "conflict" || state === "canvas-deleted"
-      ? c.red(text)
-      : state === "canvas" || state === "unknown"
-        ? c.yellow(text)
-        : state === "repo" || state === "new"
-          ? c.green(text)
-          : text;
-  printTable(
-    cli,
-    `Repo vs course ${course}`,
-    [{ name: "State" }, { name: "Object", style: c.cyan }, { name: "Changed" }, { name: "Published" }],
-    shown.map((item) => [
-      style(item.state, item.state),
-      item.key,
-      changes(item),
-      item.published === null ? "" : item.published ? "yes" : "no",
-    ]),
-  );
-  cli.print(`\n${pyRepr(counts(result.items))}`);
-  for (const state of ORDER) {
-    const advice = ADVICE[state];
-    if (advice && shown.some((item) => item.state === state)) cli.print(`  ${style(state, state)}: ${advice}`);
+
+  if (result.untracked.length > 0) {
+    const lines = result.untracked.map((d) => {
+      const ident = d.ident && d.ident !== d.title ? c.dim(` ${d.ident}`) : "";
+      return c.red(`${`${d.kind}:`.padEnd(LABEL_WIDTH)}${d.title}`) + ident;
+    });
+    printSection(
+      cli,
+      "Only in Canvas, not in the repo:",
+      ["write it into the repo to track it, or list it under [clean] keep in canvas.toml"],
+      lines,
+    );
+  }
+
+  const pending = result.items.some((item) => item.state !== "in-sync");
+  if (!pending) {
+    const objects = plural(result.items.length, "object", "objects");
+    cli.print(
+      result.untracked.length > 0
+        ? `\nnothing to push or pull in the ${objects} the repo tracks`
+        : c.green(`\nnothing to push or pull: the repo and course ${course} are in sync, ${objects}`),
+    );
   }
 }
 
@@ -95,11 +173,14 @@ export const register: Register = (program, cli) => {
   program
     .command("status")
     .description(
-      "Show which side changed since the repo and Canvas last agreed.\n\n" +
+      "Show what to pull from Canvas and what to push from the repo, like git status.\n\n" +
         "Every push records a baseline: a fingerprint of each part it wrote, from\n" +
         "the repo and from what Canvas stored. status fingerprints both sides again\n" +
         "and names the side that moved, part by part (body, settings, rubric,\n" +
-        "questions, module items). Reads Canvas, never writes it.\n\n" +
+        "questions, module items), grouped the way git status groups them: changed\n" +
+        "on both sides, changes in Canvas to pull into the repo, changes in the repo\n" +
+        "to push. It also lists what is only in Canvas: a page written in the editor,\n" +
+        "a quiz built by hand. Reads Canvas, never writes it.\n\n" +
         "A course pushed before baselines existed has none: --adopt records Canvas\n" +
         "as it is now as the baseline, and wherever the repo differs, the repo's\n" +
         "version counts as the change. It also marks a change copied from Canvas\n" +
@@ -107,16 +188,17 @@ export const register: Register = (program, cli) => {
         "only the manifest, never Canvas.\n\n" +
         "Exits 1 when anything changed in Canvas, conflicts, was deleted in Canvas,\n" +
         "or differs with no baseline: the states that need a decision before the\n" +
-        "next push.",
+        "next push. An object only in Canvas does not, since a quiz built by hand\n" +
+        "is expected.",
     )
     .argument("<repo>", "Course repository containing canvas.toml")
     .requiredOption("--course <id>", "Canvas course ID")
-    .option("--path <file>", "Only these repo files, exact or glob, repeatable; leaves modules out", collect)
+    .option("--path <file>", "Only these repo files, exact or glob, repeatable; leaves modules and Canvas-only objects out", collect)
     .option("--adopt", "Record the baseline where there is none, or where both sides changed and now agree")
     .option("--all", "List objects that are in sync too")
     .option(
       "--json",
-      "Emit {items: [{key, kind, title, state, repo, canvas, unknown, published, detail}], drafts, adopted, upgraded} as JSON",
+      "Emit {items: [{key, kind, title, state, repo, canvas, unknown, published, detail}], untracked: [{kind, ident, title, detail}], drafts, adopted, upgraded} as JSON",
     )
     .action(
       async (repo: string, options: { course: string; path?: string[]; adopt?: boolean; all?: boolean; json?: boolean }) => {
@@ -156,12 +238,13 @@ export const register: Register = (program, cli) => {
               published: item.published,
               detail: item.detail,
             })),
+            untracked: result.untracked.map((d) => ({ kind: d.kind, ident: d.ident, title: d.title, detail: d.detail })),
             drafts: result.drafts,
             adopted: result.adopted,
             upgraded: result.upgraded,
           });
         } else {
-          printStatus(cli, options.course, result, options.all ?? false);
+          printStatus(cli, repo, options.course, result, options.all ?? false);
         }
         if (attention) throw new CliExit(1);
       },

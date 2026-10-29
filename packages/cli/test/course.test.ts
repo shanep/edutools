@@ -355,7 +355,7 @@ describe("status", () => {
     const result = await invoke(["status", repo, "--course", "42", "--path", "index.md"], { client: canvas });
 
     expect(result.code, result.output).toBe(0);
-    expect(result.stdout).toContain("are in sync: 1 objects");
+    expect(result.stdout).toContain("are in sync, 1 object");
   });
 
   it("a difference with no baseline exits 1, and json lists every object", async () => {
@@ -380,6 +380,7 @@ describe("status", () => {
           detail: "",
         },
       ],
+      untracked: [],
       drafts: [],
       adopted: 0,
       upgraded: 0,
@@ -395,9 +396,26 @@ describe("status", () => {
 
     expect(result.code, result.output).toBe(0);
     expect(result.stdout).toContain("adopted Canvas as the baseline for 1 object(s)");
-    expect(result.stdout).toContain("changed in the repo: push to update Canvas");
+    expect(result.stdout).toContain("Changes in the repo to push to Canvas:");
+    expect(result.stdout).toContain(`use "edutools push ${repo} --course 42" to update Canvas`);
+    expect(result.stdout).toMatch(/\tmodified: +assignments\/p0\.md \(body, settings\)/);
     const manifest = JSON.parse(readFileSync(path.join(repo, ".canvas", "manifest-42.json"), "utf-8"));
     expect(manifest.entries["assignments/p0.md"].synced.canvas.body).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("groups like git status: Canvas changes to pull, repo changes to push, and what only Canvas has", async () => {
+    writeManifest(repo, { "assignments/p0.md": P0 });
+    canvas.getAssignmentFull.mockResolvedValue({ name: "P0", description: "<p>Older text.</p>" });
+    canvas.listPages.mockResolvedValue([{ url: "notes", title: "Notes", published: false }]);
+    const result = await invoke(["status", repo, "--course", "42"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain(`On course 42, repo ${repo}`);
+    expect(result.stdout).toContain("Differs, with no baseline to say which side moved:");
+    expect(result.stdout).toContain("Changes in the repo to push to Canvas:");
+    expect(result.stdout).toMatch(/\tnew: +index\.md/);
+    expect(result.stdout).toContain("Only in Canvas, not in the repo:");
+    expect(result.stdout).toMatch(/\tpage: +Notes notes/);
   });
 
   it("a path that matches nothing exits 1 and lists what exists", async () => {

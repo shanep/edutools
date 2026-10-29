@@ -469,10 +469,10 @@ earlier versions wrote, so a site that commits it sees no churn.
 The repo is not the only place a course changes. A typo gets fixed in the Canvas
 editor during class, a due date gets moved for a snow day, a rubric row gets
 reworded in SpeedGrader. `verify` sees that the two sides differ but cannot say
-which one moved, so `status` answers that:
+which one moved, so `status` answers that, the way `git status` does:
 
 ```bash
-edutools status ./cs121 --course 12345            # what changed, and on which side
+edutools status ./cs121 --course 12345            # what to pull from Canvas, and what to push
 edutools status ./cs121 --course 12345 --all      # list the objects in sync too
 edutools status ./cs121 --course 12345 --json     # the same, for scripts
 ```
@@ -486,6 +486,34 @@ compares each one with its own baseline, never with the other side, so Canvas
 rewriting markup on save is not a change. A part is only compared when the repo
 manages it: a rubric attached by hand to an assignment with no `## Rubric`
 table belongs to Canvas, and a push never touches it.
+
+It prints the changes in groups, each with a hint for what to run next:
+
+```
+On course 12345, repo ./cs121
+1 change to pull from Canvas, 2 changes to push from the repo.
+
+Changes in Canvas to pull into the repo:
+  (use "edutools diff ./cs121 --course 12345 --path <file>" to see what changed)
+  (copy it into the repo, then run "edutools status ./cs121 --course 12345 --adopt"; a push overwrites it)
+	modified:       pages/syllabus.md (settings)
+
+Changes in the repo to push to Canvas:
+  (use "edutools push ./cs121 --course 12345" to update Canvas)
+	modified:       assignments/p1.md (body)
+	new:            pages/week-3.md
+
+Only in Canvas, not in the repo:
+  (write it into the repo to track it, or list it under [clean] keep in canvas.toml)
+	quiz:           Midterm Exam 77
+```
+
+The groups, in order, are changed on both sides, changes in Canvas to pull,
+changes in the repo to push, differences with no baseline, files gone from the
+repo, and objects only in Canvas. The last one is what `audit` calls untracked:
+a page written in the Canvas editor, a quiz built by hand, a file uploaded from
+a laptop. It leaves out a module's native items and anything under `[clean]
+keep`, since canvas.toml already says those belong to Canvas.
 
 Each object lands in one state:
 
@@ -502,7 +530,9 @@ Each object lands in one state:
 
 `status` exits 1 for `canvas`, `conflict`, `unknown` and `canvas-deleted`, since
 each needs a decision before the next push. A repo that is only ahead of Canvas
-exits 0. `--path` limits it to some repo files (modules are left out then).
+exits 0, and so does an object only in Canvas, since a hand-built exam quiz is
+expected. `--path` limits it to some repo files, and leaves out modules and
+objects only in Canvas, which take reading the whole course.
 
 `status` only reads Canvas. `--adopt` writes the manifest, and nothing else:
 
@@ -520,8 +550,9 @@ same in Canvas: a changed link target does not show up in the comparison, so it
 stays a push to make.
 
 `--json` prints
-`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted", "upgraded"}`,
-where `repo`, `canvas` and `unknown` list the parts each side changed. `upgraded`
+`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "untracked": [{"kind", "ident", "title", "detail"}], "drafts", "adopted", "upgraded"}`,
+where `repo`, `canvas` and `unknown` list the parts each side changed and
+`untracked` lists the objects only in Canvas. `upgraded`
 counts baselines `status` rewrote, without `--adopt`, because edutools now reads
 Canvas a little differently. Commit the manifest after it does. A module's
 key is `[[module]] <name>`, as in `verify`.

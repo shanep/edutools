@@ -227,6 +227,9 @@ export interface CourseDifferences {
   readonly declared: DeclaredModule[];
   /** The parsed canvas.toml. */
   readonly raw: Payload;
+  /** The course's modules as Canvas lists them, and each one's items by module id. */
+  readonly modules: Payload[];
+  readonly moduleItems: Record<string, Payload[]>;
 }
 
 /**
@@ -270,7 +273,7 @@ export async function readDifferences(
     ...auditObjects(manifest, live, drafts),
     ...auditModules(declared, modules, items, manifest),
   ];
-  return { differences, declared, raw };
+  return { differences, declared, raw, modules: stored, moduleItems: items };
 }
 
 // ============================================================================
@@ -853,12 +856,19 @@ export interface StatusOptions extends AuditOptions {
    * edit copied into the repo by hand. Writes only the manifest, never Canvas.
    */
   readonly adopt?: boolean;
-  /** Limit to these repo files, exact or glob. Modules are left out. */
+  /** Limit to these repo files, exact or glob. Modules and untracked objects are left out. */
   readonly paths?: readonly string[];
 }
 
 export interface StatusResult {
   readonly items: readonly StatusItem[];
+  /**
+   * What Canvas has that no repo file produced: a page written in the editor, a
+   * quiz built by hand, a file uploaded from a laptop. Leaves out what canvas.toml
+   * names on purpose, a [[module]]'s native items and `[clean] keep`. Empty
+   * under `paths`, since it takes reading the whole course.
+   */
+  readonly untracked: readonly Difference[];
   /** Repo files marked `draft: true`, not compared. */
   readonly drafts: readonly string[];
   /** Objects and modules `adopt` recorded a baseline for. */
@@ -976,11 +986,24 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
     );
   }
 
-  if (patterns.length === 0 && publisher.moduleTables().length > 0) {
+  let untracked: Difference[] = [];
+  if (patterns.length === 0) {
+    // The audit's inventory reads every module's items, so the module
+    // comparison below reuses them rather than asking Canvas twice.
+    const read = await readDifferences(canvas, publisher, options);
+    let keep: Set<string>;
+    try {
+      keep = cleanKeep(read.raw, read.declared);
+    } catch (error) {
+      if (error instanceof ValueError) throw new CourseError(error.message);
+      throw error;
+    }
+    untracked = read.differences.filter((d) => d.side === "untracked" && !keep.has(kindIdent(d.kind, d.ident)));
+
     options.progress?.({ message: "Comparing modules" });
-    for (const module of publisher.expectedModules(await canvas.listModules(courseId))) {
+    for (const module of publisher.expectedModules(read.modules)) {
       const key = `[[module]] ${module.name}`;
-      const live = await canvas.listModuleItems(courseId, String(module.stored.id));
+      const live = read.moduleItems[String(module.stored.id)] ?? [];
       const sides = moduleSides(module, live, key);
       let baseline: Baseline | null = manifest.modules.get(key) ?? null;
       if (options.adopt) {
@@ -1004,7 +1027,7 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
   }
 
   if (adopted > 0 || upgrades > 0) manifest.save();
-  return { items, drafts: [...drafts].sort(compare), adopted, upgraded: upgrades };
+  return { items, untracked, drafts: [...drafts].sort(compare), adopted, upgraded: upgrades };
 }
 
 // ============================================================================

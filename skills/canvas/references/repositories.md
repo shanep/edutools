@@ -181,12 +181,16 @@ The repo is the source for a course, but Canvas gets edited too: a typo fixed in
 the Canvas editor during class, a due date moved for a snow day, a rubric row
 reworded in SpeedGrader. `verify` sees that the two sides differ but not which
 one moved. `status` answers that, so a change made in Canvas can come back into
-the repo instead of being overwritten by the next push.
+the repo instead of being overwritten by the next push. It reads like `git
+status`: changed on both sides, then changes in Canvas to pull, changes in the
+repo to push, differences with no baseline, files gone from the repo, and last,
+objects only in Canvas (a page written in the editor, a quiz built by hand).
+Modules' native items and `[clean] keep` are left out of that last group.
 
 ```bash
 edutools status <repo> --course <id>               # what changed, and on which side
-edutools status <repo> --course <id> --json        # the same, to parse
-edutools status <repo> --course <id> --path <file> # some repo files only; repeatable, glob ok
+edutools status <repo> --course <id> --json        # the same, to parse; adds "untracked": [{kind, ident, title, detail}]
+edutools status <repo> --course <id> --path <file> # some repo files only; repeatable, glob ok; no modules or untracked
 edutools status <repo> --course <id> --adopt       # record a baseline (see below); writes the manifest only
 ```
 
@@ -223,6 +227,11 @@ Each row also names the parts that moved (`repo: body, settings`), which says
 where to look. To see what Canvas holds now, read the object (`assignments`,
 `modules`, `discussion` with `--json`) or `pull` the course, and compare it
 with the markdown.
+
+An object only in Canvas (`untracked` in `--json`) does not change the exit
+status. Show it to the user and ask: write it into the repo so the next push
+tracks it, or list it under `[clean] keep` so `status` stops naming it. Never
+delete it to make the list shorter.
 
 **`--adopt`** writes the manifest and never Canvas. It does two things:
 
