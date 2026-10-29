@@ -382,6 +382,7 @@ describe("status", () => {
       ],
       drafts: [],
       adopted: 0,
+      upgraded: 0,
     });
   });
 

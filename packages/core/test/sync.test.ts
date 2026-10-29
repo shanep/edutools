@@ -9,9 +9,11 @@ import {
   canvasHtml,
   compareSides,
   fingerprint,
+  legacyCanvasHtml,
   minute,
   plainCriteria,
   type Sides,
+  upgradeBaseline,
 } from "@edutools/core/sync";
 import { describe, expect, it } from "vitest";
 
@@ -34,6 +36,9 @@ describe("fingerprint", () => {
       '<p><a href="/courses/1/files/2?verifier=abc123&amp;wrap=1" data-api-endpoint="x" data-api-returntype="File">f</a></p>\n  <p>x</p>';
     const read = '<p><a href="/courses/1/files/2?wrap=1">f</a></p><p>x</p>';
     expect(canvasHtml(saved)).toBe(canvasHtml(read));
+    expect(canvasHtml('<img src="/courses/1/files/2/preview?verifier=a1b2c3d4-fd80-4df6-874b-0046d1ad8c03">')).toBe(
+      canvasHtml('<img src="/courses/1/files/2/preview">'),
+    );
     expect(canvasHtml("<p>x</p>")).not.toBe(canvasHtml("<p>y</p>"));
   });
 
@@ -138,5 +143,32 @@ describe("recording a baseline", () => {
       canvas: { body: "c1" },
       at: "later",
     });
+  });
+});
+
+describe("upgradeBaseline", () => {
+  const dashed = '<img src="/courses/1/files/2/preview?verifier=a1b2c3d4-fd80-4df6-874b-0046d1ad8c03">';
+
+  it("the old normalization left half a dashed verifier behind", () => {
+    expect(legacyCanvasHtml(dashed)).not.toBe(canvasHtml(dashed));
+  });
+
+  it("swaps a baseline the old normalization took, and only that", () => {
+    const old = fingerprint(legacyCanvasHtml(dashed));
+    const now = fingerprint(canvasHtml(dashed));
+    const baseline: Baseline = { repo: { body: "r1" }, canvas: { body: old, settings: "cs" }, at: AT };
+    const read: Sides = { repo: { body: "r1" }, canvas: { body: now, settings: "cs" }, matches: {}, legacy: { body: old } };
+    expect(compareSides(baseline, read).state).toBe("canvas");
+    const next = upgradeBaseline(baseline, read);
+    expect(next).toEqual({ repo: { body: "r1" }, canvas: { body: now, settings: "cs" }, at: AT });
+    expect(next && compareSides(next, read).state).toBe("in-sync");
+  });
+
+  it("leaves a real Canvas edit, and a baseline already upgraded, alone", () => {
+    const edited: Sides = { repo: { body: "r1" }, canvas: { body: "c2" }, matches: {}, legacy: { body: "c2-old" } };
+    expect(upgradeBaseline({ repo: { body: "r1" }, canvas: { body: "c1" }, at: AT }, edited)).toBeNull();
+    const current: Sides = { repo: { body: "r1" }, canvas: { body: "c1" }, matches: {}, legacy: { body: "c1-old" } };
+    expect(upgradeBaseline({ repo: { body: "r1" }, canvas: { body: "c1" }, at: AT }, current)).toBeNull();
+    expect(upgradeBaseline(null, current)).toBeNull();
   });
 });

@@ -520,8 +520,10 @@ same in Canvas: a changed link target does not show up in the comparison, so it
 stays a push to make.
 
 `--json` prints
-`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted"}`,
-where `repo`, `canvas` and `unknown` list the parts each side changed. A module's
+`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted", "upgraded"}`,
+where `repo`, `canvas` and `unknown` list the parts each side changed. `upgraded`
+counts baselines `status` rewrote, without `--adopt`, because edutools now reads
+Canvas a little differently. Commit the manifest after it does. A module's
 key is `[[module]] <name>`, as in `verify`.
 
 What `status` does not cover yet: assignment group weights, a module's published

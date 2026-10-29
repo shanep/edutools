@@ -56,6 +56,7 @@ function counts(items: readonly StatusItem[]): Record<string, number> {
 function printStatus(cli: Cli, course: string, result: StatusResult, all: boolean): void {
   const { c } = cli;
   if (result.adopted > 0) cli.print(c.dim(`adopted Canvas as the baseline for ${result.adopted} object(s)`));
+  if (result.upgraded > 0) cli.print(c.dim(`upgraded the baseline of ${result.upgraded} object(s) to this edutools`));
   if (result.drafts.length > 0) cli.print(c.dim(`draft, not compared: ${result.drafts.join(", ")}`));
   const shown = result.items
     .filter((item) => all || item.state !== "in-sync")
@@ -115,7 +116,7 @@ export const register: Register = (program, cli) => {
     .option("--all", "List objects that are in sync too")
     .option(
       "--json",
-      "Emit {items: [{key, kind, title, state, repo, canvas, unknown, published, detail}], drafts, adopted} as JSON",
+      "Emit {items: [{key, kind, title, state, repo, canvas, unknown, published, detail}], drafts, adopted, upgraded} as JSON",
     )
     .action(
       async (repo: string, options: { course: string; path?: string[]; adopt?: boolean; all?: boolean; json?: boolean }) => {
@@ -157,6 +158,7 @@ export const register: Register = (program, cli) => {
             })),
             drafts: result.drafts,
             adopted: result.adopted,
+            upgraded: result.upgraded,
           });
         } else {
           printStatus(cli, options.course, result, options.all ?? false);

@@ -74,11 +74,13 @@ import {
   type Fingerprints,
   fingerprint,
   fingerprintBytes,
+  legacyCanvasHtml,
   type Matches,
   minute,
   plainCriteria,
   type Sides,
   type SyncState,
+  upgradeBaseline,
 } from "./sync";
 import type { Payload } from "./types";
 import {
@@ -755,9 +757,11 @@ async function readSides(canvas: CourseCanvas, publisher: Publisher, plan: Plan,
   const read = await readStored(canvas, courseId, entry);
   if (read === null) return null;
   const { stored, body } = read;
+  const legacy: Fingerprints = {};
   seen.body = fingerprint(canvasHtml(body));
+  legacy.body = fingerprint(legacyCanvasHtml(body));
   matches.body = checkBody(plan.key, intended, body).length === 0;
-  if (entry.kind === "syllabus") return { sides: { repo, canvas: seen, matches }, published: null };
+  if (entry.kind === "syllabus") return { sides: { repo, canvas: seen, matches, legacy }, published: null };
 
   // A graded discussion or quiz keeps its points, dates and rubric on its
   // assignment, as verify reads them.
@@ -798,10 +802,11 @@ async function readSides(canvas: CourseCanvas, publisher: Publisher, plan: Plan,
     const live = await canvas.listQuizQuestions(courseId, entry.canvasId);
     repo.questions = fingerprint(questions);
     seen.questions = fingerprint(canvasQuestions(live));
+    legacy.questions = fingerprint(canvasQuestions(live, legacyCanvasHtml));
     matches.questions = live.length === questions.length;
   }
 
-  return { sides: { repo, canvas: seen, matches }, published: Boolean(stored.published) };
+  return { sides: { repo, canvas: seen, matches, legacy }, published: Boolean(stored.published) };
 }
 
 /** A [[module]]'s two sides: the items canvas.toml lists, and the items the module holds. */
@@ -858,6 +863,11 @@ export interface StatusResult {
   readonly drafts: readonly string[];
   /** Objects and modules `adopt` recorded a baseline for. */
   readonly adopted: number;
+  /**
+   * Baselines rewritten because edutools now reads Canvas a little
+   * differently (see upgradeBaseline). Saved even without `adopt`.
+   */
+  readonly upgraded: number;
 }
 
 /** The states that need a person to decide something before the next push. */
@@ -916,6 +926,7 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
   const at = new Date().toISOString();
   const items: StatusItem[] = [];
   let adopted = 0;
+  let upgrades = 0;
   let done = 0;
   for (const key of keys) {
     options.progress?.({ message: `Comparing ${key}`, done, total: keys.length });
@@ -941,6 +952,11 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
     if (read === null) {
       items.push(statusItem(key, entry.kind, entry.title, "canvas-deleted"));
       continue;
+    }
+    const upgraded = upgradeBaseline(entry.synced, read.sides);
+    if (upgraded !== null) {
+      entry.synced = upgraded;
+      upgrades += 1;
     }
     if (options.adopt) {
       const next = adopt(entry.synced, read.sides, at);
@@ -987,8 +1003,8 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
     }
   }
 
-  if (adopted > 0) manifest.save();
-  return { items, drafts: [...drafts].sort(compare), adopted };
+  if (adopted > 0 || upgrades > 0) manifest.save();
+  return { items, drafts: [...drafts].sort(compare), adopted, upgraded: upgrades };
 }
 
 // ============================================================================
@@ -1076,7 +1092,7 @@ async function recordBaseline(canvas: CourseCanvas, publisher: Publisher, plans:
     if (entry === null || plan === undefined) continue;
     const read = await readSides(canvas, publisher, plan, entry);
     if (read === null) continue;
-    entry.synced = afterPush(entry.synced, read.sides, parts, at);
+    entry.synced = afterPush(upgradeBaseline(entry.synced, read.sides) ?? entry.synced, read.sides, parts, at);
     recorded += 1;
   }
   const modules = [...publisher.written.keys()].filter((key) => key.startsWith("[[module]] "));

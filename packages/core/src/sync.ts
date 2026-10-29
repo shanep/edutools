@@ -48,6 +48,11 @@ export interface Sides {
   readonly repo: Fingerprints;
   readonly canvas: Fingerprints;
   readonly matches: Matches;
+  /**
+   * Canvas's side as an older edutools fingerprinted it, for the parts whose
+   * normalization has changed since. See upgradeBaseline.
+   */
+  readonly legacy?: Fingerprints;
 }
 
 function isTable(value: unknown): value is Record<string, unknown> {
@@ -88,14 +93,26 @@ export function fingerprintBytes(bytes: Uint8Array): string {
  * HTML as Canvas stored it, minus what Canvas adds or varies on its own.
  *
  * Canvas stamps data-api-* attributes on links when it saves a body, and can
- * hand back file links carrying a per-request verifier. Neither is an edit,
- * so neither may move the fingerprint.
+ * hand back file links carrying a per-request verifier, a UUID with dashes.
+ * Neither is an edit, so neither may move the fingerprint.
  */
 export function canvasHtml(html: string): string {
+  return normalized(html, "[A-Za-z0-9-]+");
+}
+
+/**
+ * canvasHtml as edutools first wrote it, which stopped a verifier at its first
+ * dash. Only upgradeBaseline needs it, to recognize a baseline taken that way.
+ */
+export function legacyCanvasHtml(html: string): string {
+  return normalized(html, "[A-Za-z0-9]+");
+}
+
+function normalized(html: string, verifier: string): string {
   let out = html;
   for (const attr of CANVAS_ADDED_ATTRS) out = out.replace(new RegExp(`\\s${attr}="[^"]*"`, "g"), "");
-  out = out.replace(/\?verifier=[A-Za-z0-9]+&(amp;)?/g, "?");
-  out = out.replace(/(\?|&(amp;)?)verifier=[A-Za-z0-9]+/g, "");
+  out = out.replace(new RegExp(`\\?verifier=${verifier}&(amp;)?`, "g"), "?");
+  out = out.replace(new RegExp(`(\\?|&(amp;)?)verifier=${verifier}`, "g"), "");
   return out.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim();
 }
 
@@ -132,15 +149,15 @@ export function plainCriteria(criteria: readonly Criterion[]): Criterion[] {
 }
 
 /** The parts of a quiz question a Canvas edit would change. */
-export function canvasQuestions(questions: readonly Payload[]): unknown[] {
+export function canvasQuestions(questions: readonly Payload[], html: (html: string) => string = canvasHtml): unknown[] {
   return questions.map((q) => ({
     name: q.question_name ?? null,
     type: q.question_type ?? null,
-    text: typeof q.question_text === "string" ? canvasHtml(q.question_text) : null,
+    text: typeof q.question_text === "string" ? html(q.question_text) : null,
     points: q.points_possible ?? null,
     answers: (Array.isArray(q.answers) ? q.answers : []).filter(isTable).map((a) => ({
       text: a.text ?? a.answer_text ?? null,
-      html: typeof a.html === "string" ? canvasHtml(a.html) : null,
+      html: typeof a.html === "string" ? html(a.html) : null,
       weight: a.weight ?? a.answer_weight ?? null,
     })),
   }));
@@ -273,4 +290,25 @@ export function adopt(previous: Baseline | null, sides: Sides, at: string): Base
     }
   }
   return changed ? { repo, canvas, at } : null;
+}
+
+/**
+ * The baseline with each Canvas fingerprint an older normalization took
+ * swapped for today's, so a change in how edutools reads Canvas never looks
+ * like a change in Canvas. A part is swapped only when its baseline is exactly
+ * what the old normalization gives for Canvas now, which means Canvas has not
+ * moved. Returns null when there is nothing to swap.
+ */
+export function upgradeBaseline(baseline: Baseline | null, sides: Sides): Baseline | null {
+  if (baseline === null || sides.legacy === undefined) return null;
+  const canvas: Fingerprints = { ...baseline.canvas };
+  let changed = false;
+  for (const part of COMPONENTS) {
+    const old = sides.legacy[part];
+    const now = sides.canvas[part];
+    if (old === undefined || now === undefined || old === now || canvas[part] !== old) continue;
+    canvas[part] = now;
+    changed = true;
+  }
+  return changed ? { ...baseline, canvas } : null;
 }

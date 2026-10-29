@@ -262,12 +262,14 @@ changed in Canvas comes back as edits to its `[[module]]` table.
 **Exit codes and JSON.** `status` exits 1 for `canvas`, `conflict`, `unknown` and
 `canvas-deleted`, the states that need a decision before the next push, and 0
 when the repo is only ahead. With `--json` it prints
-`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted"}`
+`{"items": [{"key", "kind", "title", "state", "repo", "canvas", "unknown", "published", "detail"}], "drafts", "adopted", "upgraded"}`
 for every object, in sync or not; `repo`, `canvas` and `unknown` list the parts,
 `published` is null for the syllabus and files (for a module it is the module's
 own flag), and `detail` says why an object could not be compared. `--path` leaves
 modules out. Without `--json` it lists only what is not in sync (`--all` lists
-everything).
+everything). `upgraded` counts baselines rewritten because edutools now reads
+Canvas a little differently; that is not a Canvas edit, and the manifest
+changes it makes are worth committing.
 
 **What it does not cover:** assignment group weights, a module's published
 state, and whether an object is published at all, since publishing is a decision
