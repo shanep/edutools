@@ -12,6 +12,7 @@ import {
   CourseError,
   type CourseCanvas,
   courseDates,
+  courseDiff,
   courseStatus,
   courseOutline,
   executeClean,
@@ -698,6 +699,61 @@ describe("status", () => {
     canvas.listModuleItems.mockResolvedValue([{ id: "1", type: "SubHeader", title: "Added by hand", position: 1 }]);
     result = await courseStatus(canvas, { repo, courseId: COURSE });
     expect(result.items.find((item) => item.key === key)).toMatchObject({ state: "conflict", canvas: ["items"] });
+  });
+});
+
+describe("diff", () => {
+  const WELCOME = { kind: "page", canvas_id: "welcome", page_url: "welcome", title: "Welcome", extra: {} };
+
+  it("an edit in Canvas is a + line, and the repo's line is the - line", async () => {
+    writeManifest(repo, { "pages/welcome.md": WELCOME });
+    canvas.getPage.mockResolvedValue({ title: "Welcome", body: "<p>Hello, edited in Canvas.</p>" });
+    const result = await courseDiff(canvas, { repo, courseId: COURSE, paths: ["pages/*.md"] });
+
+    expect(canvas.getPage).toHaveBeenCalledWith(COURSE, "welcome");
+    expect(result.compared).toBe(1);
+    expect(result.items).toEqual([
+      {
+        key: "pages/welcome.md",
+        kind: "page",
+        title: "Welcome",
+        canvasTitle: "Welcome",
+        hunks: [
+          {
+            repoStart: 1,
+            repoCount: 1,
+            canvasStart: 1,
+            canvasCount: 1,
+            lines: [
+              { op: "-", text: "Hello." },
+              { op: "+", text: "Hello, edited in Canvas." },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("agreeing bodies are left out, a renamed title is not, and the markup view sees a style", async () => {
+    writeManifest(repo, { "pages/welcome.md": WELCOME });
+    canvas.getPage.mockResolvedValue({ title: "Welcome!", body: '<p style="color: red">Hello.</p>' });
+    const text = await courseDiff(canvas, { repo, courseId: COURSE, paths: ["pages/welcome.md"] });
+    expect(text.items).toMatchObject([{ title: "Welcome", canvasTitle: "Welcome!", hunks: [] }]);
+
+    canvas.getPage.mockResolvedValue({ title: "Welcome", body: '<p style="color: red">Hello.</p>' });
+    const markup = await courseDiff(canvas, { repo, courseId: COURSE, paths: ["pages/welcome.md"], markup: true });
+    expect(markup.items[0]?.hunks[0]?.lines.filter((line) => line.op !== " ")).toEqual([
+      { op: "-", text: "<p>" },
+      { op: "+", text: '<p style="color: red">' },
+    ]);
+  });
+
+  it("an object never pushed, or gone from Canvas, is listed as missing", async () => {
+    writeManifest(repo, { "pages/welcome.md": WELCOME });
+    canvas.getPage.mockRejectedValue(new CanvasApiError(404, "not found"));
+    const result = await courseDiff(canvas, { repo, courseId: COURSE, paths: ["pages/welcome.md", "assignments/p0.md"] });
+
+    expect(result).toEqual({ items: [], compared: 0, missing: ["assignments/p0.md", "pages/welcome.md"] });
   });
 });
 

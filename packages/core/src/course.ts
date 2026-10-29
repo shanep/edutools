@@ -39,14 +39,15 @@ import {
 import { CanvasApiError, type CanvasLMS } from "./canvas";
 import {
   compute,
+  crossCheckSyllabus,
   type DateConfig,
   DateConfigError,
   type ItemDates,
   isoformat,
   loadConfig,
-  crossCheckSyllabus,
   validate,
 } from "./dates";
+import { type Hunk, hunks, lineDiff, markupLines, textLines } from "./diff";
 import { pyRepr } from "./objects";
 import { type OutlineModule, outline } from "./outline";
 import { fnmatch } from "./paths";
@@ -70,9 +71,9 @@ import {
   canvasHtml,
   canvasQuestions,
   compareSides,
+  type Fingerprints,
   fingerprint,
   fingerprintBytes,
-  type Fingerprints,
   type Matches,
   minute,
   plainCriteria,
@@ -94,8 +95,8 @@ import {
   checkQuizQuestions,
   type Failure,
   type Intent,
-  type OverrideNote,
   knownLinkTargets,
+  type OverrideNote,
   slotIdent,
 } from "./verify";
 
@@ -688,6 +689,37 @@ function dated(points: unknown, dueAt: unknown, unlockAt: unknown, lockAt: unkno
   return { points: points ?? null, due: minute(dueAt), unlock: minute(unlockAt), lock: minute(lockAt) };
 }
 
+/** A tracked object as Canvas stores it, and its body. Null when Canvas no longer has it, or for a file. */
+async function readStored(canvas: CourseCanvas, courseId: string, entry: Entry): Promise<{ stored: Payload; body: string } | null> {
+  let stored: Payload | null;
+  let body: string;
+  switch (entry.kind) {
+    case "syllabus":
+      stored = await orMissing(canvas.getJson(`/api/v1/courses/${courseId}`, { "include[]": "syllabus_body" }));
+      body = text(stored?.syllabus_body);
+      break;
+    case "page":
+      stored = await orMissing(canvas.getPage(courseId, entry.pageUrl));
+      body = text(stored?.body);
+      break;
+    case "assignment":
+      stored = await orMissing(canvas.getAssignmentFull(courseId, entry.canvasId));
+      body = text(stored?.description);
+      break;
+    case "discussion":
+      stored = await orMissing(canvas.getDiscussion(courseId, entry.canvasId));
+      body = text(stored?.message);
+      break;
+    case "quiz":
+      stored = await orMissing(canvas.getQuiz(courseId, entry.canvasId));
+      body = text(stored?.description);
+      break;
+    default:
+      return null;
+  }
+  return stored === null ? null : { stored, body };
+}
+
 /**
  * Read one tracked object from both sides: the repo rendered as a push would
  * send it, and Canvas as it stores it. Null when Canvas no longer has it.
@@ -720,33 +752,9 @@ async function readSides(canvas: CourseCanvas, publisher: Publisher, plan: Plan,
   const [intended] = rewriteLinks(html, source, publisher.repo, publisher.manifest, courseId);
   repo.body = fingerprint(intended);
 
-  let stored: Payload | null;
-  let body: string;
-  switch (entry.kind) {
-    case "syllabus":
-      stored = await orMissing(canvas.getJson(`/api/v1/courses/${courseId}`, { "include[]": "syllabus_body" }));
-      body = text(stored?.syllabus_body);
-      break;
-    case "page":
-      stored = await orMissing(canvas.getPage(courseId, entry.pageUrl));
-      body = text(stored?.body);
-      break;
-    case "assignment":
-      stored = await orMissing(canvas.getAssignmentFull(courseId, entry.canvasId));
-      body = text(stored?.description);
-      break;
-    case "discussion":
-      stored = await orMissing(canvas.getDiscussion(courseId, entry.canvasId));
-      body = text(stored?.message);
-      break;
-    case "quiz":
-      stored = await orMissing(canvas.getQuiz(courseId, entry.canvasId));
-      body = text(stored?.description);
-      break;
-    default:
-      return null;
-  }
-  if (stored === null) return null;
+  const read = await readStored(canvas, courseId, entry);
+  if (read === null) return null;
+  const { stored, body } = read;
   seen.body = fingerprint(canvasHtml(body));
   matches.body = checkBody(plan.key, intended, body).length === 0;
   if (entry.kind === "syllabus") return { sides: { repo, canvas: seen, matches }, published: null };
@@ -866,20 +874,15 @@ function statusItem(
 }
 
 /**
- * Which side has moved since the repo and Canvas last agreed, for every object
- * the repo publishes and every [[module]].
- *
- * Reads Canvas, never writes it. With `adopt` it writes the manifest: the
- * baseline for a course whose objects were pushed, or adopted, before
- * baselines existed.
+ * Every repo file and manifest entry status and diff look at, drafts left out,
+ * narrowed to `patterns` when there are any.
  */
-export async function courseStatus(canvas: CourseCanvas, options: StatusOptions): Promise<StatusResult> {
-  const courseId = options.courseId;
-  const publisher = openRepo(options.repo, courseId, canvas, { report: () => {} });
-  const plans = planOf(publisher);
+function trackedKeys(
+  publisher: Publisher,
+  patterns: readonly string[],
+): { byKey: Map<string, Plan>; drafts: Set<string>; keys: string[] } {
   const manifest = publisher.manifest;
-  const patterns = options.paths ?? [];
-  const byKey = new Map(plans.map((p) => [p.key, p]));
+  const byKey = new Map(planOf(publisher).map((p) => [p.key, p]));
   const drafts = new Set(publisher.drafts);
   for (const key of manifest.entries.keys()) if (publisher.isDraftKey(key)) drafts.add(key);
 
@@ -892,6 +895,23 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
     keys = keys.filter((key) => chosen.has(key));
   }
   keys.sort(compare);
+  return { byKey, drafts, keys };
+}
+
+/**
+ * Which side has moved since the repo and Canvas last agreed, for every object
+ * the repo publishes and every [[module]].
+ *
+ * Reads Canvas, never writes it. With `adopt` it writes the manifest: the
+ * baseline for a course whose objects were pushed, or adopted, before
+ * baselines existed.
+ */
+export async function courseStatus(canvas: CourseCanvas, options: StatusOptions): Promise<StatusResult> {
+  const courseId = options.courseId;
+  const publisher = openRepo(options.repo, courseId, canvas, { report: () => {} });
+  const manifest = publisher.manifest;
+  const patterns = options.paths ?? [];
+  const { byKey, drafts, keys } = trackedKeys(publisher, patterns);
 
   const at = new Date().toISOString();
   const items: StatusItem[] = [];
@@ -969,6 +989,77 @@ export async function courseStatus(canvas: CourseCanvas, options: StatusOptions)
 
   if (adopted > 0) manifest.save();
   return { items, drafts: [...drafts].sort(compare), adopted };
+}
+
+// ============================================================================
+// diff: what differs between the repo and Canvas, line by line
+// ============================================================================
+
+export interface DiffItem {
+  readonly key: string;
+  readonly kind: string;
+  /** The title the repo gives it, and the one Canvas has. */
+  readonly title: string;
+  readonly canvasTitle: string;
+  /** The body's changed stretches, repo side first; empty when the bodies agree. */
+  readonly hunks: readonly Hunk[];
+}
+
+export interface DiffOptions extends AuditOptions {
+  /** Limit to these repo files, exact or glob. */
+  readonly paths?: readonly string[];
+  /** Diff the markup, a tag per line, instead of the readable text. */
+  readonly markup?: boolean;
+  /** Unchanged lines shown around each change. */
+  readonly context?: number;
+}
+
+export interface DiffResult {
+  /** The objects whose title or body differ, in repo order. */
+  readonly items: readonly DiffItem[];
+  /** How many objects were compared. */
+  readonly compared: number;
+  /** Repo files with nothing in Canvas to compare against: never pushed, or deleted in Canvas. */
+  readonly missing: readonly string[];
+}
+
+/**
+ * The body and title of every object the repo publishes, the repo's rendering
+ * against what Canvas stores, as line diffs. Files and modules are left out.
+ * Reads Canvas, never writes it.
+ */
+export async function courseDiff(canvas: CourseCanvas, options: DiffOptions): Promise<DiffResult> {
+  const courseId = options.courseId;
+  const publisher = openRepo(options.repo, courseId, canvas, { report: () => {} });
+  const { byKey, keys } = trackedKeys(publisher, options.paths ?? []);
+  const lines = options.markup ? markupLines : textLines;
+
+  const items: DiffItem[] = [];
+  const missing: string[] = [];
+  let compared = 0;
+  let done = 0;
+  for (const key of keys) {
+    options.progress?.({ message: `Comparing ${key}`, done, total: keys.length });
+    done += 1;
+    const plan = byKey.get(key);
+    const entry = publisher.manifest.get(key);
+    if (plan === undefined || plan.source === null || plan.kind === "file") continue;
+    const read = entry === null || entry.kind === "file" ? null : await readStored(canvas, courseId, entry);
+    if (read === null) {
+      missing.push(key);
+      continue;
+    }
+    compared += 1;
+    const [title, html] = publisher.render(plan.source);
+    const [intended] = rewriteLinks(html, plan.source, publisher.repo, publisher.manifest, courseId);
+    const wantTitle = title || plan.title;
+    const canvasTitle = entry?.kind === "syllabus" ? wantTitle : text(read.stored.title || read.stored.name);
+    const changed = hunks(lineDiff(lines(intended), lines(read.body)), options.context ?? 3);
+    if (changed.length > 0 || canvasTitle !== wantTitle) {
+      items.push({ key, kind: plan.kind, title: wantTitle, canvasTitle, hunks: changed });
+    }
+  }
+  return { items, compared, missing };
 }
 
 /**

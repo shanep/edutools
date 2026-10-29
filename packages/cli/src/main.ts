@@ -29,10 +29,11 @@ import { register as check } from "./commands/check";
 import { register as courses } from "./commands/courses";
 import { register as create } from "./commands/create";
 import { register as dates } from "./commands/dates";
-import { register as discussion } from "./commands/discussion";
-import { register as drive } from "./commands/drive";
 import { register as deleteCommand } from "./commands/delete";
+import { register as diff } from "./commands/diff";
+import { register as discussion } from "./commands/discussion";
 import { register as download } from "./commands/download";
+import { register as drive } from "./commands/drive";
 import { register as editComment } from "./commands/edit-comment";
 import { register as exportCommand } from "./commands/export";
 import { register as grade } from "./commands/grade";
@@ -43,9 +44,9 @@ import { register as outline } from "./commands/outline";
 import { register as peerReviews } from "./commands/peer-reviews";
 import { register as publish } from "./commands/publish";
 import { register as pull } from "./commands/pull";
-import { register as rubric } from "./commands/rubric";
 import { register as push } from "./commands/push";
 import { register as quizQuestions } from "./commands/quiz-questions";
+import { register as rubric } from "./commands/rubric";
 import { register as site } from "./commands/site";
 import { register as status } from "./commands/status";
 import { register as students } from "./commands/students";
@@ -76,6 +77,7 @@ const COMMANDS: readonly Register[] = [
   // course repositories
   push,
   status,
+  diff,
   verify,
   audit,
   outline,

@@ -16,6 +16,7 @@ The usual loop, and the order to run it in:
 edutools dates <repo> --json                       # due dates, from canvas.toml alone
 edutools outline <repo>                            # the modules a push will build
 edutools status <repo> --course <id>               # did anything change in Canvas since the last push?
+edutools diff <repo> --course <id> --path <file>   # what changed, line by line (- repo, + Canvas)
 edutools push <repo> --course <id> --dry-run       # render everything, write nothing
 edutools push <repo> --course <id>                 # write it, unpublished, verify, record the baseline
 edutools audit <repo> --course <id> --json         # what Canvas holds that the repo did not put there
@@ -240,10 +241,18 @@ push to make.
 
 ```bash
 edutools status <repo> --course <id>                           # 1. find it: state canvas, parts body
-edutools pull <id> --out /tmp/snap --only assignments          # 2. read what Canvas holds now
+edutools diff <repo> --course <id> --path <file>               # 2. see the edit: - repo, + Canvas
 #                                                                 3. edit the markdown to match
 edutools status <repo> --course <id> --path <file> --adopt     # 4. both sides agree: in-sync
 ```
+
+`diff` writes each body as readable lines (a paragraph, heading, list item or
+table row each, links and images the markdown way) and drops what Canvas adds on
+its own, so the `+` lines read as the markdown to write. `--markup` diffs the
+HTML a tag per line, for a change the text cannot show, like a style. It compares
+titles and bodies only, reads Canvas, never writes it, and exits 1 when anything
+differs. `--json` prints
+`{"items": [{"key", "kind", "title", "canvasTitle", "hunks": [{"repoStart", "repoCount", "canvasStart", "canvasCount", "lines": [{"op", "text"}]}]}], "compared", "missing"}`.
 
 Nothing converts Canvas HTML back to markdown yet, so step 3 is an edit by hand.
 A date moved in Canvas cannot go back into a `Week N` meta line; it becomes an

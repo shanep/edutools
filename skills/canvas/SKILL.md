@@ -29,8 +29,9 @@ It covers six jobs, each with its own section:
 2. **Publishing a course repository**: a directory of markdown plus a
    `canvas.toml` that `push` turns into Canvas pages, assignments, discussions,
    quizzes, rubrics and modules. `verify` proves what landed, `audit` finds what
-   Canvas holds that the repo did not put there, and `status` says which side
-   changed since the last push, so edits made in the Canvas UI are not lost.
+   Canvas holds that the repo did not put there, `status` says which side
+   changed since the last push, and `diff` shows the change line by line, so
+   edits made in the Canvas UI are not lost.
 3. **Changing one object** that no repo manages: `create`, `update`, `delete`,
    `publish`, `unpublish`.
 4. **Grading**: reading submissions and discussion posts, writing scores and
@@ -155,7 +156,7 @@ the job before running its commands; the details and the gotchas are there.
 | --- | --- |
 | Reading a course, snapshots (`pull`), quiz and question bank exports | `references/reading.md` |
 | `create`, `update`, `delete`, `publish`, `unpublish` on one object, assignment groups | `references/objects.md` |
-| Course repositories: `push`, module tables, `verify`, `audit`, `status` | `references/repositories.md` |
+| Course repositories: `push`, module tables, `verify`, `audit`, `status`, `diff` | `references/repositories.md` |
 | Grading, feedback, discussions, rubrics, quiz questions | `references/grading.md` |
 | A course repository copied to Google Drive: `drive login`, `drive push`, `drive status`, `drive folder` | `references/drive.md` |
 

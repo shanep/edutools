@@ -171,6 +171,8 @@ edutools export [course_id] [-t|--type <type>] [--quiz <id>]... [-o|--out <file>
 edutools push <repo> --course <id> [options]       publish a course repo into Canvas
 edutools status <repo> --course <id> [--path <file>]... [--adopt] [--all] [--json]
                                                    which side changed since the repo and Canvas last agreed
+edutools diff <repo> --course <id> [--path <file>]... [--markup] [-U <lines>] [--json]
+                                                   what differs between the repo and Canvas, line by line
 edutools verify <repo> --course <id> [--json]      read published content back and prove it landed
 edutools audit <repo> --course <id> [--json]       compare the manifest with the live course, both ways
 edutools outline <repo> [--out <file>]             the module outline a push builds, from the repo alone
@@ -526,6 +528,27 @@ What `status` does not cover yet: assignment group weights, a module's published
 state, and whether something is published at all (publishing is a decision made
 apart from content). It also does not write a Canvas change into the repo for
 you; that is still an edit by hand.
+
+`diff` shows what that edit is. It renders each repo file as a push would and
+diffs it against the body Canvas stores, the repo as `-` and Canvas as `+`:
+
+```bash
+edutools diff ./cs121 --course 12345                        # every object that differs
+edutools diff ./cs121 --course 12345 --path 'pages/*.md'    # some repo files only
+edutools diff ./cs121 --course 12345 --markup               # the HTML, a tag per line
+```
+
+Bodies are compared as readable lines, one per paragraph, heading, list item or
+table row, with links and images written the markdown way, so a Canvas edit reads
+as the markdown change that copies it back. `--markup` diffs the HTML instead,
+for changes the text cannot show, like a style. What Canvas adds on its own (the
+`data-api-*` attributes, a file link's verifier and location, the host in front
+of a course link, a style's closing semicolon, the account's stylesheet) is left
+out of both. Titles are compared too. Files and modules are not, since `status`
+covers them. `diff` only reads Canvas and exits 1 when anything differs, like
+`diff(1)`. `--json` prints
+`{"items": [{"key", "kind", "title", "canvasTitle", "hunks": [{"repoStart", "repoCount", "canvasStart", "canvasCount", "lines": [{"op", "text"}]}]}], "compared", "missing"}`,
+where `missing` lists repo files Canvas has nothing for.
 
 ### Modules
 

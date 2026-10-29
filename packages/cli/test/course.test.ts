@@ -408,6 +408,35 @@ describe("status", () => {
   });
 });
 
+describe("diff", () => {
+  const P0 = { kind: "assignment", canvas_id: "7", page_url: "", title: "P0", extra: {} };
+
+  it("prints a unified diff, repo as - and Canvas as +, and exits 1", async () => {
+    writeManifest(repo, { "assignments/p0.md": P0 });
+    canvas.getAssignmentFull.mockResolvedValue({ name: "P0", description: "<p>Older text.</p>" });
+    const result = await invoke(["diff", repo, "--course", "42", "--path", "assignments/p0.md"], { client: canvas });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("--- repo assignments/p0.md\n+++ course 42 assignment 'P0'\n@@ -1,");
+    expect(result.stdout).toContain("+Older text.");
+    expect(result.stdout).toContain("1 of 1 objects differ (- repo, + Canvas)");
+  });
+
+  it("json is the result alone on stdout", async () => {
+    writeManifest(repo, { "index.md": { kind: "syllabus", canvas_id: "42", page_url: "", title: "S", extra: {} } });
+    const result = await invoke(["diff", repo, "--course", "42", "--path", "index.md", "--json"], { client: canvas });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({ compared: 1, missing: [] });
+  });
+
+  it("a context that is not a whole number is a usage error", async () => {
+    const result = await invoke(["diff", repo, "--course", "42", "-U", "x"], { client: canvas });
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("--context must be a whole number, got x");
+  });
+});
+
 describe("audit", () => {
   it("json is the differences with the Python field names, and stale exits 1", async () => {
     writeManifest(repo, {
