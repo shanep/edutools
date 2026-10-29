@@ -257,6 +257,7 @@ export const register: Register = (program, cli) => {
             report: (line) => cli.print(markup(cli.c, line)),
             progress: (p) => update(progressLine(p)),
           }),
+          { lines: true },
         );
       } catch (error) {
         if (error instanceof UnmatchedPathError) {

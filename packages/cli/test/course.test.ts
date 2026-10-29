@@ -117,6 +117,14 @@ describe("push", () => {
     expect(existsSync(path.join(repo, ".canvas"))).toBe(false);
   });
 
+  it("off a terminal, progress goes to stderr as plain lines", async () => {
+    const result = await invoke(["push", repo, "--course", "42", "--no-verify"], { client: canvas });
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.stderr).toMatch(/^.+ \(\d+\/\d+\)$/m);
+    expect(result.stderr).not.toContain("\r");
+  });
+
   it("new objects go up unpublished, and --no-verify skips the read-back", async () => {
     const result = await invoke(["push", repo, "--course", "42", "--no-verify"], { client: canvas });
 

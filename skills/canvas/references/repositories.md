@@ -53,6 +53,10 @@ and `lock_at` as the exact ISO strings `push` sends (`2026-10-14T23:59:00-06:00`
 
 - **Without `--publish`, a push never changes visibility** of an object that
   already exists. It does not unpublish a live assignment.
+- **A push run in the background reports progress.** Off a terminal it writes a
+  plain line such as `Publishing notes/week-01.md (12/86)` to stderr every few
+  seconds, so redirect stderr to the log (`2>&1`) and read its last line to say
+  how far along it is.
 - **A push that hits a problem exits 1** and lists each problem on stderr: a
   malformed `canvas.toml`, a `--path` that matches nothing (it lists the paths
   that exist), a `[layout] files` entry naming one file the repo does not have

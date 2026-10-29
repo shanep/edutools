@@ -150,6 +150,9 @@ export function openUrl(url: string): void {
   }
 }
 
+/** How often a run off a terminal writes a progress line. */
+const PROGRESS_LINE_MS = 3000;
+
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
@@ -325,11 +328,27 @@ export class Cli {
 
   /**
    * Run `work` behind a spinner on stderr. The spinner only draws on a terminal,
-   * so piped output and tests see nothing but the result.
+   * so piped output and tests see nothing but the result. With `lines`, a run
+   * that is not on a terminal writes its progress to stderr as plain lines
+   * instead, at most one every few seconds, so a long run in the background can
+   * still be followed from its log.
    */
-  async status<T>(text: string, work: (update: (text: string) => void) => Promise<T>): Promise<T> {
+  async status<T>(
+    text: string,
+    work: (update: (text: string) => void) => Promise<T>,
+    { lines = false }: { lines?: boolean } = {},
+  ): Promise<T> {
     const stream = this.deps.stderr;
-    if (!stream.isTTY) return work(() => {});
+    if (!stream.isTTY) {
+      if (!lines) return work(() => {});
+      let last = 0;
+      return work((next) => {
+        const now = Date.now();
+        if (now - last < PROGRESS_LINE_MS) return;
+        last = now;
+        stream.write(`${next}\n`);
+      });
+    }
     let label = text;
     let frame = 0;
     const draw = () => {
