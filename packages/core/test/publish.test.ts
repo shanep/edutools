@@ -131,6 +131,27 @@ describe("the renderer emits pandoc's HTML", () => {
     );
   });
 
+  it("takes a heading's id from a trailing {#id}, as VitePress does", () => {
+    expect(renderGfm("## 1.1 Scope {#_1-1-scope}\n\n## 1.1 Scope\n")).toBe(
+      '<h2 id="_1-1-scope">1.1 Scope</h2>\n<h2 id="11-scope">1.1 Scope</h2>\n',
+    );
+  });
+
+  it("leaves dollar signs alone unless math is on", () => {
+    expect(renderGfm("$a_1 * b_2$\n")).toBe("<p>$a_1 * b_2$</p>\n");
+  });
+
+  it("keeps TeX for Canvas to draw, escaped but not parsed as markdown", () => {
+    expect(renderGfm("Let $a_1 * b_2 < c$ and $$x$$.\n", true)).toBe(
+      "<p>Let \\(a_1 * b_2 &lt; c\\) and $$x$$.</p>\n",
+    );
+    expect(renderGfm("$$\ny^2 = x^3 + a_1 x\n$$\n", true)).toBe("<p>$$y^2 = x^3 + a_1 x$$</p>\n");
+  });
+
+  it("reads prices as text, not math", () => {
+    expect(renderGfm("It costs $5 and $10, or \\$5.\n", true)).toBe("<p>It costs $5 and $10, or $5.</p>\n");
+  });
+
   it("writes tables with bare rows, pandoc's alignment styles and column scopes", () => {
     expect(renderGfm("| a | b | c |\n|:--|---|--:|\n| 1 | 2 | 3 |\n")).toBe(
       "<table>\n<thead>\n<tr>\n" +

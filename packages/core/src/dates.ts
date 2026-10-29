@@ -354,6 +354,8 @@ export class DateConfig {
   readonly layout: Layout;
   readonly groups: readonly Group[];
   readonly icons: readonly HeadingIcon[];
+  // [markdown] math: TeX between dollar signs, as VitePress's markdown.math.
+  readonly math: boolean;
 
   constructor(fields: {
     term: Term;
@@ -362,6 +364,7 @@ export class DateConfig {
     layout?: Layout;
     groups?: readonly Group[];
     icons?: readonly HeadingIcon[];
+    math?: boolean;
   }) {
     this.term = fields.term;
     this.policies = fields.policies;
@@ -369,6 +372,7 @@ export class DateConfig {
     this.layout = fields.layout ?? DEFAULT_LAYOUT;
     this.groups = fields.groups ?? [];
     this.icons = fields.icons ?? [];
+    this.math = fields.math ?? false;
   }
 
   /**
@@ -493,7 +497,19 @@ export function loadConfig(repo: string): DateConfig {
     layout: loadLayout(raw),
     groups,
     icons: loadIcons(raw, repo),
+    math: loadMath(raw),
   });
+}
+
+/** Read the optional `[markdown] math = true`. */
+function loadMath(raw: Record<string, unknown>): boolean {
+  const section = get(raw, "markdown");
+  if (section === undefined) return false;
+  const math = isTable(section) ? get(section, "math") : undefined;
+  if (math !== undefined && typeof math !== "boolean") {
+    throw new DateConfigError(`[markdown] math must be true or false, got ${pyRepr(math)}`);
+  }
+  return math ?? false;
 }
 
 /**

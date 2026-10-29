@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { inline as cssInline } from "@css-inline/css-inline";
 import markdownit from "markdown-it";
-import type { MarkdownIt, RendererRule, StateCore, Token } from "markdown-it";
+import type { MarkdownIt, RendererRule, StateBlock, StateCore, StateInline, Token } from "markdown-it";
 import footnotePlugin from "markdown-it-footnote";
 import { fnmatch, toPosix } from "./paths";
 import type { Baseline, Component, Fingerprints } from "./sync";
@@ -471,6 +471,24 @@ function headingIdentifier(text: string): string {
     .join("");
 }
 
+const CUSTOM_ID_RE = /\s*\{#([^\s{}]+)\}\s*$/;
+
+/**
+ * The id a heading names itself with a trailing `{#id}`, as VitePress allows,
+ * removed from the heading's text. A page that links to a section on another
+ * page needs it, because VitePress and pandoc make different ids from the same
+ * heading ("1.1 Scope" is `_1-1-scope` on the site and `11-scope` here).
+ */
+function customId(inline: Token | undefined): string | null {
+  const last = inline?.children?.at(-1);
+  if (inline === undefined || last === undefined || last.type !== "text") return null;
+  const match = CUSTOM_ID_RE.exec(last.content);
+  if (match === null) return null;
+  last.content = last.content.slice(0, match.index);
+  inline.content = inline.content.replace(CUSTOM_ID_RE, "");
+  return match[1] as string;
+}
+
 /**
  * Give every heading pandoc's id. A repeat gets `-1`, `-2` and so on, and an
  * empty id counts as used, which is why pandoc names a heading of pure
@@ -482,6 +500,12 @@ function headingIds(state: StateCore): void {
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] as Token;
     if (token.type !== "heading_open") continue;
+    const custom = customId(tokens[i + 1]);
+    if (custom !== null) {
+      used.add(custom);
+      token.attrSet("id", custom);
+      continue;
+    }
     const base = headingIdentifier(stringify(tokens[i + 1]?.children ?? []));
     let ident = base;
     for (let n = 1; used.has(ident); n++) ident = `${base}-${n}`;
@@ -668,9 +692,89 @@ const codeBlock: RendererRule = (tokens, idx) => {
   return `<pre${lang ? attrs([["class", lang]]) : ""}><code>${body}</code></pre>\n`;
 };
 
-function buildRenderer(): MarkdownIt {
+const DOLLAR = 0x24;
+
+/**
+ * Inline TeX by pandoc's `tex_math_dollars` rules, which VitePress's math
+ * follows closely enough: `$x$` and `$$x$$`. The opening `$` must be followed by
+ * a non-space and the closing one preceded by a non-space and not followed by a
+ * digit, so "$5 and $10" stays text.
+ */
+function mathInline(state: StateInline, silent: boolean): boolean {
+  const src = state.src;
+  const start = state.pos;
+  if (src.charCodeAt(start) !== DOLLAR) return false;
+  const display = src.charCodeAt(start + 1) === DOLLAR;
+  const fence = display ? "$$" : "$";
+  const from = start + fence.length;
+  if (from >= state.posMax || /\s/.test(src.charAt(from))) return false;
+  // The first unescaped closer ends the math or, when it cannot close, leaves
+  // the opener as text, as markdown-it-katex (and so VitePress) does.
+  let end = src.indexOf(fence, from);
+  while (end !== -1 && src.charAt(end - 1) === "\\") end = src.indexOf(fence, end + 1);
+  if (end === -1 || end === from || end + fence.length > state.posMax) return false;
+  if (!display && (/\s/.test(src.charAt(end - 1)) || /\d/.test(src.charAt(end + 1)))) return false;
+  if (!silent) {
+    const token = state.push(display ? "math_display" : "math_inline", "", 0);
+    token.content = src.slice(from, end);
+    token.markup = fence;
+  }
+  state.pos = end + fence.length;
+  return true;
+}
+
+/** A `$$` block: the fences on their own lines, or the whole block on one. */
+function mathBlock(state: StateBlock, startLine: number, endLine: number, silent: boolean): boolean {
+  const lineText = (line: number): string =>
+    state.src.slice((state.bMarks[line] ?? 0) + (state.tShift[line] ?? 0), state.eMarks[line]);
+  if ((state.sCount[startLine] ?? 0) - state.blkIndent >= 4) return false;
+  const first = lineText(startLine).trim();
+  if (!first.startsWith("$$")) return false;
+  let content: string;
+  let last = startLine;
+  if (first.length > 4 && first.endsWith("$$")) {
+    content = first.slice(2, -2);
+  } else {
+    const lines = [first.slice(2)];
+    for (last = startLine + 1; last < endLine; last++) {
+      const text = lineText(last).trim();
+      if (text.endsWith("$$")) {
+        lines.push(text.slice(0, -2));
+        break;
+      }
+      lines.push(text);
+    }
+    if (last >= endLine) return false;
+    content = lines.join("\n");
+  }
+  if (silent) return true;
+  const token = state.push("math_block", "", 0);
+  token.content = content.trim();
+  token.markup = "$$";
+  token.block = true;
+  token.map = [startLine, last + 1];
+  state.line = last + 1;
+  return true;
+}
+
+/**
+ * TeX math in the delimiters Canvas draws with MathJax when a page is shown:
+ * `\(...\)` inline and `$$...$$` for display. The TeX itself is only escaped,
+ * never parsed as markdown, so `a_1 * b_2` keeps its underscores.
+ */
+function mathPlugin(md: MarkdownIt): void {
+  md.inline.ruler.after("escape", "math_inline", mathInline);
+  md.block.ruler.before("fence", "math_block", mathBlock, { alt: ["paragraph", "reference", "blockquote", "list"] });
+  const rules = md.renderer.rules;
+  rules.math_inline = (tokens, idx) => `\\(${escapeText((tokens[idx] as Token).content)}\\)`;
+  rules.math_display = (tokens, idx) => `$$${escapeText((tokens[idx] as Token).content)}$$`;
+  rules.math_block = (tokens, idx) => `<p>$$${escapeText((tokens[idx] as Token).content)}$$</p>\n`;
+}
+
+function buildRenderer(math: boolean): MarkdownIt {
   const md = markdownit({ html: true, xhtmlOut: true, linkify: true, typographer: false, breaks: false });
   md.use(footnotePlugin);
+  if (math) mathPlugin(md);
   gfmAutolinks(md);
 
   // pandoc writes a link target exactly as it was written: no percent-encoding of
@@ -744,14 +848,19 @@ function buildRenderer(): MarkdownIt {
   return md;
 }
 
-let renderer: MarkdownIt | null = null;
+const renderers = new Map<boolean, MarkdownIt>();
 
 /**
  * GitHub flavoured markdown to HTML, in the shape `pandoc --from gfm --to html
- * --wrap=none` produced, which every regex after it was written against.
+ * --wrap=none` produced, which every regex after it was written against. With
+ * `math`, TeX between dollar signs is kept for Canvas to draw.
  */
-export function renderGfm(markdown: string): string {
-  renderer ??= buildRenderer();
+export function renderGfm(markdown: string, math = false): string {
+  let renderer = renderers.get(math);
+  if (renderer === undefined) {
+    renderer = buildRenderer(math);
+    renderers.set(math, renderer);
+  }
   // pandoc closes a list item on the line its last block ends.
   return renderer.render(markdown).replace(/\n<\/li>/g, "</li>");
 }
@@ -765,12 +874,12 @@ export function renderGfm(markdown: string): string {
 export function renderMarkdown(
   file: string,
   repo: string | null = null,
-  options: { keepInstructor?: boolean } = {},
+  options: { keepInstructor?: boolean; math?: boolean } = {},
 ): [string, string] {
   let source = stripVitepress(readFileSync(file, "utf8"), file, repo);
   if (!options.keepInstructor) source = stripInstructorSections(source);
   const [title, body] = stripTitle(source);
-  return [title || path.parse(file).name, renderGfm(body)];
+  return [title || path.parse(file).name, renderGfm(body, options.math ?? false)];
 }
 
 // ---------------------------------------------------------------------------

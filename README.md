@@ -887,6 +887,8 @@ as literal text:
 | `::: danger` ... `:::` | a blockquote with a bold lead line |
 | `<OfficeHoursLink />` and other capitalised tags | removed |
 | `<script setup>` blocks | removed |
+| `## Heading {#my-id}` | a heading with the id `my-id` |
+| `$x$` and `$$x$$`, with `[markdown] math = true` | TeX that Canvas draws with MathJax |
 
 Ordinary lowercase HTML is left alone, and an include written inline in prose,
 rather than alone on its own line, stays as text so it can be documented. An
@@ -899,6 +901,24 @@ and `<PUBLIC-IP>` reach Canvas as text. A bare URL also ends at a backslash, so
 
 Markdown is GitHub flavoured: tables, task lists, footnotes, autolinks and fenced
 code blocks all render, and headings get GitHub-style ids so `#section` links work.
+
+VitePress makes a heading's id differently (`## 1.1 Scope` is `_1-1-scope` on the
+site and `11-scope` in Canvas), so a link into a section of another page only
+works in both places when the heading names its id with `{#...}`.
+
+TeX math is off unless `canvas.toml` turns it on, the way VitePress's
+`markdown.math` does:
+
+```toml
+[markdown]
+math = true
+```
+
+Then `$...$` reaches Canvas as `\(...\)` and a `$$` block as `$$...$$`, which
+Canvas draws with MathJax when the page is shown. The delimiters follow
+VitePress: no space just inside a `$`, and a closing `$` followed by a digit does
+not close, so prices such as "$5 and $10" stay text. Write `\$` for a literal
+dollar sign next to other dollar signs.
 
 ### Drafts
 

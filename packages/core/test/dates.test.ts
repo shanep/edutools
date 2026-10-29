@@ -240,6 +240,25 @@ describe("validation", () => {
   it("missing canvas toml", () => {
     expect(() => loadConfig(tmpRepo())).toThrow(/no canvas.toml/);
   });
+
+  it("reads [markdown] math, off unless asked for", () => {
+    const term =
+      "[term]\n" +
+      "first_monday = 2027-01-11\n" +
+      "weeks = 15\n" +
+      "last_day_of_instruction = 2027-04-30\n" +
+      "finals_start = 2027-05-03\n" +
+      "finals_end = 2027-05-07\n" +
+      'policy.lab = { due = "sun 23:59" }\n';
+    const repo = tmpRepo();
+    const config = path.join(repo, "canvas.toml");
+    writeFileSync(config, term);
+    expect(loadConfig(repo).math).toBe(false);
+    writeFileSync(config, `${term}\n[markdown]\nmath = true\n`);
+    expect(loadConfig(repo).math).toBe(true);
+    writeFileSync(config, `${term}\n[markdown]\nmath = "yes"\n`);
+    expect(() => loadConfig(repo)).toThrow("[markdown] math must be true or false");
+  });
 });
 
 // CS331 grades out of a fixed 1000; CS425 grades by weighted groups instead.

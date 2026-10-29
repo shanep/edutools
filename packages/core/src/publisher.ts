@@ -371,7 +371,7 @@ export class Publisher {
 
   /** Markdown -> decorated, styled, Canvas-safe HTML. */
   render(source: string): [string, string] {
-    const [title, rendered] = renderMarkdown(source, this.repo);
+    const [title, rendered] = renderMarkdown(source, this.repo, { math: this.config.math });
     let html = wrapTables(markTableRows(decorate(rendered)));
     const icons = this.config.icons.map((icon): [string, string] => [icon.pattern, icon.path]);
     html = addHeadingIcons(html, icons, source, this.repo);

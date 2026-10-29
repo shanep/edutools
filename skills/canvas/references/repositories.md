@@ -130,6 +130,10 @@ items = [
 - **`[icons]`** maps heading text to an image in the repo; the push uploads it and
   puts it in front of each matching h2/h3. Style it through `.cs-icon` in the
   repo's `canvas.css`, which the push inlines into every page.
+- **`[markdown] math = true`** turns on TeX between dollar signs, sent as
+  `\(...\)` and `$$...$$` for Canvas's MathJax. A heading's trailing `{#id}` sets
+  its id, which a link into another page's section needs, since VitePress and
+  edutools make different ids from the same heading.
 - **Files are matched by content before they are uploaded.** A repo file whose
   exact bytes are already in the course (a shell's icon set, under any name or
   folder) is recorded against that copy rather than uploaded again. The copy the
