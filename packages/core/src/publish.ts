@@ -1740,6 +1740,19 @@ export class Manifest {
 // ---------------------------------------------------------------------------
 
 const HREF_RE = /(href|src)="([^"]+)"/g;
+// An opening tag, whose quoted attribute values may hold a ">".
+const OPEN_TAG_RE = /<[a-zA-Z][^\s/>]*(?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>/g;
+
+/**
+ * Every href and src inside a tag, never in text. The CSS inliner writes the
+ * `&quot;` of escaped code back as `"`, so `<script src="app.js">` shown in a
+ * code block reads as an attribute to a bare regex.
+ */
+function replaceLinks(html: string, replace: (whole: string, attribute: string, target: string) => string): string {
+  return html.replace(OPEN_TAG_RE, (tag: string) =>
+    tag.replace(HREF_RE, (whole: string, attribute: string, target: string) => replace(whole, attribute, target)),
+  );
+}
 
 export function canvasPath(entry: Entry, courseId: string): string {
   switch (entry.kind) {
@@ -1778,7 +1791,7 @@ export function rewriteLinks(
 ): [string, string[]] {
   const unresolved: string[] = [];
 
-  const out = html.replace(HREF_RE, (whole: string, attribute: string, target: string) => {
+  const out = replaceLinks(html, (whole: string, attribute: string, target: string) => {
     if (["http://", "https://", "mailto:", "#", "/"].some((prefix) => target.startsWith(prefix))) {
       return whole;
     }
@@ -1870,9 +1883,9 @@ export function styleDeclarations(html: string): string[] {
 export function internalLinks(html: string, courseId: string): string[] {
   const prefix = `/courses/${courseId}/`;
   const found = new Set<string>();
-  for (const match of html.matchAll(HREF_RE)) {
-    const target = match[2] ?? "";
+  replaceLinks(html, (whole: string, _attribute: string, target: string) => {
     if (target.startsWith(prefix)) found.add(target.split("#")[0] ?? "");
-  }
+    return whole;
+  });
   return [...found].sort();
 }

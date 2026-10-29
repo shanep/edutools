@@ -575,6 +575,21 @@ describe("manifest and links", () => {
     expect(unresolved).toEqual([]);
   });
 
+  it("rewrites links in tags only, not in code shown as text", () => {
+    const repo = tmp();
+    const source = write(repo, "modules/week-01.md", "x");
+    write(repo, "assignments/lab-00.md", "y");
+    const manifest = new Manifest(path.join(repo, ".canvas", "m.json"));
+    manifest.put("assignments/lab-00.md", new Entry({ kind: "assignment", canvasId: "55", title: "Lab 0" }));
+    const html =
+      '<pre><code>&lt;script src="app.js"&gt;</code></pre>' +
+      '<a title="a > b" href="../assignments/lab-00.md">Lab 0</a>';
+    const [out, unresolved] = rewriteLinks(html, source, repo, manifest, "42");
+    expect(out).toContain('&lt;script src="app.js"&gt;');
+    expect(out).toContain('href="/courses/42/assignments/55"');
+    expect(unresolved).toEqual([]);
+  });
+
   it("reports an unknown target", () => {
     const repo = tmp();
     const source = write(repo, "modules/week-01.md", "x");
