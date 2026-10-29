@@ -349,6 +349,10 @@ const INCLUDE_RE = /^[ \t]*<!--\s*@include:\s*(\S+?)\s*-->[ \t]*$/gm;
 const CONTAINER_RE =
   /^:::+[ \t]*(?<kind>[a-z-]+)[ \t]*(?<title>[^\n]*)\n(?<body>[\s\S]*?)^:::+[ \t]*$/gm;
 
+// A line that opens a block other than a paragraph: a list, quote, heading, table,
+// fence, HTML, image, display math, rule or indented code.
+const BLOCK_START_RE = /^(?:\s|[-*+]\s|[>#|<]|!\[|\d+[.)]\s|```|~~~|\$\$|:::|---|\*\*\*)/;
+
 // "<OfficeHoursLink />" or "<CourseSchedule :weeks="x" />": a capitalised tag is a
 // Vue component, which means nothing outside the website. The name has to end at
 // a space, "/" or ">", and the "<" must not be escaped, so a placeholder such as
@@ -419,6 +423,13 @@ export function stripVitepress(markdown: string, source: string, repo: string | 
     // It has to trail the title, never lead it: a comment at the start of a line
     // opens a CommonMark HTML *block*, which swallows the rest of that line and
     // emits "**Warning**" as literal text instead of bold.
+    //
+    // A title alone on its line is a bold paragraph, which checkers (UDOIT, Canvas)
+    // flag as a heading drawn with styles. When the body opens with a paragraph,
+    // the title runs into it as a lead-in instead.
+    const lead = `**${title}${/[.:?!]$/.test(title) ? "" : "."}**<!--cs-callout:${kind}-->`;
+    const first = body.split("\n")[0] ?? "";
+    if (first !== "" && !BLOCK_START_RE.test(first)) return `> ${lead} ${quoted.slice(2)}\n`;
     return `> **${title}**<!--cs-callout:${kind}-->\n>\n${quoted}\n`;
   };
 
@@ -916,9 +927,11 @@ export function classifyCallouts(html: string): string {
 export function decorate(html: string): string {
   let out = classifyCallouts(html);
   // The bold meta line: "**Week 7 · 38 points · ...**" renders as a lone <p><strong>.
+  // The bold goes, since a bold paragraph reads to checkers as a fake heading, and
+  // the class gives the line its look.
   out = out.replace(
     /^(\s*)<p><strong>((?:Week|Finals week|January|February|March|April|May)[^<]*)<\/strong><\/p>/,
-    '$1<p class="cs-meta"><strong>$2</strong></p>',
+    '$1<p class="cs-meta">$2</p>',
   );
 
   const matches = [...out.matchAll(H2_RE)];

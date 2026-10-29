@@ -234,7 +234,9 @@ describe("decorate", () => {
   });
 
   it("tags the meta line", () => {
-    expect(decorate("<p><strong>Week 7 · 38 points</strong></p>")).toContain('class="cs-meta"');
+    expect(decorate("<p><strong>Week 7 · 38 points</strong></p>")).toBe(
+      '<p class="cs-meta">Week 7 · 38 points</p>',
+    );
   });
 
   it("marks alternate rows", () => {
@@ -687,17 +689,30 @@ describe("stripVitepress", () => {
     expect(out).not.toContain(":::");
     // Every body line stays inside the blockquote, blank lines included, or the
     // quote would end at the first of them and the warning would escape it.
-    expect(out).toContain("**Warning**");
+    expect(out).toContain("**Warning.**");
     expect(out).toContain("<!--cs-callout:danger-->");
-    expect(out).toContain("> Do not do this.");
+    expect(out).toContain(" Do not do this.");
     expect(out).toContain("> Ever.");
+  });
+
+  it("runs the title into a first paragraph, so it is not a bold paragraph alone", () => {
+    const root = tmp();
+    const source = write(root, "a.md", "::: info About this page\n\nRead it.\n\n:::\n");
+    expect(strip(root, source)).toContain("> **About this page.**<!--cs-callout:info--> Read it.");
+  });
+
+  it("keeps the title on its own line when the body opens with a list", () => {
+    const root = tmp();
+    const source = write(root, "a.md", "::: tip Steps:\n\n- one\n- two\n\n:::\n");
+    const out = strip(root, source);
+    expect(out).toContain("> **Steps:**<!--cs-callout:tip-->\n>\n> - one");
   });
 
   it("lets a container title override the default", () => {
     const root = tmp();
     const source = write(root, "a.md", "::: tip Read this first\n\nBody.\n\n:::\n");
     const out = strip(root, source);
-    expect(out).toContain("**Read this first**");
+    expect(out).toContain("**Read this first.**");
     expect(out).toContain("<!--cs-callout:tip-->");
   });
 
@@ -818,7 +833,7 @@ describe("callout classes", () => {
     // CommonMark HTML block, which emits the rest of the line as literal text,
     // so the reader sees '**Warning**' with the asterisks.
     const out = html("# T\n\n::: danger\n\nBody.\n\n:::\n");
-    expect(out).toContain("<strong>Warning</strong>");
+    expect(out).toContain("<strong>Warning.</strong> Body.");
     expect(out).not.toContain("**");
   });
 
